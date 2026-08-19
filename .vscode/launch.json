@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ai-unisub: Debug server",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/server",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "UNISUB_LISTEN": "127.0.0.1:18081",
+        "UNISUB_DB_PATH": "${workspaceFolder}/data/debug.db",
+        "UNISUB_MASTER_KEY": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+        "UNISUB_CREDENTIAL_KEY_ID": "vscode-debug-v1",
+        "UNISUB_ADMIN_USERNAME": "admin",
+        "UNISUB_ADMIN_PASSWORD": "admin",
+        "UNISUB_ADMIN_TOKEN_TTL": "8h",
+        "UNISUB_MAX_BODY_BYTES": "268435456"
+      },
+      "showLog": true
+    },
+    {
+      "name": "ai-unisub: Debug current test",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "UNISUB_ALLOW_TEST_UPSTREAMS": "true"
+      },
+      "showLog": true
+    }
+  ]
+}

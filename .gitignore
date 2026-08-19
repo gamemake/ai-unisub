@@ -1,0 +1,10 @@
+/data/
+/bin/
+/.gocache/
+/.env
+/ai-unisub
+/ai-unisub.exe
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
