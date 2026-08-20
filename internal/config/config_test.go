@@ -7,6 +7,11 @@ import "time"
 func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	t.Setenv("UNISUB_ADMIN_USERNAME", "")
 	t.Setenv("UNISUB_ADMIN_PASSWORD", "")
+	t.Setenv("UNISUB_GROK_OAUTH_ISSUER", "")
+	t.Setenv("UNISUB_GROK_OAUTH_CLIENT_ID", "")
+	t.Setenv("UNISUB_GROK_OAUTH_SCOPES", "")
+	t.Setenv("UNISUB_GROK_CLIENT_VERSION", "")
+	t.Setenv("UNISUB_GROK_BILLING_URL", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -23,6 +28,15 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	}
 	if cfg.RequestLogRetentionDays != 30 {
 		t.Fatalf("request log retention = %d", cfg.RequestLogRetentionDays)
+	}
+	if cfg.GrokOAuth.Issuer != DefaultGrokOAuthIssuer || cfg.GrokOAuth.ClientID != DefaultGrokOAuthClientID {
+		t.Fatalf("Grok OAuth defaults = %+v", cfg.GrokOAuth)
+	}
+	if len(cfg.GrokOAuth.Scopes) == 0 || cfg.GrokOAuth.ClientVersion != DefaultGrokOAuthClientVersion {
+		t.Fatalf("Grok OAuth scopes/version = %+v", cfg.GrokOAuth)
+	}
+	if cfg.Providers.GrokBilling != DefaultGrokBillingURL {
+		t.Fatalf("Grok billing URL = %q", cfg.Providers.GrokBilling)
 	}
 }
 
@@ -95,5 +109,24 @@ func TestListenEnvironmentTakesPriorityOverPort(t *testing.T) {
 	}
 	if cfg.ListenAddress != "127.0.0.1:9191" {
 		t.Fatalf("listen address = %q", cfg.ListenAddress)
+	}
+}
+
+func TestGrokOAuthScopesAcceptCommaOrSpaceSeparatedValues(t *testing.T) {
+	t.Setenv("UNISUB_GROK_OAUTH_SCOPES", "openid,offline_access grok-cli:access")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(cfg.GrokOAuth.Scopes); got != 3 {
+		t.Fatalf("scope count = %d (%v)", got, cfg.GrokOAuth.Scopes)
+	}
+}
+
+func TestProductionRejectsNonOfficialGrokOAuthIssuer(t *testing.T) {
+	t.Setenv("UNISUB_ALLOW_TEST_UPSTREAMS", "false")
+	t.Setenv("UNISUB_GROK_OAUTH_ISSUER", "https://example.com")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-official Grok OAuth issuer was accepted")
 	}
 }

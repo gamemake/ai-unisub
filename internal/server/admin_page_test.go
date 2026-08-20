@@ -23,7 +23,7 @@ func TestAdminPageIsServedWithoutCaching(t *testing.T) {
 	if got := recorder.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
 		t.Fatalf("Content-Type = %q", got)
 	}
-	for _, marker := range []string{"UniSub", "服务器集成", "账号使用量", "accountUsageTable", "/admin/assets/admin.css", "/admin/assets/admin.js"} {
+	for _, marker := range []string{"UniSub", "账号管理", "<h2>Usage</h2>", "accountUsageTable", "accountModalTitle", "page-keys", "apiKeyForm", "grokOAuthModal", "/admin/assets/admin.css", "/admin/assets/admin.js"} {
 		if !strings.Contains(recorder.Body.String(), marker) {
 			t.Errorf("admin page does not contain %q", marker)
 		}
@@ -33,6 +33,9 @@ func TestAdminPageIsServedWithoutCaching(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "topAddButton") {
 		t.Error("removed top add-account button is still referenced")
+	}
+	if strings.Contains(recorder.Body.String(), "服务器集成") {
+		t.Error("removed integration page is still referenced")
 	}
 }
 
@@ -44,7 +47,7 @@ func TestAdminAssetsAreEmbeddedAndServed(t *testing.T) {
 		markers     []string
 	}{
 		{path: "/admin/assets/admin.css", contentType: "text/css", markers: []string{".login-shell", ".account-name"}},
-		{path: "/admin/assets/admin.js", contentType: "application/javascript", markers: []string{"/admin/accounts", "sessionStorage", "renderAccountUsage"}},
+		{path: "/admin/assets/admin.js", contentType: "application/javascript", markers: []string{"/admin/accounts", "/admin/api-keys", "sessionStorage", "renderAccountUsage", "renderAPIKeys", "renderQuota", "creditBalanceLine", "usagePercent", "refreshData", "usage/refresh", "<th>Usage</th>", "openEditAccount", "prettyJSON", "data-action=\"edit\"", "data-action=\"delete\"", "编辑账号", "ccswitch://v1/import", "openCCSwitch", "grokbuild", "/admin/providers/grok/oauth/device/start", "/admin/providers/grok/oauth/device/poll"}},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {

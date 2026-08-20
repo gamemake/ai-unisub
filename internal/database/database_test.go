@@ -92,3 +92,39 @@ func TestMigrateConvertsConcurrencyQueueTimeoutToSeconds(t *testing.T) {
 		t.Fatalf("completed migration overwrote inherited value: %d", seconds)
 	}
 }
+
+func TestMigrateRemovesAPIKeyAccountUniqueConstraint(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "keys.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE accounts (id INTEGER PRIMARY KEY, name TEXT);
+		CREATE TABLE api_keys (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			account_id INTEGER NOT NULL UNIQUE,
+			name TEXT NOT NULL,
+			key_hash BLOB NOT NULL UNIQUE,
+			key_prefix TEXT NOT NULL,
+			enabled INTEGER NOT NULL DEFAULT 1,
+			rpm_limit INTEGER,
+			concurrency INTEGER,
+			expires_at TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO accounts(id, name) VALUES(1, 'shared');
+		INSERT INTO api_keys(account_id, name, key_hash, key_prefix) VALUES(1, 'first', X'01', 'unisub_first');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO api_keys(account_id, name, key_hash, key_prefix) VALUES(1, 'second', X'02', 'unisub_second')`); err != nil {
+		t.Fatalf("second key was rejected: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM api_keys WHERE account_id=1`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("key count = %d err=%v", count, err)
+	}
+}

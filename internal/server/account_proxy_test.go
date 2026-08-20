@@ -2,7 +2,6 @@ package server
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -77,14 +76,11 @@ func TestAccountHTTPProxy(t *testing.T) {
 	defer proxyServer.Close()
 
 	application, repo := testServer(t, "http://upstream.example/responses")
-	_, key, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
 		Name: "proxied-codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 		ProxyURL:    proxyServer.URL,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
 	request.Header.Set("Authorization", "Bearer "+key)
 	recorder := httptest.NewRecorder()

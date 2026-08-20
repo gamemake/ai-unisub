@@ -75,7 +75,17 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 403, "provider_mismatch", "Responses endpoints require a Codex or Grok account key")
 			return
 		}
-		if account.TokenExpiresAt != nil && time.Now().After(*account.TokenExpiresAt) {
+		credentials, err := s.repo.Credentials(c.Request.Context(), account.Account)
+		if err != nil || credentials.Bearer() == "" {
+			apiError(c, 502, "credential_error", "account credentials are unavailable")
+			return
+		}
+		credentials, err = s.grokCredentialsForRequest(c.Request.Context(), account.Account, credentials, false)
+		if err != nil {
+			apiError(c, 401, "reauth_required", err.Error())
+			return
+		}
+		if account.TokenExpiresAt != nil && time.Now().After(*account.TokenExpiresAt) && account.Provider != model.ProviderGrok {
 			apiError(c, 401, "token_expired", "account OAuth token has expired; manually import a new token")
 			return
 		}
@@ -111,11 +121,6 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			return
 		}
 
-		credentials, err := s.repo.Credentials(c.Request.Context(), account.Account)
-		if err != nil || credentials.Bearer() == "" {
-			apiError(c, 502, "credential_error", "account credentials are unavailable")
-			return
-		}
 		upstreamURL, err := s.upstreamURL(account.Provider, kind, suffix)
 		if err != nil {
 			apiError(c, 501, "unsupported_endpoint", err.Error())
@@ -133,17 +138,23 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			return
 		}
 		defer release()
-		upstreamRequest, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, upstreamURL, bytes.NewReader(body))
-		if err != nil {
-			apiError(c, 500, "internal_error", "could not build upstream request")
-			return
-		}
-		copyDownstreamHeaders(upstreamRequest.Header, c.Request.Header)
-		injectProviderHeaders(upstreamRequest.Header, account.Provider, account.AuthType, credentials)
-
 		client, err := s.clientForAccount(account.Account)
 		if err != nil {
 			apiError(c, 502, "proxy_error", err.Error())
+			return
+		}
+		buildUpstreamRequest := func(currentCredentials model.Credentials) (*http.Request, error) {
+			request, buildErr := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, upstreamURL, bytes.NewReader(body))
+			if buildErr != nil {
+				return nil, buildErr
+			}
+			copyDownstreamHeaders(request.Header, c.Request.Header)
+			injectProviderHeaders(request.Header, account.Provider, account.AuthType, currentCredentials, upstreamURL, s.cfg.GrokOAuth.ClientVersion)
+			return request, nil
+		}
+		upstreamRequest, err := buildUpstreamRequest(credentials)
+		if err != nil {
+			apiError(c, 500, "internal_error", "could not build upstream request")
 			return
 		}
 		response, err := client.Do(upstreamRequest)
@@ -152,7 +163,32 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
 			return
 		}
+		if response.StatusCode == http.StatusUnauthorized && account.Provider == model.ProviderGrok && account.AuthType == "oauth" && credentials.RefreshToken != "" {
+			response.Body.Close()
+			credentials, err = s.grokCredentialsForRequest(c.Request.Context(), account.Account, credentials, true)
+			if err != nil {
+				apiError(c, http.StatusUnauthorized, "reauth_required", err.Error())
+				return
+			}
+			upstreamRequest, err = buildUpstreamRequest(credentials)
+			if err != nil {
+				apiError(c, 500, "internal_error", "could not retry upstream request")
+				return
+			}
+			response, err = client.Do(upstreamRequest)
+			if err != nil {
+				s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, 502, started, "")
+				apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider after refreshing credentials")
+				return
+			}
+		}
 		defer response.Body.Close()
+		quotaCheckedAt := time.Now()
+		if quota, ok := quotaFromResponseHeaders(account.Quota, response.Header, quotaCheckedAt); ok {
+			if err := s.repo.UpdateAccountQuota(c.Request.Context(), account.ID, quota, quotaCheckedAt, nil); err != nil {
+				slog.Warn("update account quota failed", "account_id", account.ID, "error", err)
+			}
+		}
 		contentType := strings.ToLower(response.Header.Get("Content-Type"))
 		if strings.Contains(contentType, "text/event-stream") {
 			c.Writer.Header().Set("X-Accel-Buffering", "no")
@@ -206,7 +242,7 @@ func (s *Server) upstreamURL(provider model.Provider, kind routeKind, suffix str
 	return "", fmt.Errorf("endpoint is not supported by %s", provider)
 }
 
-func injectProviderHeaders(header http.Header, provider model.Provider, authType string, credentials model.Credentials) {
+func injectProviderHeaders(header http.Header, provider model.Provider, authType string, credentials model.Credentials, upstreamURL, grokClientVersion string) {
 	header.Set("Content-Type", "application/json")
 	switch provider {
 	case model.ProviderClaude:
@@ -231,10 +267,14 @@ func injectProviderHeaders(header http.Header, provider model.Provider, authType
 	case model.ProviderGrok:
 		header.Set("Authorization", "Bearer "+credentials.Bearer())
 		header.Set("Accept", "application/json, text/event-stream")
-		header.Set("User-Agent", "grok-cli/ai-unisub")
-		header.Set("X-Grok-Client-Version", "ai-unisub/0.1.0")
-		header.Set("x-grok-client-identifier", "grok-cli")
+		header.Set("User-Agent", "grok-shell/"+grokClientVersion+" ai-unisub")
+		header.Set("X-Grok-Client-Version", grokClientVersion)
+		header.Set("x-grok-client-identifier", "grok-shell")
 		header.Set("X-Grok-Client-Mode", "interactive")
+		if parsed, err := url.Parse(upstreamURL); err == nil && strings.EqualFold(parsed.Hostname(), "cli-chat-proxy.grok.com") {
+			header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+			header.Set("x-authenticateresponse", "authenticate-response")
+		}
 	}
 }
 
@@ -242,6 +282,8 @@ var strippedRequestHeaders = map[string]bool{
 	"authorization": true, "x-api-key": true, "x-goog-api-key": true, "cookie": true,
 	"chatgpt-account-id": true, "host": true, "content-length": true, "connection": true,
 	"proxy-connection": true, "keep-alive": true, "transfer-encoding": true, "upgrade": true,
+	"x-xai-token-auth": true, "x-authenticateresponse": true, "x-grok-client-version": true,
+	"x-grok-client-identifier": true, "x-grok-client-mode": true,
 }
 
 func copyDownstreamHeaders(target, source http.Header) {

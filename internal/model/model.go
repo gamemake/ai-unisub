@@ -34,11 +34,25 @@ type Account struct {
 	QuotaError                     *string         `json:"quota_error,omitempty"`
 	LastUsedAt                     *time.Time      `json:"last_used_at,omitempty"`
 	LastError                      *string         `json:"last_error,omitempty"`
-	APIKeyPrefix                   string          `json:"api_key_prefix"`
+	APIKeyCount                    int             `json:"api_key_count"`
 	CreatedAt                      time.Time       `json:"created_at"`
 	UpdatedAt                      time.Time       `json:"updated_at"`
+	Credentials                    json.RawMessage `json:"credentials,omitempty"`
 	CredentialsJSON                []byte          `json:"-"`
 	ProxyURL                       string          `json:"-"`
+}
+
+type APIKey struct {
+	ID          int64      `json:"id"`
+	AccountID   int64      `json:"account_id"`
+	AccountName string     `json:"account_name"`
+	Provider    Provider   `json:"provider"`
+	Name        string     `json:"name"`
+	KeyPrefix   string     `json:"key_prefix"`
+	Enabled     bool       `json:"enabled"`
+	RPMLimit    *int       `json:"rpm_limit,omitempty"`
+	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 type Credentials struct {
@@ -50,6 +64,10 @@ type Credentials struct {
 	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
 	OrganizationID   string `json:"organization_id,omitempty"`
 	TeamID           string `json:"team_id,omitempty"`
+	ClientID         string `json:"client_id,omitempty"`
+	Scope            string `json:"scope,omitempty"`
+	UserID           string `json:"user_id,omitempty"`
+	Email            string `json:"email,omitempty"`
 }
 
 func (c Credentials) Bearer() string {
@@ -62,7 +80,7 @@ func (c Credentials) Bearer() string {
 type ResolvedAccount struct {
 	Account
 	APIKeyID int64
-	RPMLimit *int
+	RPMLimit *int `json:"-"`
 }
 
 type UsageSummary struct {

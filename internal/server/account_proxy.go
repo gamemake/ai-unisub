@@ -38,12 +38,31 @@ func (s *Server) clientForAccount(account model.Account) (*http.Client, error) {
 	if value, ok := s.accountClients.Load(account.ID); ok {
 		return value.(*http.Client), nil
 	}
-	transport := newHTTPTransport()
+	proxyURL := ""
 	if account.ProxyConfigured {
 		raw, err := s.repo.ProxyURL(account)
 		if err != nil {
 			return nil, errors.New("could not read account proxy")
 		}
+		proxyURL = raw
+	}
+	client, err := newClientForProxy(proxyURL)
+	if err != nil {
+		return nil, err
+	}
+	value, loaded := s.accountClients.LoadOrStore(account.ID, client)
+	if loaded {
+		if transport, ok := client.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+		return value.(*http.Client), nil
+	}
+	return client, nil
+}
+
+func newClientForProxy(raw string) (*http.Client, error) {
+	transport := newHTTPTransport()
+	if raw != "" {
 		proxyURL, err := url.Parse(raw)
 		if err != nil {
 			return nil, errors.New("stored account proxy is invalid")
@@ -72,16 +91,10 @@ func (s *Server) clientForAccount(account model.Account) (*http.Client, error) {
 			return nil, errors.New("stored account proxy scheme is unsupported")
 		}
 	}
-	client := &http.Client{
+	return &http.Client{
 		Transport:     transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	value, loaded := s.accountClients.LoadOrStore(account.ID, client)
-	if loaded {
-		transport.CloseIdleConnections()
-		return value.(*http.Client), nil
-	}
-	return client, nil
+	}, nil
 }
 
 func (s *Server) closeAccountClient(accountID int64) {

@@ -717,24 +717,25 @@ WebSocket 需要覆盖 Sub2API 同等级别的测试场景：Upgrade 鉴权、�
 支持：
 
 ```text
-POST /admin/providers/grok/oauth/start
-POST /admin/providers/grok/oauth/exchange
-POST /admin/providers/grok/sso/exchange
+POST /admin/providers/grok/oauth/device/start
+POST /admin/providers/grok/oauth/device/poll
 ```
 
-标准 OAuth：
+当前采用 RFC 8628 device-code OAuth，适用于本地、Docker 和远程部署，不依赖浏览器能够回调服务端 loopback 地址：
 
 ```text
-Issuer:    https://auth.x.ai
-Authorize: https://auth.x.ai/oauth2/authorize
-Token:     https://auth.x.ai/oauth2/token
+Issuer:        https://auth.x.ai
+Device Code:   https://auth.x.ai/oauth2/device/code
+Token:         https://auth.x.ai/oauth2/token
 ```
 
 scope：
 
 ```text
-openid profile email offline_access grok-cli:access api:access
+openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write
 ```
+
+设备码仅保存在服务进程内存中，并绑定发起登录的管理员身份；授权成功后在同一数据库事务中创建账号和下游 API Key。Access Token 到期前一分钟使用 refresh token 自动续期；上游返回 401 时强制刷新并最多重试一次。
 
 SSO 导入可以作为第二阶段：
 
@@ -1123,18 +1124,18 @@ Content-Type: application/json
 
 暂不实现：
 
-- OAuth 浏览器流程。
-- 自动刷新。
+- Claude/Codex OAuth 浏览器流程。
+- Claude/Codex 自动刷新。
 - Codex WebSocket。
 
 ### 13.2 第二阶段：完整账号生命周期
 
 实现：
 
-- 三个平台 PKCE OAuth。
+- Claude/Codex PKCE OAuth；Grok device-code OAuth 已在第一阶段实现。
 - Claude sessionKey 换 OAuth。
 - Grok SSO 换 OAuth。
-- 后台 token refresh。
+- Claude/Codex 后台 token refresh；Grok refresh token 续期已在第一阶段实现。
 - 账号测试与状态维护。
 - 账号级 `singleflight` 和 SQLite 原子更新。
 - 三个平台额度适配器和定时刷新。

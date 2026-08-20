@@ -48,12 +48,12 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 	defer upstream.Close()
 
 	application, repo := testServer(t, upstream.URL+"/responses")
-	account, key, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
 		Name: "codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 	})
-	if err != nil || account.ID == 0 {
-		t.Fatal(err)
+	if account.ID == 0 {
+		t.Fatal("account was not created")
 	}
 
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
@@ -80,16 +80,70 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestProxyStoresUpstreamRateLimitQuota(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("x-ratelimit-limit-requests", "100")
+		w.Header().Set("x-ratelimit-remaining-requests", "73")
+		w.Header().Set("x-ratelimit-reset-requests", "2m")
+		w.Header().Set("x-ratelimit-limit-tokens", "10000")
+		w.Header().Set("x-ratelimit-remaining-tokens", "8400")
+		w.Header().Set("x-ratelimit-reset-tokens", "30s")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/responses")
+	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "quota-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "upstream-token"},
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	stored, err := repo.GetAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var quota struct {
+		Request struct {
+			Limit     float64 `json:"limit"`
+			Remaining float64 `json:"remaining"`
+			ResetAt   string  `json:"reset_at"`
+		} `json:"request_quota"`
+		Token struct {
+			Limit     float64 `json:"limit"`
+			Remaining float64 `json:"remaining"`
+			ResetAt   string  `json:"reset_at"`
+		} `json:"token_quota"`
+	}
+	if err := json.Unmarshal(stored.Quota, &quota); err != nil {
+		t.Fatal(err)
+	}
+	if quota.Request.Limit != 100 || quota.Request.Remaining != 73 || quota.Request.ResetAt == "" {
+		t.Fatalf("request quota = %+v", quota.Request)
+	}
+	if quota.Token.Limit != 10000 || quota.Token.Remaining != 8400 || quota.Token.ResetAt == "" {
+		t.Fatalf("token quota = %+v", quota.Token)
+	}
+	if stored.QuotaCheckedAt == nil || stored.QuotaError != nil {
+		t.Fatalf("quota metadata checked=%v error=%v", stored.QuotaCheckedAt, stored.QuotaError)
+	}
+}
+
 func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("unsafe path reached upstream") }))
 	defer upstream.Close()
 	application, repo := testServer(t, upstream.URL+"/responses")
-	_, key, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
 		Name: "grok", Provider: model.ProviderGrok, AuthType: "oauth", Credentials: model.Credentials{AccessToken: "token"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, path := range []string{"/v1/responses/../admin", "/v1/responses/a%252fb", "/v1/responses/a//b"} {
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"x"}`))
 		request.Header.Set("Authorization", "Bearer "+key)
@@ -99,6 +153,19 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 			t.Errorf("unsafe path %q returned %d", path, recorder.Code)
 		}
 	}
+}
+
+func createAccountWithKey(t *testing.T, repo *repository.Repository, p repository.CreateAccountParams) (model.Account, string) {
+	t.Helper()
+	account, err := repo.CreateAccount(context.Background(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, key, err := repo.CreateAPIKey(context.Background(), repository.CreateAPIKeyParams{AccountID: account.ID, Name: account.Name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return account, key
 }
 
 func testServer(t *testing.T, responsesURL string) (*Server, *repository.Repository) {

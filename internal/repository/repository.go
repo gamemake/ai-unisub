@@ -34,8 +34,29 @@ type CreateAccountParams struct {
 	ConcurrencyLimit               int
 	ConcurrencyQueueTimeoutSeconds int
 	ProxyURL                       string
-	RPMLimit                       *int
 	TokenExpiresAt                 *time.Time
+}
+
+type UpdateAccountParams struct {
+	Name                           string
+	Enabled                        bool
+	ConcurrencyLimit               int
+	ConcurrencyQueueTimeoutSeconds int
+	ProxyURL                       *string
+}
+
+type CreateAPIKeyParams struct {
+	AccountID int64
+	Name      string
+	RPMLimit  *int
+	ExpiresAt *time.Time
+}
+
+type UpdateAPIKeyParams struct {
+	Name      string
+	Enabled   bool
+	RPMLimit  *int
+	ExpiresAt *time.Time
 }
 
 func New(db *sql.DB) *Repository {
@@ -91,53 +112,34 @@ func (r *Repository) ChangeAdminPassword(ctx context.Context, username, current,
 	return err
 }
 
-func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (model.Account, string, error) {
+func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (model.Account, error) {
 	credentialJSON, err := json.Marshal(p.Credentials)
 	if err != nil {
-		return model.Account{}, "", err
+		return model.Account{}, err
 	}
 	metadata := p.Metadata
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
 	}
-	plaintextKey, keyHash, prefix, err := generateAPIKey()
-	if err != nil {
-		return model.Account{}, "", err
-	}
 	limit := p.ConcurrencyLimit
 	if limit <= 0 {
 		limit = 1
 	}
-
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return model.Account{}, "", err
-	}
-	defer tx.Rollback()
 	var expires any
 	if p.TokenExpiresAt != nil {
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO accounts
+	result, err := r.db.ExecContext(ctx, `INSERT INTO accounts
 		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
 		VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
 	if err != nil {
-		return model.Account{}, "", err
+		return model.Account{}, err
 	}
 	accountID, err := result.LastInsertId()
 	if err != nil {
-		return model.Account{}, "", err
+		return model.Account{}, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_prefix, rpm_limit, concurrency)
-		VALUES(?,?,?,?,?,?)`, accountID, p.Name, keyHash[:], prefix, p.RPMLimit, limit)
-	if err != nil {
-		return model.Account{}, "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return model.Account{}, "", err
-	}
-	account, err := r.GetAccount(ctx, accountID)
-	return account, plaintextKey, err
+	return r.GetAccount(ctx, accountID)
 }
 
 func (r *Repository) ListAccounts(ctx context.Context) ([]model.Account, error) {
@@ -170,7 +172,7 @@ func (r *Repository) ResolveAPIKey(ctx context.Context, plaintext string) (model
 		return model.ResolvedAccount{}, ErrUnauthorized
 	}
 	hash := sha256.Sum256([]byte(plaintext))
-	query := `SELECT ` + accountColumns + `, k.id, k.rpm_limit
+	query := `SELECT ` + accountBaseColumns + `, k.id, k.rpm_limit
 		FROM api_keys k JOIN accounts a ON a.id=k.account_id
 		WHERE k.key_hash=? AND k.enabled=1 AND a.enabled=1
 		AND (k.expires_at IS NULL OR k.expires_at > ?)`
@@ -196,6 +198,58 @@ func (r *Repository) Credentials(ctx context.Context, account model.Account) (mo
 	return credentials, nil
 }
 
+func (r *Repository) UpdateAccountCredentials(ctx context.Context, id int64, credentials model.Credentials, expiresAt *time.Time) error {
+	credentialJSON, err := json.Marshal(credentials)
+	if err != nil {
+		return err
+	}
+	var expires any
+	if expiresAt != nil {
+		expires = expiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE accounts
+		SET credentials_json=?, token_expires_at=?, status='active', last_error=NULL, updated_at=CURRENT_TIMESTAMP
+		WHERE id=?`, credentialJSON, expires, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
+func (r *Repository) UpdateAccountQuota(ctx context.Context, id int64, quota json.RawMessage, checkedAt time.Time, quotaErr *string) error {
+	var quotaValue any
+	if len(quota) > 0 {
+		if !json.Valid(quota) {
+			return errors.New("quota must be valid JSON")
+		}
+		quotaValue = string(quota)
+	}
+	var errorValue any
+	if quotaErr != nil && strings.TrimSpace(*quotaErr) != "" {
+		errorValue = strings.TrimSpace(*quotaErr)
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE accounts
+		SET quota_json=?, quota_checked_at=?, quota_error=?, updated_at=CURRENT_TIMESTAMP
+		WHERE id=?`, quotaValue, checkedAt.UTC().Format(time.RFC3339Nano), errorValue, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
+func (r *Repository) UpdateAccountQuotaError(ctx context.Context, id int64, quotaErr string) error {
+	quotaErr = strings.TrimSpace(quotaErr)
+	var errorValue any
+	if quotaErr != "" {
+		errorValue = quotaErr
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET quota_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, errorValue, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
 func (r *Repository) ProxyURL(account model.Account) (string, error) {
 	return account.ProxyURL, nil
 }
@@ -214,6 +268,43 @@ func (r *Repository) SetConcurrencyQueueTimeout(ctx context.Context, id int64, t
 		return err
 	}
 	return requireAffected(result)
+}
+
+func (r *Repository) UpdateAccount(ctx context.Context, id int64, p UpdateAccountParams) (model.Account, error) {
+	limit := p.ConcurrencyLimit
+	if limit <= 0 {
+		limit = 1
+	}
+	enabled := 0
+	if p.Enabled {
+		enabled = 1
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Account{}, err
+	}
+	defer tx.Rollback()
+
+	var result sql.Result
+	if p.ProxyURL != nil {
+		result, err = tx.ExecContext(ctx, `UPDATE accounts
+			SET name=?, enabled=?, concurrency_limit=?, concurrency_queue_timeout_seconds=?, proxy_url=?, updated_at=CURRENT_TIMESTAMP
+			WHERE id=?`, p.Name, enabled, limit, p.ConcurrencyQueueTimeoutSeconds, *p.ProxyURL, id)
+	} else {
+		result, err = tx.ExecContext(ctx, `UPDATE accounts
+			SET name=?, enabled=?, concurrency_limit=?, concurrency_queue_timeout_seconds=?, updated_at=CURRENT_TIMESTAMP
+			WHERE id=?`, p.Name, enabled, limit, p.ConcurrencyQueueTimeoutSeconds, id)
+	}
+	if err != nil {
+		return model.Account{}, err
+	}
+	if err := requireAffected(result); err != nil {
+		return model.Account{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Account{}, err
+	}
+	return r.GetAccount(ctx, id)
 }
 
 func (r *Repository) SetAccountEnabled(ctx context.Context, id int64, enabled bool) error {
@@ -236,12 +327,97 @@ func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {
 	return requireAffected(result)
 }
 
+func (r *Repository) CreateAPIKey(ctx context.Context, p CreateAPIKeyParams) (model.APIKey, string, error) {
+	if _, err := r.GetAccount(ctx, p.AccountID); err != nil {
+		return model.APIKey{}, "", err
+	}
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		name = "default"
+	}
+	plaintext, hash, prefix, err := generateAPIKey()
+	if err != nil {
+		return model.APIKey{}, "", err
+	}
+	var rpm any
+	if p.RPMLimit != nil {
+		rpm = *p.RPMLimit
+	}
+	var expires any
+	if p.ExpiresAt != nil {
+		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := r.db.ExecContext(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_prefix, rpm_limit, expires_at)
+		VALUES(?,?,?,?,?,?)`, p.AccountID, name, hash[:], prefix, rpm, expires)
+	if err != nil {
+		return model.APIKey{}, "", err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.APIKey{}, "", err
+	}
+	key, err := r.GetAPIKey(ctx, id)
+	return key, plaintext, err
+}
+
+func (r *Repository) ListAPIKeys(ctx context.Context) ([]model.APIKey, error) {
+	rows, err := r.db.QueryContext(ctx, apiKeySelect+` ORDER BY k.id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var keys []model.APIKey
+	for rows.Next() {
+		key, err := scanAPIKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, key)
+	}
+	return keys, rows.Err()
+}
+
+func (r *Repository) GetAPIKey(ctx context.Context, id int64) (model.APIKey, error) {
+	key, err := scanAPIKey(r.db.QueryRowContext(ctx, apiKeySelect+` WHERE k.id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.APIKey{}, ErrNotFound
+	}
+	return key, err
+}
+
+func (r *Repository) UpdateAPIKey(ctx context.Context, id int64, p UpdateAPIKeyParams) (model.APIKey, error) {
+	name := strings.TrimSpace(p.Name)
+	if name == "" {
+		return model.APIKey{}, errors.New("name is required")
+	}
+	enabled := 0
+	if p.Enabled {
+		enabled = 1
+	}
+	var rpm any
+	if p.RPMLimit != nil {
+		rpm = *p.RPMLimit
+	}
+	var expires any
+	if p.ExpiresAt != nil {
+		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE api_keys SET name=?, enabled=?, rpm_limit=?, expires_at=? WHERE id=?`, name, enabled, rpm, expires, id)
+	if err != nil {
+		return model.APIKey{}, err
+	}
+	if err := requireAffected(result); err != nil {
+		return model.APIKey{}, err
+	}
+	return r.GetAPIKey(ctx, id)
+}
+
 func (r *Repository) ResetAPIKey(ctx context.Context, id int64) (string, error) {
 	plaintext, hash, prefix, err := generateAPIKey()
 	if err != nil {
 		return "", err
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE api_keys SET key_hash=?, key_prefix=?, created_at=CURRENT_TIMESTAMP WHERE account_id=?`, hash[:], prefix, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE api_keys SET key_hash=?, key_prefix=?, created_at=CURRENT_TIMESTAMP WHERE id=?`, hash[:], prefix, id)
 	if err != nil {
 		return "", err
 	}
@@ -249,6 +425,14 @@ func (r *Repository) ResetAPIKey(ctx context.Context, id int64) (string, error) 
 		return "", err
 	}
 	return plaintext, nil
+}
+
+func (r *Repository) DeleteAPIKey(ctx context.Context, id int64) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM api_keys WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
 }
 
 func (r *Repository) RecordUsage(ctx context.Context, accountID int64, provider model.Provider, endpoint string, status int, started time.Time, requestID string) {
@@ -266,94 +450,112 @@ func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.U
 	return summary, err
 }
 
-const accountColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
+const accountBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
 	a.metadata_json, a.proxy_url, a.status, a.enabled, a.concurrency_limit, a.concurrency_queue_timeout_seconds, a.token_expires_at, a.quota_json,
-	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, k.key_prefix, a.created_at, a.updated_at`
+	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_at, a.updated_at`
 
-const accountSelect = `SELECT ` + accountColumns + ` FROM accounts a JOIN api_keys k ON k.account_id=a.id`
+const accountSelect = `SELECT ` + accountBaseColumns + `, (SELECT COUNT(*) FROM api_keys keys WHERE keys.account_id=a.id) FROM accounts a`
+
+const apiKeySelect = `SELECT k.id, k.account_id, a.name, a.provider, k.name, k.key_prefix, k.enabled, k.rpm_limit, k.expires_at, k.created_at
+	FROM api_keys k JOIN accounts a ON a.id=k.account_id`
 
 type scanner interface{ Scan(...any) error }
 
+type accountScan struct {
+	account      model.Account
+	provider     string
+	metadata     string
+	created      string
+	updated      string
+	enabled      int
+	tokenExpires sql.NullString
+	quota        sql.NullString
+	quotaChecked sql.NullString
+	quotaError   sql.NullString
+	lastUsed     sql.NullString
+	lastError    sql.NullString
+}
+
+func accountScanDest(row *accountScan) []any {
+	return []any{
+		&row.account.ID, &row.account.Name, &row.provider, &row.account.AuthType, &row.account.CredentialsJSON,
+		&row.metadata, &row.account.ProxyURL, &row.account.Status, &row.enabled, &row.account.ConcurrencyLimit, &row.account.ConcurrencyQueueTimeoutSeconds, &row.tokenExpires, &row.quota,
+		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.created, &row.updated,
+	}
+}
+
+func finishAccount(row accountScan) model.Account {
+	a := row.account
+	a.Provider = model.Provider(row.provider)
+	a.Metadata = json.RawMessage(row.metadata)
+	a.Enabled = row.enabled == 1
+	a.ProxyConfigured = a.ProxyURL != ""
+	a.TokenExpiresAt = parseTime(row.tokenExpires)
+	a.QuotaCheckedAt = parseTime(row.quotaChecked)
+	a.LastUsedAt = parseTime(row.lastUsed)
+	if row.quota.Valid {
+		a.Quota = json.RawMessage(row.quota.String)
+	}
+	if row.quotaError.Valid {
+		a.QuotaError = &row.quotaError.String
+	}
+	if row.lastError.Valid {
+		a.LastError = &row.lastError.String
+	}
+	a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", row.created)
+	a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", row.updated)
+	return a
+}
+
 func scanAccount(s scanner) (model.Account, error) {
-	var a model.Account
-	var provider, metadata, created, updated string
-	var enabled int
-	var tokenExpires, quota, quotaChecked, quotaError, lastUsed, lastError sql.NullString
-	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsJSON,
-		&metadata, &a.ProxyURL, &a.Status, &enabled, &a.ConcurrencyLimit, &a.ConcurrencyQueueTimeoutSeconds, &tokenExpires, &quota,
-		&quotaChecked, &quotaError, &lastUsed, &lastError, &a.APIKeyPrefix, &created, &updated)
-	if err != nil {
+	var row accountScan
+	dest := append(accountScanDest(&row), &row.account.APIKeyCount)
+	if err := s.Scan(dest...); err != nil {
 		return model.Account{}, err
 	}
-	a.Provider = model.Provider(provider)
-	a.Metadata = json.RawMessage(metadata)
-	a.Enabled = enabled == 1
-	a.ProxyConfigured = a.ProxyURL != ""
-	a.TokenExpiresAt = parseTime(tokenExpires)
-	a.QuotaCheckedAt = parseTime(quotaChecked)
-	a.LastUsedAt = parseTime(lastUsed)
-	if quota.Valid {
-		a.Quota = json.RawMessage(quota.String)
-	}
-	if quotaError.Valid {
-		a.QuotaError = &quotaError.String
-	}
-	if lastError.Valid {
-		a.LastError = &lastError.String
-	}
-	a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-	a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
-	return a, nil
+	return finishAccount(row), nil
 }
 
 func scanResolved(s scanner) (model.Account, int64, *int, error) {
-	a, err := scanAccountWithTail(s)
-	return a.account, a.apiKeyID, a.rpmLimit, err
-}
-
-type accountWithTail struct {
-	account  model.Account
-	apiKeyID int64
-	rpmLimit *int
-}
-
-func scanAccountWithTail(s scanner) (accountWithTail, error) {
-	var a model.Account
-	var provider, metadata, created, updated string
-	var enabled int
-	var tokenExpires, quota, quotaChecked, quotaError, lastUsed, lastError sql.NullString
+	var row accountScan
 	var apiKeyID int64
-	var rpmLimit sql.NullInt64
-	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsJSON,
-		&metadata, &a.ProxyURL, &a.Status, &enabled, &a.ConcurrencyLimit, &a.ConcurrencyQueueTimeoutSeconds, &tokenExpires, &quota,
-		&quotaChecked, &quotaError, &lastUsed, &lastError, &a.APIKeyPrefix, &created, &updated, &apiKeyID, &rpmLimit)
-	if err != nil {
-		return accountWithTail{}, err
+	var rpm sql.NullInt64
+	dest := append(accountScanDest(&row), &apiKeyID, &rpm)
+	if err := s.Scan(dest...); err != nil {
+		return model.Account{}, 0, nil, err
 	}
-	a.Provider = model.Provider(provider)
-	a.Metadata = json.RawMessage(metadata)
-	a.Enabled = enabled == 1
-	a.ProxyConfigured = a.ProxyURL != ""
-	a.TokenExpiresAt = parseTime(tokenExpires)
-	a.QuotaCheckedAt = parseTime(quotaChecked)
-	a.LastUsedAt = parseTime(lastUsed)
-	if quota.Valid {
-		a.Quota = json.RawMessage(quota.String)
-	}
-	if quotaError.Valid {
-		a.QuotaError = &quotaError.String
-	}
-	if lastError.Valid {
-		a.LastError = &lastError.String
-	}
-	a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-	a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
 	var limit *int
-	if rpmLimit.Valid {
-		value := int(rpmLimit.Int64)
+	if rpm.Valid {
+		value := int(rpm.Int64)
 		limit = &value
 	}
-	return accountWithTail{account: a, apiKeyID: apiKeyID, rpmLimit: limit}, nil
+	return finishAccount(row), apiKeyID, limit, nil
+}
+
+func scanAPIKey(s scanner) (model.APIKey, error) {
+	var key model.APIKey
+	var provider string
+	var enabled int
+	var rpm sql.NullInt64
+	var expires, created sql.NullString
+	if err := s.Scan(&key.ID, &key.AccountID, &key.AccountName, &provider, &key.Name, &key.KeyPrefix, &enabled, &rpm, &expires, &created); err != nil {
+		return model.APIKey{}, err
+	}
+	key.Provider = model.Provider(provider)
+	key.Enabled = enabled == 1
+	if rpm.Valid {
+		value := int(rpm.Int64)
+		key.RPMLimit = &value
+	}
+	key.ExpiresAt = parseTime(expires)
+	if created.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", created.String); err == nil {
+			key.CreatedAt = parsed
+		} else if parsed, err := time.Parse(time.RFC3339Nano, created.String); err == nil {
+			key.CreatedAt = parsed
+		}
+	}
+	return key, nil
 }
 
 func parseTime(value sql.NullString) *time.Time {

@@ -62,7 +62,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS api_keys (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			account_id INTEGER NOT NULL UNIQUE,
+			account_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			key_hash BLOB NOT NULL UNIQUE,
 			key_prefix TEXT NOT NULL,
@@ -73,6 +73,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
 		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_keys_account ON api_keys(account_id)`,
 		`CREATE TABLE IF NOT EXISTS admin (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL UNIQUE,
@@ -163,7 +164,61 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return err
 		}
 	}
+	if err := rebuildAPIKeysWithoutAccountUnique(ctx, db, now); err != nil {
+		return err
+	}
 	return nil
+}
+
+func rebuildAPIKeysWithoutAccountUnique(ctx context.Context, db *sql.DB, now string) error {
+	var migrated int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=5`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer db.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE api_keys_v5 (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		account_id INTEGER NOT NULL,
+		name TEXT NOT NULL,
+		key_hash BLOB NOT NULL UNIQUE,
+		key_prefix TEXT NOT NULL,
+		enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
+		rpm_limit INTEGER,
+		concurrency INTEGER,
+		expires_at TEXT,
+		created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+	)`); err != nil {
+		return fmt.Errorf("rebuild api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO api_keys_v5(id, account_id, name, key_hash, key_prefix, enabled, rpm_limit, concurrency, expires_at, created_at)
+		SELECT id, account_id, name, key_hash, key_prefix, enabled, rpm_limit, concurrency, expires_at, created_at FROM api_keys`); err != nil {
+		return fmt.Errorf("copy api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE api_keys`); err != nil {
+		return fmt.Errorf("drop api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE api_keys_v5 RENAME TO api_keys`); err != nil {
+		return fmt.Errorf("rename api_keys: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_api_keys_account ON api_keys(account_id)`); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(5, ?)`, now); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func dropColumnIfExists(ctx context.Context, db *sql.DB, table, column string) error {

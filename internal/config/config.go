@@ -17,6 +17,26 @@ type ProviderURLs struct {
 	CodexModels  string
 	GrokAPI      string
 	GrokModels   string
+	GrokBilling  string
+}
+
+type GrokOAuthConfig struct {
+	Issuer        string
+	ClientID      string
+	Scopes        []string
+	ClientVersion string
+}
+
+const (
+	DefaultGrokOAuthIssuer        = "https://auth.x.ai"
+	DefaultGrokOAuthClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
+	DefaultGrokOAuthClientVersion = "1.0.6"
+	DefaultGrokBillingURL         = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+)
+
+var DefaultGrokOAuthScopes = []string{
+	"openid", "profile", "email", "offline_access", "grok-cli:access", "api:access",
+	"conversations:read", "conversations:write", "workspaces:read", "workspaces:write",
 }
 
 const DefaultConcurrencyQueueTimeout = 3 * time.Minute
@@ -33,6 +53,7 @@ type Config struct {
 	RequestLogRetentionDays int
 	AllowTestUpstreams      bool
 	Providers               ProviderURLs
+	GrokOAuth               GrokOAuthConfig
 }
 
 func Load() (Config, error) {
@@ -47,6 +68,12 @@ func Load() (Config, error) {
 		ConcurrencyQueueTimeout: time.Duration(int64Env("UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS", int64(DefaultConcurrencyQueueTimeout/time.Second))) * time.Second,
 		RequestLogRetentionDays: int(int64Env("UNISUB_REQUEST_LOG_RETENTION_DAYS", 30)),
 		AllowTestUpstreams:      boolEnv("UNISUB_ALLOW_TEST_UPSTREAMS", false),
+		GrokOAuth: GrokOAuthConfig{
+			Issuer:        env("UNISUB_GROK_OAUTH_ISSUER", DefaultGrokOAuthIssuer),
+			ClientID:      env("UNISUB_GROK_OAUTH_CLIENT_ID", DefaultGrokOAuthClientID),
+			Scopes:        fieldsEnv("UNISUB_GROK_OAUTH_SCOPES", DefaultGrokOAuthScopes),
+			ClientVersion: env("UNISUB_GROK_CLIENT_VERSION", DefaultGrokOAuthClientVersion),
+		},
 		Providers: ProviderURLs{
 			ClaudeAPI:    env("UNISUB_CLAUDE_API_URL", "https://api.anthropic.com/v1"),
 			ClaudeModels: env("UNISUB_CLAUDE_MODELS_URL", "https://api.anthropic.com/v1/models"),
@@ -54,6 +81,7 @@ func Load() (Config, error) {
 			CodexModels:  env("UNISUB_CODEX_MODELS_URL", "https://chatgpt.com/backend-api/codex/models"),
 			GrokAPI:      env("UNISUB_GROK_API_URL", "https://cli-chat-proxy.grok.com/v1/responses"),
 			GrokModels:   env("UNISUB_GROK_MODELS_URL", "https://cli-chat-proxy.grok.com/v1/models"),
+			GrokBilling:  env("UNISUB_GROK_BILLING_URL", DefaultGrokBillingURL),
 		},
 	}
 
@@ -70,6 +98,9 @@ func Load() (Config, error) {
 		return Config{}, errors.New("UNISUB_REQUEST_LOG_RETENTION_DAYS must be between 1 and 3650")
 	}
 	if err := cfg.validateUpstreams(); err != nil {
+		return Config{}, err
+	}
+	if err := cfg.validateGrokOAuth(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
@@ -91,11 +122,12 @@ func (c Config) validateUpstreams() error {
 		"CodexModels":  {"https://chatgpt.com/"},
 		"GrokAPI":      {"https://cli-chat-proxy.grok.com/", "https://api.x.ai/"},
 		"GrokModels":   {"https://cli-chat-proxy.grok.com/", "https://api.x.ai/"},
+		"GrokBilling":  {"https://cli-chat-proxy.grok.com/"},
 	}
 	values := map[string]string{
 		"ClaudeAPI": c.Providers.ClaudeAPI, "ClaudeModels": c.Providers.ClaudeModels,
 		"CodexAPI": c.Providers.CodexAPI, "CodexModels": c.Providers.CodexModels,
-		"GrokAPI": c.Providers.GrokAPI, "GrokModels": c.Providers.GrokModels,
+		"GrokAPI": c.Providers.GrokAPI, "GrokModels": c.Providers.GrokModels, "GrokBilling": c.Providers.GrokBilling,
 	}
 	for name, value := range values {
 		ok := false
@@ -108,6 +140,19 @@ func (c Config) validateUpstreams() error {
 		if !ok {
 			return fmt.Errorf("%s is not an allowed official upstream URL", name)
 		}
+	}
+	return nil
+}
+
+func (c Config) validateGrokOAuth() error {
+	if strings.TrimSpace(c.GrokOAuth.ClientID) == "" {
+		return errors.New("UNISUB_GROK_OAUTH_CLIENT_ID must not be empty")
+	}
+	if len(c.GrokOAuth.Scopes) == 0 {
+		return errors.New("UNISUB_GROK_OAUTH_SCOPES must not be empty")
+	}
+	if !c.AllowTestUpstreams && strings.TrimRight(c.GrokOAuth.Issuer, "/") != DefaultGrokOAuthIssuer {
+		return errors.New("UNISUB_GROK_OAUTH_ISSUER must use the official https://auth.x.ai issuer")
 	}
 	return nil
 }
@@ -160,4 +205,12 @@ func boolEnv(name string, fallback bool) bool {
 		return fallback
 	}
 	return parsed
+}
+
+func fieldsEnv(name string, fallback []string) []string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return append([]string(nil), fallback...)
+	}
+	return strings.Fields(strings.ReplaceAll(value, ",", " "))
 }

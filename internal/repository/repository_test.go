@@ -33,7 +33,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	account, key, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateAccount(ctx, CreateAccountParams{
 		Name: "codex-one", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-secret", ChatGPTAccountID: "acct-1"},
 		ProxyURL:    "socks5://proxy-user:proxy-pass@127.0.0.1:1080", ConcurrencyQueueTimeoutSeconds: 15,
@@ -41,8 +41,16 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key == "" || account.APIKeyPrefix == "" {
+	createdKey, key, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "codex-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key == "" || createdKey.KeyPrefix == "" || createdKey.AccountID != account.ID {
 		t.Fatal("account key was not returned")
+	}
+	account, err = repo.GetAccount(ctx, account.ID)
+	if err != nil || account.APIKeyCount != 1 {
+		t.Fatalf("key count = %+v err=%v", account, err)
 	}
 	if !account.ProxyConfigured || account.ProxyURL == "" {
 		t.Fatal("account proxy was not stored")
@@ -96,7 +104,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 		t.Fatalf("updated queue timeout: %+v err=%v", updated, err)
 	}
 
-	newKey, err := repo.ResetAPIKey(ctx, account.ID)
+	newKey, err := repo.ResetAPIKey(ctx, createdKey.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,5 +119,92 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	}
 	if _, err := repo.ResolveAPIKey(ctx, newKey); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("disabled account resolved: %v", err)
+	}
+}
+
+func TestUpdateAccountSettings(t *testing.T) {
+	ctx := context.Background()
+	repo := testRepository(t)
+	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+		Name: "edit-me", Provider: model.ProviderGrok, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token"},
+		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared := ""
+	updated, err := repo.UpdateAccount(ctx, account.ID, UpdateAccountParams{
+		Name: "edited", Enabled: false, ConcurrencyLimit: 4,
+		ConcurrencyQueueTimeoutSeconds: 20, ProxyURL: &cleared,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "edited" || updated.Enabled || updated.ConcurrencyLimit != 4 || updated.ConcurrencyQueueTimeoutSeconds != 20 {
+		t.Fatalf("updated account = %+v", updated)
+	}
+	if updated.ProxyConfigured {
+		t.Fatalf("proxy was not cleared: %+v", updated)
+	}
+	kept, err := repo.UpdateAccount(ctx, account.ID, UpdateAccountParams{
+		Name: "edited-again", Enabled: true, ConcurrencyLimit: 2, ConcurrencyQueueTimeoutSeconds: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept.Name != "edited-again" || !kept.Enabled || kept.ConcurrencyLimit != 2 {
+		t.Fatalf("kept proxy update = %+v", kept)
+	}
+	if kept.ProxyConfigured {
+		t.Fatal("cleared proxy came back")
+	}
+}
+
+func TestMultipleAPIKeysCanBindToOneAccount(t *testing.T) {
+	ctx := context.Background()
+	repo := testRepository(t)
+	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+		Name: "shared", Provider: model.ProviderGrok, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, firstPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, secondPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "second"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID || firstPlain == secondPlain {
+		t.Fatal("keys were not unique")
+	}
+	resolvedFirst, err := repo.ResolveAPIKey(ctx, firstPlain)
+	if err != nil || resolvedFirst.ID != account.ID || resolvedFirst.APIKeyID != first.ID {
+		t.Fatalf("first key resolve = %+v err=%v", resolvedFirst, err)
+	}
+	resolvedSecond, err := repo.ResolveAPIKey(ctx, secondPlain)
+	if err != nil || resolvedSecond.APIKeyID != second.ID {
+		t.Fatalf("second key resolve = %+v err=%v", resolvedSecond, err)
+	}
+	listed, err := repo.ListAPIKeys(ctx)
+	if err != nil || len(listed) != 2 {
+		t.Fatalf("list keys = %+v err=%v", listed, err)
+	}
+	account, err = repo.GetAccount(ctx, account.ID)
+	if err != nil || account.APIKeyCount != 2 {
+		t.Fatalf("key count = %+v err=%v", account, err)
+	}
+	if err := repo.DeleteAPIKey(ctx, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ResolveAPIKey(ctx, firstPlain); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("deleted key still resolved: %v", err)
+	}
+	if _, err := repo.ResolveAPIKey(ctx, secondPlain); err != nil {
+		t.Fatalf("remaining key invalid: %v", err)
 	}
 }

@@ -26,6 +26,9 @@ type Server struct {
 	rates            map[string]rateWindow
 	requestLogCancel context.CancelFunc
 	requestLogWG     sync.WaitGroup
+	grokOAuthMu      sync.Mutex
+	grokOAuthFlows   map[string]*grokOAuthFlow
+	grokRefreshLocks sync.Map
 }
 
 type rateWindow struct {
@@ -43,9 +46,21 @@ func New(cfg config.Config, repo *repository.Repository) *Server {
 	if cfg.RequestLogRetentionDays <= 0 {
 		cfg.RequestLogRetentionDays = 30
 	}
+	if cfg.GrokOAuth.Issuer == "" {
+		cfg.GrokOAuth.Issuer = config.DefaultGrokOAuthIssuer
+	}
+	if cfg.GrokOAuth.ClientID == "" {
+		cfg.GrokOAuth.ClientID = config.DefaultGrokOAuthClientID
+	}
+	if len(cfg.GrokOAuth.Scopes) == 0 {
+		cfg.GrokOAuth.Scopes = append([]string(nil), config.DefaultGrokOAuthScopes...)
+	}
+	if cfg.GrokOAuth.ClientVersion == "" {
+		cfg.GrokOAuth.ClientVersion = config.DefaultGrokOAuthClientVersion
+	}
 	s := &Server{
 		cfg: cfg, repo: repo, engine: gin.New(), signer: tokenSigner{key: cfg.AdminSigningKey()},
-		rates: map[string]rateWindow{},
+		rates: map[string]rateWindow{}, grokOAuthFlows: map[string]*grokOAuthFlow{},
 	}
 	s.routes()
 	s.startRequestLogCleanup()
@@ -69,14 +84,22 @@ func (s *Server) routes() {
 	admin.GET("/accounts", s.listAccounts)
 	admin.POST("/accounts", s.createAccount)
 	admin.GET("/accounts/:id", s.getAccount)
+	admin.PUT("/accounts/:id", s.updateAccount)
 	admin.DELETE("/accounts/:id", s.deleteAccount)
 	admin.POST("/accounts/:id/enable", s.enableAccount)
 	admin.POST("/accounts/:id/disable", s.disableAccount)
 	admin.PUT("/accounts/:id/proxy", s.updateAccountProxy)
 	admin.PUT("/accounts/:id/concurrency-queue", s.updateConcurrencyQueue)
-	admin.POST("/accounts/:id/api-key/reset", s.resetAPIKey)
 	admin.GET("/accounts/:id/usage", s.accountUsage)
+	admin.POST("/accounts/:id/usage/refresh", s.refreshAccountUsage)
 	admin.GET("/usage/summary", s.usageSummary)
+	admin.GET("/api-keys", s.listAPIKeys)
+	admin.POST("/api-keys", s.createAPIKey)
+	admin.PUT("/api-keys/:id", s.updateAPIKey)
+	admin.POST("/api-keys/:id/reset", s.resetAPIKey)
+	admin.DELETE("/api-keys/:id", s.deleteAPIKey)
+	admin.POST("/providers/grok/oauth/device/start", s.startGrokOAuthDevice)
+	admin.POST("/providers/grok/oauth/device/poll", s.pollGrokOAuthDevice)
 
 	// Root endpoints resolve the provider exclusively from the account-bound key.
 	s.engine.GET("/v1/models", s.proxyHandler("", routeModels, ""))
@@ -198,6 +221,12 @@ func (s *Server) Shutdown(context.Context) error {
 		}
 		return true
 	})
+	s.grokOAuthMu.Lock()
+	for id, flow := range s.grokOAuthFlows {
+		closeHTTPClient(flow.Client)
+		delete(s.grokOAuthFlows, id)
+	}
+	s.grokOAuthMu.Unlock()
 	return nil
 }
 

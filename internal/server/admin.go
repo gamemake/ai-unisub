@@ -66,7 +66,6 @@ type createAccountRequest struct {
 	ConcurrencyLimit               int               `json:"concurrency_limit"`
 	ConcurrencyQueueTimeoutSeconds int               `json:"concurrency_queue_timeout_seconds"`
 	ProxyURL                       string            `json:"proxy_url"`
-	RPMLimit                       *int              `json:"rpm_limit"`
 	TokenExpiresAt                 *time.Time        `json:"token_expires_at"`
 }
 
@@ -104,17 +103,17 @@ func (s *Server) createAccount(c *gin.Context) {
 		apiError(c, 400, "invalid_request", err.Error())
 		return
 	}
-	account, key, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
+	account, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
 		Name: strings.TrimSpace(request.Name), Provider: request.Provider, AuthType: request.AuthType,
 		Credentials: request.Credentials, Metadata: request.Metadata, ConcurrencyLimit: request.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
-		RPMLimit: request.RPMLimit, TokenExpiresAt: request.TokenExpiresAt,
+		TokenExpiresAt: request.TokenExpiresAt,
 	})
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not create account")
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"account": account, "api_key": key, "warning": "This API key is shown only once."})
+	c.JSON(http.StatusCreated, gin.H{"account": account})
 }
 
 func (s *Server) listAccounts(c *gin.Context) {
@@ -135,7 +134,76 @@ func (s *Server) getAccount(c *gin.Context) {
 		return
 	}
 	usage, _ := s.repo.UsageSummary(c.Request.Context(), account.ID)
-	c.JSON(200, gin.H{"account": account, "local_usage": usage})
+	c.JSON(200, gin.H{"account": accountWithCredentials(account), "local_usage": usage})
+}
+
+type updateAccountRequest struct {
+	Name                           string  `json:"name"`
+	Enabled                        bool    `json:"enabled"`
+	ConcurrencyLimit               int     `json:"concurrency_limit"`
+	ConcurrencyQueueTimeoutSeconds int                `json:"concurrency_queue_timeout_seconds"`
+	ProxyURL                       *string            `json:"proxy_url"`
+	Credentials                    *model.Credentials `json:"credentials"`
+}
+
+func (s *Server) updateAccount(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var request updateAccountRequest
+	if c.ShouldBindJSON(&request) != nil || strings.TrimSpace(request.Name) == "" {
+		apiError(c, 400, "invalid_request", "name is required")
+		return
+	}
+	if err := validateConcurrencyLimit(request.ConcurrencyLimit); err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
+	if err := validateConcurrencyQueueTimeout(request.ConcurrencyQueueTimeoutSeconds); err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
+	var proxyURL *string
+	if request.ProxyURL != nil {
+		normalized, err := normalizeProxyURL(*request.ProxyURL)
+		if err != nil {
+			apiError(c, 400, "invalid_request", err.Error())
+			return
+		}
+		proxyURL = &normalized
+	}
+	account, err := s.repo.UpdateAccount(c.Request.Context(), id, repository.UpdateAccountParams{
+		Name: strings.TrimSpace(request.Name), Enabled: request.Enabled, ConcurrencyLimit: request.ConcurrencyLimit,
+		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
+	})
+	if err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	if request.Credentials != nil {
+		if request.Credentials.Bearer() == "" {
+			apiError(c, 400, "invalid_request", "credentials must include access_token or api_key")
+			return
+		}
+		if account.Provider == model.ProviderCodex && account.AuthType == "oauth" && request.Credentials.ChatGPTAccountID == "" {
+			apiError(c, 400, "invalid_request", "Codex OAuth credentials require chatgpt_account_id")
+			return
+		}
+		if err := s.repo.UpdateAccountCredentials(c.Request.Context(), id, *request.Credentials, account.TokenExpiresAt); err != nil {
+			handleRepoError(c, err)
+			return
+		}
+		account, err = s.repo.GetAccount(c.Request.Context(), id)
+		if err != nil {
+			handleRepoError(c, err)
+			return
+		}
+	}
+	if proxyURL != nil {
+		s.closeAccountClient(id)
+	}
+	c.JSON(http.StatusOK, gin.H{"account": accountWithCredentials(account)})
 }
 
 func (s *Server) deleteAccount(c *gin.Context) {
@@ -148,6 +216,7 @@ func (s *Server) deleteAccount(c *gin.Context) {
 		return
 	}
 	s.closeAccountClient(id)
+	s.grokRefreshLocks.Delete(id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -206,6 +275,13 @@ func validateConcurrencyQueueTimeout(timeoutSeconds int) error {
 	return nil
 }
 
+func validateConcurrencyLimit(limit int) error {
+	if limit < 1 || limit > 100 {
+		return errors.New("concurrency_limit must be between 1 and 100")
+	}
+	return nil
+}
+
 func (s *Server) enableAccount(c *gin.Context)  { s.setEnabled(c, true) }
 func (s *Server) disableAccount(c *gin.Context) { s.setEnabled(c, false) }
 
@@ -221,19 +297,6 @@ func (s *Server) setEnabled(c *gin.Context, enabled bool) {
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) resetAPIKey(c *gin.Context) {
-	id, ok := idParam(c)
-	if !ok {
-		return
-	}
-	key, err := s.repo.ResetAPIKey(c.Request.Context(), id)
-	if err != nil {
-		handleRepoError(c, err)
-		return
-	}
-	c.JSON(200, gin.H{"api_key": key, "warning": "The old key is invalid. This new key is shown only once."})
-}
-
 func (s *Server) accountUsage(c *gin.Context) {
 	account, ok := s.accountByParam(c)
 	if !ok {
@@ -244,13 +307,45 @@ func (s *Server) accountUsage(c *gin.Context) {
 		apiError(c, 500, "internal_error", "could not query usage")
 		return
 	}
-	status := "unknown"
-	source := "unavailable"
-	if len(account.Quota) > 0 {
-		status = "available"
-		source = "upstream"
+	c.JSON(200, accountUsageResponse(account, usage))
+}
+
+func accountUsageResponse(account model.Account, usage model.UsageSummary) gin.H {
+	response := gin.H{
+		"account_id": account.ID, "provider": account.Provider, "status": "unknown",
+		"subscription_tier": "", "windows": []any{}, "request_quota": nil, "token_quota": nil, "credit_balance": nil,
+		"local_usage": usage, "source": "unavailable", "checked_at": account.QuotaCheckedAt,
+		"stale": true, "error": account.QuotaError,
 	}
-	c.JSON(200, gin.H{"account_id": account.ID, "provider": account.Provider, "status": status, "windows": []any{}, "local_usage": usage, "source": source, "checked_at": account.QuotaCheckedAt, "stale": true, "error": account.QuotaError})
+	if len(account.Quota) == 0 {
+		return response
+	}
+	var quota struct {
+		SubscriptionTier string `json:"subscription_tier"`
+		Windows          []any  `json:"windows"`
+		RequestQuota     any    `json:"request_quota"`
+		TokenQuota       any    `json:"token_quota"`
+		CreditBalance    any    `json:"credit_balance"`
+	}
+	if err := json.Unmarshal(account.Quota, &quota); err != nil {
+		message := "stored quota data is invalid"
+		response["error"] = message
+		return response
+	}
+	if quota.Windows == nil {
+		quota.Windows = []any{}
+	}
+	response["status"] = "available"
+	response["source"] = "upstream"
+	response["subscription_tier"] = quota.SubscriptionTier
+	response["windows"] = quota.Windows
+	response["request_quota"] = quota.RequestQuota
+	response["token_quota"] = quota.TokenQuota
+	response["credit_balance"] = quota.CreditBalance
+	if account.QuotaCheckedAt != nil {
+		response["stale"] = time.Since(*account.QuotaCheckedAt) > 15*time.Minute
+	}
+	return response
 }
 
 func (s *Server) usageSummary(c *gin.Context) {
@@ -283,10 +378,17 @@ func (s *Server) accountByParam(c *gin.Context) (model.Account, bool) {
 func idParam(c *gin.Context) (int64, bool) {
 	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
 	if err != nil || id <= 0 {
-		apiError(c, 400, "invalid_request", "invalid account id")
+		apiError(c, 400, "invalid_request", "invalid id")
 		return 0, false
 	}
 	return id, true
+}
+
+func accountWithCredentials(account model.Account) model.Account {
+	if len(account.CredentialsJSON) > 0 && json.Valid(account.CredentialsJSON) {
+		account.Credentials = json.RawMessage(account.CredentialsJSON)
+	}
+	return account
 }
 
 func handleRepoError(c *gin.Context, err error) {
