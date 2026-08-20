@@ -21,10 +21,12 @@
 - Claude 原生 Messages 请求透传。
 - Codex 原生 Responses 请求透传。
 - Grok 原生 Responses 请求透传。
-- OAuth 授权、刷新和凭证加密存储。
+- OAuth 授权、刷新和凭证明文存储。
 - 每个订阅账号配置一个独立下游 API Key。
 - API Key 一对一解析订阅账号，不进行账号池调度。
-- 单账号并发限制、限流状态和健康状态维护。
+- 单账号并发限制、可配置的并发等待队列时长、限流状态和健康状态维护。
+- 每个账号可独立配置 HTTP 或 SOCKS5 代理，代理地址明文保存。
+- 每个账号使用独立的 HTTP Client、Transport 和 keep-alive 连接池，账号之间不复用 HTTP 连接。
 - 必要的上游认证头和官方客户端身份头。
 - SSE 原样转发。
 - Codex Responses WebSocket，完整对齐 Sub2API 的直连、连接池和 HTTP-SSE bridge 行为。
@@ -113,7 +115,7 @@ grok.example.com/v1/responses
 - SQLite，启用 WAL、`busy_timeout` 和外键约束
 - `net/http` 自定义 Transport
 - 成熟的 WebSocket 库与独立连接管理器
-- AES-256-GCM 或外部 KMS
+- 依靠数据库文件权限与部署环境隔离保护明文凭据
 - Docker Compose
 
 SQLite 数据库文件只允许一个服务实例直接写入。本方案不支持多个服务实例共享同一个 SQLite 文件；如果未来需要横向扩容，再迁移到 PostgreSQL，并重新设计分布式锁和连接状态存储。
@@ -146,7 +148,7 @@ Background Workers
   ├─ OAuth Token Refresher
   ├─ Account Health Checker
   ├─ Usage/Quota Refresher
-  └─ Credential Key Rotation
+  └─ Request Log Cleanup
 ```
 
 建议目录结构：
@@ -213,16 +215,16 @@ CREATE TABLE accounts (
     provider              TEXT NOT NULL CHECK (provider IN ('claude', 'codex', 'grok')),
     auth_type             TEXT NOT NULL CHECK (auth_type IN ('oauth', 'api_key')),
 
-    credentials_encrypted BLOB NOT NULL,
-    credential_key_id     TEXT NOT NULL,
+    credentials_json      BLOB NOT NULL,
 
     metadata_json         TEXT NOT NULL DEFAULT '{}',
-    proxy_url_encrypted   BLOB,
+    proxy_url             TEXT,
 
     status                TEXT NOT NULL DEFAULT 'active',
     enabled               INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
 
-    concurrency_limit     INTEGER NOT NULL DEFAULT 1,
+    concurrency_limit                  INTEGER NOT NULL DEFAULT 1,
+    concurrency_queue_timeout_seconds  INTEGER NOT NULL DEFAULT 0,
 
     token_expires_at      TEXT,
     rate_limit_reset_at   TEXT,
@@ -255,6 +257,29 @@ api_key
 ```
 
 虽然目标是订阅转发，但保留 `api_key` 类型有利于调试和降级。初版管理界面可以不暴露该类型。
+
+`proxy_url` 保存账号级代理 URL，支持：
+
+```text
+http://host:port
+http://username:password@host:port
+socks5://host:port
+socks5://username:password@host:port
+```
+
+代理 URL 必须包含协议、主机和端口，不允许携带 path、query 或 fragment。它与账号凭据一样以明文写入数据库，管理接口只返回 `proxy_configured`，不得回显代理地址、用户名或密码。未配置账号代理时使用服务默认网络环境；配置代理后，该账号的所有 HTTP/SSE 上游请求都必须使用该代理。
+
+`concurrency_queue_timeout_seconds` 表示账号达到 `concurrency_limit` 后，请求等待并发槽位的最长时间，允许范围为 `0` 至 `300` 秒，采用“内置缺省值 → 环境变量 → 账号”的覆盖层级：
+
+- 内置缺省值：`180` 秒，即 3 分钟。
+- 环境变量：`UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS`，覆盖内置缺省值；未设置或设置为 `0` 时继续使用内置缺省值。
+- 账号值为 `0`：继承环境变量解析后的全局缺省值。
+- 账号值大于 `0`：覆盖全局缺省值，仅作用于当前账号。
+- 大于 `0`：等待期间只要有请求释放槽位，就继续处理当前请求。
+- 等待超时：返回 `429 concurrency_limited`，错误信息明确表示并发等待队列超时。
+- 客户端在等待期间断开：立即取消等待，不调用上游。
+
+该字段新增时必须提供 SQLite 在线迁移：启动阶段通过 `PRAGMA table_info(accounts)` 检查列是否存在，旧数据库缺列时执行 `ALTER TABLE ... ADD COLUMN ... DEFAULT 0`，并记录新的 `schema_migrations` 版本。若数据库中存在旧的 `concurrency_queue_timeout_ms` 字段，则按 `(ms + 999) / 1000` 向上取整迁移到秒，迁移只执行一次。
 
 ### 4.2 api_keys
 
@@ -289,7 +314,7 @@ CREATE TABLE admin (
     id              INTEGER PRIMARY KEY CHECK (id = 1),
     username        TEXT NOT NULL UNIQUE,
     password_hash   TEXT NOT NULL,
-    totp_secret_enc BLOB,
+    totp_secret     TEXT,
     created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -325,9 +350,51 @@ ON usage_logs(account_id, started_at DESC);
 
 本地统计不是计费系统。若上游响应没有 usage 字段，只记录请求次数、状态码和持续时间，不推算 Token。
 
-### 4.5 OAuth 凭证结构
+### 4.5 按日请求日志分表
 
-数据库中应保存加密后的完整 JSON BLOB，不直接把凭证作为明文 JSON/TEXT 字段保存。
+每次转发接口调用都必须记录，包括鉴权失败、Provider 不匹配、请求校验失败、RPM 限流、并发队列超时、上游连接失败和正常响应。日志按系统当前时区中请求开始时所在的自然日写入独立表：
+
+```text
+request_logs_YYYYMMDD
+```
+
+每张表结构一致：
+
+```sql
+CREATE TABLE request_logs_YYYYMMDD (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id    INTEGER,
+    api_key_id    INTEGER,
+    provider      TEXT,
+    method        TEXT NOT NULL,
+    path          TEXT NOT NULL,
+    status_code   INTEGER NOT NULL,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT NOT NULL,
+    duration_ms   INTEGER NOT NULL,
+    request_id    TEXT,
+    error_type    TEXT
+);
+```
+
+未通过 API Key 鉴权的请求允许 `account_id`、`api_key_id` 和 `provider` 为空。不得保存 Authorization、Cookie、query、请求体或上游凭据。账号删除后，历史请求日志不级联删除，因此动态日志表不设置账号外键。
+
+运行参数：
+
+```text
+UNISUB_REQUEST_LOG_RETENTION_DAYS=30
+```
+
+- 分表日期和整点调度直接使用操作系统或容器的当前时区，即 Go `time.Local`；不提供额外的应用时区环境变量。
+- 保留天数允许 1 至 3650，默认 30。
+- 每个整点按系统当前时区执行一次清理。
+- 当前自然日和之前 `retention_days - 1` 个自然日保留；更早的 `request_logs_YYYYMMDD` 整表删除。
+- 表名必须由服务端日期生成，并用固定正则校验，禁止把用户输入拼入 SQL 标识符。
+- 清理只匹配严格符合 `request_logs_[0-9]{8}` 的表，名称相似的其他表不得删除。
+
+### 4.6 OAuth 凭证结构
+
+数据库在 `credentials_json` 中直接保存完整的明文 JSON BLOB。数据库文件与备份必须依靠文件权限和运行环境隔离进行保护。
 
 Claude：
 
@@ -395,7 +462,7 @@ POST /admin/providers/claude/oauth/exchange
   → 管理员浏览器授权
   → 提交 authorization code
   → 交换 access_token/refresh_token
-  → 加密保存
+  → 明文保存
 ```
 
 可选方式是 `sessionKey` 自动交换：
@@ -738,10 +805,12 @@ Grok 图片、视频和语音明确不在项目范围内，不注册相关路由
 2. 通过 `api_keys.account_id` 取得唯一订阅账号。
 3. 检查 API Key 和账号是否启用、是否过期。
 4. 检查入口与账号平台是否匹配。
-5. 检查该账号的并发和 RPM 限制。
-6. 必要时刷新当前账号 OAuth Token。
-7. 转发到当前账号上游。
-8. 记录使用量、限流头和额度状态。
+5. 检查该账号的 RPM 限制。
+6. 申请该账号的并发槽位；满额时最多等待 `concurrency_queue_timeout_seconds`。
+7. 必要时刷新当前账号 OAuth Token。
+8. 使用该账号独立的 HTTP Client 和可选代理转发到当前账号上游。
+9. 完整读取普通响应或完成 SSE/WS 生命周期后释放并发槽位。
+10. 记录使用量、限流头和额度状态。
 
 不支持以下行为：
 
@@ -757,6 +826,10 @@ X-Unisub-Session 粘性
 
 | 情况 | 处理 |
 |---|---|
+| 并发已满且等待时间为 0 | 立即返回 `429 concurrency_limited` |
+| 并发等待期间释放槽位 | 获取槽位并继续使用当前账号转发 |
+| 并发等待队列超时 | 返回 `429 concurrency_limited`，不调用上游 |
+| 并发等待期间客户端断开 | 取消等待，不调用上游 |
 | 获取 Token 失败 | 返回 502 或 401，标记账号状态 |
 | 建立上游连接失败 | 返回 502，不切换账号 |
 | 401 | 刷新当前账号 Token 后最多重试一次 |
@@ -771,22 +844,33 @@ X-Unisub-Session 粘性
 
 ## 9. 传输层要求
 
-三个 Provider 不应共用一个默认 `http.Client`。每个平台建立独立 Transport：
+HTTP 连接池必须按账号隔离，而不是只按 Provider 隔离。每个账号建立并缓存独立的 `http.Client` 和 `http.Transport`：
 
 ```go
-type ProviderTransport struct {
-    Provider      string
-    Client        *http.Client
-    MaxIdleConns  int
-    IdleTimeout   time.Duration
-    HeaderTimeout time.Duration
+type AccountTransport struct {
+    AccountID      int64
+    Provider       string
+    Client         *http.Client
+    MaxIdleConns   int
+    IdleTimeout    time.Duration
+    HeaderTimeout  time.Duration
 }
 ```
 
+连接复用规则：
+
+- 同一账号可以复用自己的 HTTP/1.1 keep-alive 或 HTTP/2 连接。
+- 不同账号不得共享 `http.Client`、`http.Transport`、空闲连接或 HTTP/2 session。
+- 即使两个账号属于同一个 Provider，仍不得共享连接。
+- 即使两个账号配置了相同代理，仍不得共享连接。
+- 修改账号代理或删除账号时，从缓存移除该账号 Client，并关闭其空闲连接。
+- 服务关闭时关闭所有账号 Transport 的空闲连接。
+
 需要支持：
 
-- 上游连接池。
-- 每账号可选代理。
+- 账号级独立上游连接池。
+- 每账号可选 HTTP 或 SOCKS5 代理，包括可选的用户名密码认证。
+- HTTP 代理必须支持 HTTPS CONNECT；SOCKS5 必须通过账号 Transport 的 `DialContext` 建立连接。
 - ResponseHeaderTimeout。
 - SSE 不设置整体响应超时。
 - 客户端取消向上游传播。
@@ -810,6 +894,24 @@ cli-chat-proxy.grok.com
 api.x.ai
 *.api.x.ai
 ```
+
+### 9.1 账号连接、代理与并发队列验收
+
+必须覆盖以下自动化测试：
+
+- 同一账号的连续请求复用同一个 Client 和 Transport。
+- 两个相同 Provider 的不同账号获得不同 Client 和 Transport，不共享 HTTP/1.1 或 HTTP/2 连接。
+- 两个配置相同代理的不同账号仍然使用不同 Transport。
+- HTTP 代理收到正确的目标地址、请求头和请求体；HTTPS 上游通过 CONNECT 转发。
+- SOCKS5 无认证和用户名密码认证均能建立连接，客户端取消可以中断拨号或等待。
+- 代理 URL 在数据库中只保存密文，账号列表和详情只暴露 `proxy_configured`。
+- 修改或清除代理后，旧 Client 从缓存移除，后续请求使用新 Transport。
+- 并发未满时不创建等待定时器，直接获得槽位。
+- 并发已满时，请求在配置时间内等待；槽位释放后能够继续处理。
+- 等待超时后返回 `429 concurrency_limited`，且没有请求到达上游。
+- 等待期间客户端取消后立即退出，且没有请求到达上游。
+- 账号 `concurrency_queue_timeout_seconds=0` 时继承全局缺省；全局未配置时实际等待 3 分钟。
+- 旧 SQLite 数据库启动后自动新增队列等待字段，并保留已有账号数据。
 
 ## 10. 使用额度与管理页面
 
@@ -863,6 +965,8 @@ Provider 适配原则：
 - 订阅账号列表：平台、名称、状态、API Key 前缀、套餐、额度百分比、重置时间、最近查询时间。
 - 账号详情：OAuth 状态、Token 到期时间、上游额度窗口、本地 24 小时/7 天请求和 Token 统计、最近错误。
 - 添加账号、OAuth 授权、测试、刷新 Token、启用、禁用和删除。
+- 创建账号时配置并发上限、并发队列等待毫秒数以及可选的 HTTP/SOCKS5 代理。
+- 已有账号可以修改或清除代理，也可以动态修改并发队列等待时长；代理密文不得回显。
 - 创建时显示一次账号 API Key；支持重置 API Key，旧 Key 立即失效。
 - “刷新额度”操作及查询失败原因展示。
 - WebSocket 当前连接数、HTTP/SSE 当前并发数和最近请求记录。
@@ -871,23 +975,9 @@ Provider 适配原则：
 
 ## 11. 凭证安全
 
-### 11.1 加密存储
+### 11.1 明文存储
 
-建议使用：
-
-```text
-Master Key
-  → HKDF 派生 data encryption key
-  → AES-256-GCM 加密 credentials JSON
-  → 保存 nonce + ciphertext + key_id
-```
-
-生产环境优先使用：
-
-- AWS KMS
-- GCP KMS
-- Azure Key Vault
-- HashiCorp Vault Transit
+账号凭据和代理 URL 直接以明文保存到 SQLite，不设置主密钥，也不进行应用层加密。生产环境必须限制数据库文件、WAL 文件和备份的读取权限，并避免将真实凭据复制到不可信环境。
 
 数据库不得保存：
 
@@ -948,6 +1038,8 @@ POST   /admin/accounts/:id/test
 POST   /admin/accounts/:id/refresh
 POST   /admin/accounts/:id/enable
 POST   /admin/accounts/:id/disable
+PUT    /admin/accounts/:id/proxy
+PUT    /admin/accounts/:id/concurrency-queue
 GET    /admin/accounts/:id/usage
 POST   /admin/accounts/:id/usage/refresh
 GET    /admin/usage/summary
@@ -962,6 +1054,41 @@ POST   /admin/providers/codex/oauth/exchange
 POST   /admin/providers/grok/oauth/start
 POST   /admin/providers/grok/oauth/exchange
 POST   /admin/providers/grok/sso/exchange
+```
+
+创建账号时可同时提交：
+
+```json
+{
+  "name": "codex-plus-main",
+  "provider": "codex",
+  "auth_type": "oauth",
+  "credentials": {
+    "access_token": "...",
+    "chatgpt_account_id": "..."
+  },
+  "concurrency_limit": 2,
+  "concurrency_queue_timeout_seconds": 5,
+  "proxy_url": "socks5://username:password@127.0.0.1:1080"
+}
+```
+
+修改或清除账号代理：
+
+```http
+PUT /admin/accounts/:id/proxy
+Content-Type: application/json
+
+{"proxy_url":"http://127.0.0.1:8080"}
+```
+
+传入 `{"proxy_url":""}` 清除代理。修改并发队列等待时间：
+
+```http
+PUT /admin/accounts/:id/concurrency-queue
+Content-Type: application/json
+
+{"concurrency_queue_timeout_seconds":5}
 ```
 
 管理接口必须与转发接口分离，并要求：
@@ -982,7 +1109,7 @@ POST   /admin/providers/grok/sso/exchange
 
 - Go 服务骨架。
 - SQLite 数据模型、迁移、WAL 和备份策略。
-- 凭证 AES-GCM 加密。
+- 凭证和代理地址明文持久化。
 - 单管理员账号初始化与登录。
 - 每个订阅账号独立 API Key。
 - 单账号 Claude 转发。
@@ -1018,9 +1145,10 @@ POST   /admin/providers/grok/sso/exchange
 
 - Codex Responses WebSocket，完整对齐 Sub2API 的直连、连接池、协议决策和 HTTP-SSE bridge 行为。
 - WebSocket 连接池、背压、Ping/Pong、关闭语义和指标。
-- 单账号 HTTP/SSE/WS 并发限制。
+- 单账号 HTTP/SSE/WS 并发限制，以及可取消、可超时的并发等待队列。
 - 429/额度响应观测。
-- 代理配置。
+- HTTP/SOCKS5 账号代理配置、明文存储和运行时修改。
+- HTTP Client、Transport、keep-alive 与 HTTP/2 session 的账号级隔离。
 - 运行指标。
 - SQLite 在线备份和 usage_logs 清理。
 

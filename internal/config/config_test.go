@@ -2,10 +2,9 @@ package config
 
 import "testing"
 
-const testMasterKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+import "time"
 
 func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
-	t.Setenv("UNISUB_MASTER_KEY", testMasterKey)
 	t.Setenv("UNISUB_ADMIN_USERNAME", "")
 	t.Setenv("UNISUB_ADMIN_PASSWORD", "")
 
@@ -19,10 +18,48 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	if cfg.MaxRequestBodyBytes != 256<<20 {
 		t.Fatalf("max request body bytes = %d", cfg.MaxRequestBodyBytes)
 	}
+	if cfg.ConcurrencyQueueTimeout != 3*time.Minute {
+		t.Fatalf("concurrency queue timeout = %s", cfg.ConcurrencyQueueTimeout)
+	}
+	if cfg.RequestLogRetentionDays != 30 {
+		t.Fatalf("request log retention = %d", cfg.RequestLogRetentionDays)
+	}
+}
+
+func TestLoadUsesConcurrencyQueueTimeoutFromEnvironment(t *testing.T) {
+	t.Setenv("UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS", "45")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConcurrencyQueueTimeout != 45*time.Second {
+		t.Fatalf("concurrency queue timeout = %s", cfg.ConcurrencyQueueTimeout)
+	}
+}
+
+func TestZeroConcurrencyQueueTimeoutUsesBuiltInDefault(t *testing.T) {
+	t.Setenv("UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS", "0")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConcurrencyQueueTimeout != 3*time.Minute {
+		t.Fatalf("concurrency queue timeout = %s", cfg.ConcurrencyQueueTimeout)
+	}
+}
+
+func TestLoadUsesRequestLogRetentionFromEnvironment(t *testing.T) {
+	t.Setenv("UNISUB_REQUEST_LOG_RETENTION_DAYS", "45")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RequestLogRetentionDays != 45 {
+		t.Fatalf("request log retention = %d", cfg.RequestLogRetentionDays)
+	}
 }
 
 func TestLoadUsesAdminCredentialsFromEnvironment(t *testing.T) {
-	t.Setenv("UNISUB_MASTER_KEY", testMasterKey)
 	t.Setenv("UNISUB_ADMIN_USERNAME", "operator")
 	t.Setenv("UNISUB_ADMIN_PASSWORD", "environment-password")
 
@@ -36,7 +73,6 @@ func TestLoadUsesAdminCredentialsFromEnvironment(t *testing.T) {
 }
 
 func TestLoadUsesPortEnvironment(t *testing.T) {
-	t.Setenv("UNISUB_MASTER_KEY", testMasterKey)
 	t.Setenv("UNISUB_LISTEN", "")
 	t.Setenv("UNISUB_PORT", "9090")
 
@@ -50,7 +86,6 @@ func TestLoadUsesPortEnvironment(t *testing.T) {
 }
 
 func TestListenEnvironmentTakesPriorityOverPort(t *testing.T) {
-	t.Setenv("UNISUB_MASTER_KEY", testMasterKey)
 	t.Setenv("UNISUB_LISTEN", "127.0.0.1:9191")
 	t.Setenv("UNISUB_PORT", "9090")
 

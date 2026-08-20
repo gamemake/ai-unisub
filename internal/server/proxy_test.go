@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/ai-unisub/ai-unisub/internal/config"
-	"github.com/ai-unisub/ai-unisub/internal/cryptox"
 	"github.com/ai-unisub/ai-unisub/internal/database"
 	"github.com/ai-unisub/ai-unisub/internal/model"
 	"github.com/ai-unisub/ai-unisub/internal/repository"
@@ -104,19 +103,14 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 
 func testServer(t *testing.T, responsesURL string) (*Server, *repository.Repository) {
 	t.Helper()
-	key := bytes.Repeat([]byte{9}, 32)
-	cipher, err := cryptox.New(key)
-	if err != nil {
-		t.Fatal(err)
-	}
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	repo := repository.New(db, cipher, "test-v1")
+	repo := repository.New(db)
 	t.Cleanup(func() { _ = repo.Close() })
 	cfg := config.Config{
-		ListenAddress: ":0", DatabasePath: "unused", MasterKey: key, CredentialKeyID: "test-v1",
+		ListenAddress: ":0", DatabasePath: "unused", AdminUsername: "admin", AdminPassword: "test-password",
 		AdminTokenTTL: time.Hour, MaxRequestBodyBytes: 1 << 20, AllowTestUpstreams: true,
 		Providers: config.ProviderURLs{
 			ClaudeAPI: responsesURL, ClaudeModels: responsesURL,
@@ -124,7 +118,9 @@ func testServer(t *testing.T, responsesURL string) (*Server, *repository.Reposit
 			GrokAPI: responsesURL, GrokModels: responsesURL,
 		},
 	}
-	return New(cfg, repo), repo
+	application := New(cfg, repo)
+	t.Cleanup(func() { _ = application.Shutdown(context.Background()) })
+	return application, repo
 }
 
 func TestAdminTokenRoundTrip(t *testing.T) {

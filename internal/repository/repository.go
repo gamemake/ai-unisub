@@ -8,11 +8,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
-	"github.com/ai-unisub/ai-unisub/internal/cryptox"
 	"github.com/ai-unisub/ai-unisub/internal/model"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -24,24 +22,24 @@ var (
 )
 
 type Repository struct {
-	db     *sql.DB
-	cipher *cryptox.Cipher
-	keyID  string
+	db *sql.DB
 }
 
 type CreateAccountParams struct {
-	Name             string
-	Provider         model.Provider
-	AuthType         string
-	Credentials      model.Credentials
-	Metadata         json.RawMessage
-	ConcurrencyLimit int
-	RPMLimit         *int
-	TokenExpiresAt   *time.Time
+	Name                           string
+	Provider                       model.Provider
+	AuthType                       string
+	Credentials                    model.Credentials
+	Metadata                       json.RawMessage
+	ConcurrencyLimit               int
+	ConcurrencyQueueTimeoutSeconds int
+	ProxyURL                       string
+	RPMLimit                       *int
+	TokenExpiresAt                 *time.Time
 }
 
-func New(db *sql.DB, cipher *cryptox.Cipher, keyID string) *Repository {
-	return &Repository{db: db, cipher: cipher, keyID: keyID}
+func New(db *sql.DB) *Repository {
+	return &Repository{db: db}
 }
 
 func (r *Repository) BootstrapAdmin(ctx context.Context, username, password string) (bool, error) {
@@ -98,10 +96,6 @@ func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (
 	if err != nil {
 		return model.Account{}, "", err
 	}
-	encrypted, err := r.cipher.Encrypt(credentialJSON, []byte(r.keyID))
-	if err != nil {
-		return model.Account{}, "", err
-	}
 	metadata := p.Metadata
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
@@ -125,8 +119,8 @@ func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO accounts
-		(name, provider, auth_type, credentials_encrypted, credential_key_id, metadata_json, concurrency_limit, token_expires_at)
-		VALUES(?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, encrypted, r.keyID, string(metadata), limit, expires)
+		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
 	if err != nil {
 		return model.Account{}, "", err
 	}
@@ -195,15 +189,31 @@ func (r *Repository) ResolveAPIKey(ctx context.Context, plaintext string) (model
 }
 
 func (r *Repository) Credentials(ctx context.Context, account model.Account) (model.Credentials, error) {
-	plaintext, err := r.cipher.Decrypt(account.CredentialsEnc, []byte(account.CredentialKeyID))
-	if err != nil {
-		return model.Credentials{}, err
-	}
 	var credentials model.Credentials
-	if err := json.Unmarshal(plaintext, &credentials); err != nil {
+	if err := json.Unmarshal(account.CredentialsJSON, &credentials); err != nil {
 		return model.Credentials{}, errors.New("stored credentials are invalid")
 	}
 	return credentials, nil
+}
+
+func (r *Repository) ProxyURL(account model.Account) (string, error) {
+	return account.ProxyURL, nil
+}
+
+func (r *Repository) SetAccountProxy(ctx context.Context, id int64, proxyURL string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET proxy_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, proxyURL, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
+func (r *Repository) SetConcurrencyQueueTimeout(ctx context.Context, id int64, timeoutSeconds int) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET concurrency_queue_timeout_seconds=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, timeoutSeconds, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
 }
 
 func (r *Repository) SetAccountEnabled(ctx context.Context, id int64, enabled bool) error {
@@ -256,8 +266,8 @@ func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.U
 	return summary, err
 }
 
-const accountColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_encrypted, a.credential_key_id,
-	a.metadata_json, a.status, a.enabled, a.concurrency_limit, a.token_expires_at, a.quota_json,
+const accountColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
+	a.metadata_json, a.proxy_url, a.status, a.enabled, a.concurrency_limit, a.concurrency_queue_timeout_seconds, a.token_expires_at, a.quota_json,
 	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, k.key_prefix, a.created_at, a.updated_at`
 
 const accountSelect = `SELECT ` + accountColumns + ` FROM accounts a JOIN api_keys k ON k.account_id=a.id`
@@ -269,8 +279,8 @@ func scanAccount(s scanner) (model.Account, error) {
 	var provider, metadata, created, updated string
 	var enabled int
 	var tokenExpires, quota, quotaChecked, quotaError, lastUsed, lastError sql.NullString
-	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsEnc, &a.CredentialKeyID,
-		&metadata, &a.Status, &enabled, &a.ConcurrencyLimit, &tokenExpires, &quota,
+	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsJSON,
+		&metadata, &a.ProxyURL, &a.Status, &enabled, &a.ConcurrencyLimit, &a.ConcurrencyQueueTimeoutSeconds, &tokenExpires, &quota,
 		&quotaChecked, &quotaError, &lastUsed, &lastError, &a.APIKeyPrefix, &created, &updated)
 	if err != nil {
 		return model.Account{}, err
@@ -278,6 +288,7 @@ func scanAccount(s scanner) (model.Account, error) {
 	a.Provider = model.Provider(provider)
 	a.Metadata = json.RawMessage(metadata)
 	a.Enabled = enabled == 1
+	a.ProxyConfigured = a.ProxyURL != ""
 	a.TokenExpiresAt = parseTime(tokenExpires)
 	a.QuotaCheckedAt = parseTime(quotaChecked)
 	a.LastUsedAt = parseTime(lastUsed)
@@ -313,8 +324,8 @@ func scanAccountWithTail(s scanner) (accountWithTail, error) {
 	var tokenExpires, quota, quotaChecked, quotaError, lastUsed, lastError sql.NullString
 	var apiKeyID int64
 	var rpmLimit sql.NullInt64
-	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsEnc, &a.CredentialKeyID,
-		&metadata, &a.Status, &enabled, &a.ConcurrencyLimit, &tokenExpires, &quota,
+	err := s.Scan(&a.ID, &a.Name, &provider, &a.AuthType, &a.CredentialsJSON,
+		&metadata, &a.ProxyURL, &a.Status, &enabled, &a.ConcurrencyLimit, &a.ConcurrencyQueueTimeoutSeconds, &tokenExpires, &quota,
 		&quotaChecked, &quotaError, &lastUsed, &lastError, &a.APIKeyPrefix, &created, &updated, &apiKeyID, &rpmLimit)
 	if err != nil {
 		return accountWithTail{}, err
@@ -322,6 +333,7 @@ func scanAccountWithTail(s scanner) (accountWithTail, error) {
 	a.Provider = model.Provider(provider)
 	a.Metadata = json.RawMessage(metadata)
 	a.Enabled = enabled == 1
+	a.ProxyConfigured = a.ProxyURL != ""
 	a.TokenExpiresAt = parseTime(tokenExpires)
 	a.QuotaCheckedAt = parseTime(quotaChecked)
 	a.LastUsedAt = parseTime(lastUsed)
@@ -379,4 +391,4 @@ func requireAffected(result sql.Result) error {
 
 func (r *Repository) Close() error { return r.db.Close() }
 
-func (r *Repository) String() string { return fmt.Sprintf("Repository(key_id=%s)", r.keyID) }
+func (r *Repository) String() string { return "Repository" }

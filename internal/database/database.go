@@ -43,13 +43,13 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			name TEXT NOT NULL,
 			provider TEXT NOT NULL CHECK (provider IN ('claude','codex','grok')),
 			auth_type TEXT NOT NULL CHECK (auth_type IN ('oauth','api_key')),
-			credentials_encrypted BLOB NOT NULL,
-			credential_key_id TEXT NOT NULL,
+			credentials_json BLOB NOT NULL,
 			metadata_json TEXT NOT NULL DEFAULT '{}',
-			proxy_url_encrypted BLOB,
+			proxy_url TEXT,
 			status TEXT NOT NULL DEFAULT 'active',
 			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
 			concurrency_limit INTEGER NOT NULL DEFAULT 1,
+			concurrency_queue_timeout_seconds INTEGER NOT NULL DEFAULT 0,
 			token_expires_at TEXT,
 			rate_limit_reset_at TEXT,
 			quota_json TEXT,
@@ -77,7 +77,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
-			totp_secret_enc BLOB,
+			totp_secret TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -103,6 +103,134 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("database migration failed: %w", err)
 		}
 	}
-	_, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)`, time.Now().UTC().Format(time.RFC3339Nano))
-	return err
+	if err := ensureColumn(ctx, db, "accounts", "concurrency_queue_timeout_seconds", `ALTER TABLE accounts ADD COLUMN concurrency_queue_timeout_seconds INTEGER NOT NULL DEFAULT 0`); err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, ?)`, now); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(2, ?)`, now); err != nil {
+		return err
+	}
+	var migratedToSeconds int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=3`).Scan(&migratedToSeconds); err != nil {
+		return err
+	}
+	if migratedToSeconds == 0 {
+		hasMilliseconds, err := columnExists(ctx, db, "accounts", "concurrency_queue_timeout_ms")
+		if err != nil {
+			return err
+		}
+		if hasMilliseconds {
+			if _, err := db.ExecContext(ctx, `UPDATE accounts
+				SET concurrency_queue_timeout_seconds=CASE
+					WHEN concurrency_queue_timeout_ms <= 0 THEN 0
+					ELSE (concurrency_queue_timeout_ms + 999) / 1000
+				END
+				WHERE concurrency_queue_timeout_seconds=0`); err != nil {
+				return fmt.Errorf("migrate concurrency queue timeout to seconds: %w", err)
+			}
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(3, ?)`, now); err != nil {
+			return err
+		}
+	}
+	var migratedToPlaintext int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=4`).Scan(&migratedToPlaintext); err != nil {
+		return err
+	}
+	if migratedToPlaintext == 0 {
+		if err := renameColumnIfNeeded(ctx, db, "accounts", "credentials_encrypted", "credentials_json"); err != nil {
+			return err
+		}
+		if err := ensureColumn(ctx, db, "accounts", "credentials_json", `ALTER TABLE accounts ADD COLUMN credentials_json BLOB NOT NULL DEFAULT '{}'`); err != nil {
+			return err
+		}
+		if err := renameColumnIfNeeded(ctx, db, "accounts", "proxy_url_encrypted", "proxy_url"); err != nil {
+			return err
+		}
+		if err := ensureColumn(ctx, db, "accounts", "proxy_url", `ALTER TABLE accounts ADD COLUMN proxy_url TEXT`); err != nil {
+			return err
+		}
+		if err := dropColumnIfExists(ctx, db, "accounts", "credential_key_id"); err != nil {
+			return err
+		}
+		if err := renameColumnIfNeeded(ctx, db, "admin", "totp_secret_enc", "totp_secret"); err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(4, ?)`, now); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func dropColumnIfExists(ctx context.Context, db *sql.DB, table, column string) error {
+	found, err := columnExists(ctx, db, table, column)
+	if err != nil || !found {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE `+table+` DROP COLUMN `+column); err != nil {
+		return fmt.Errorf("drop %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+func renameColumnIfNeeded(ctx context.Context, db *sql.DB, table, oldColumn, newColumn string) error {
+	hasNew, err := columnExists(ctx, db, table, newColumn)
+	if err != nil || hasNew {
+		return err
+	}
+	hasOld, err := columnExists(ctx, db, table, oldColumn)
+	if err != nil || !hasOld {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE `+table+` RENAME COLUMN `+oldColumn+` TO `+newColumn); err != nil {
+		return fmt.Errorf("rename %s.%s to %s: %w", table, oldColumn, newColumn, err)
+	}
+	return nil
+}
+
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, alterStatement string) error {
+	found, err := columnExists(ctx, db, table, column)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, alterStatement); err != nil {
+		return fmt.Errorf("database migration failed: %w", err)
+	}
+	return nil
+}
+
+func columnExists(ctx context.Context, db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return false, fmt.Errorf("inspect database schema: %w", err)
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, dataType string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("inspect database schema: %w", err)
+		}
+		if name == column {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, fmt.Errorf("inspect database schema: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, err
+	}
+	return found, nil
 }

@@ -2,7 +2,6 @@ package config
 
 import (
 	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -20,31 +19,34 @@ type ProviderURLs struct {
 	GrokModels   string
 }
 
+const DefaultConcurrencyQueueTimeout = 3 * time.Minute
+
 type Config struct {
-	ListenAddress       string
-	DatabasePath        string
-	MasterKey           []byte
-	CredentialKeyID     string
-	AdminUsername       string
-	AdminPassword       string
-	AdminTokenTTL       time.Duration
-	MaxRequestBodyBytes int64
-	ShutdownTimeout     time.Duration
-	AllowTestUpstreams  bool
-	Providers           ProviderURLs
+	ListenAddress           string
+	DatabasePath            string
+	AdminUsername           string
+	AdminPassword           string
+	AdminTokenTTL           time.Duration
+	MaxRequestBodyBytes     int64
+	ShutdownTimeout         time.Duration
+	ConcurrencyQueueTimeout time.Duration
+	RequestLogRetentionDays int
+	AllowTestUpstreams      bool
+	Providers               ProviderURLs
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		ListenAddress:       listenAddress(),
-		DatabasePath:        env("UNISUB_DB_PATH", "./data/unisub.db"),
-		CredentialKeyID:     env("UNISUB_CREDENTIAL_KEY_ID", "local-v1"),
-		AdminUsername:       env("UNISUB_ADMIN_USERNAME", "admin"),
-		AdminPassword:       env("UNISUB_ADMIN_PASSWORD", "admin"),
-		AdminTokenTTL:       durationEnv("UNISUB_ADMIN_TOKEN_TTL", 8*time.Hour),
-		MaxRequestBodyBytes: int64Env("UNISUB_MAX_BODY_BYTES", 256<<20),
-		ShutdownTimeout:     durationEnv("UNISUB_SHUTDOWN_TIMEOUT", 15*time.Second),
-		AllowTestUpstreams:  boolEnv("UNISUB_ALLOW_TEST_UPSTREAMS", false),
+		ListenAddress:           listenAddress(),
+		DatabasePath:            env("UNISUB_DB_PATH", "./data/unisub.db"),
+		AdminUsername:           env("UNISUB_ADMIN_USERNAME", "admin"),
+		AdminPassword:           env("UNISUB_ADMIN_PASSWORD", "admin"),
+		AdminTokenTTL:           durationEnv("UNISUB_ADMIN_TOKEN_TTL", 8*time.Hour),
+		MaxRequestBodyBytes:     int64Env("UNISUB_MAX_BODY_BYTES", 256<<20),
+		ShutdownTimeout:         durationEnv("UNISUB_SHUTDOWN_TIMEOUT", 15*time.Second),
+		ConcurrencyQueueTimeout: time.Duration(int64Env("UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS", int64(DefaultConcurrencyQueueTimeout/time.Second))) * time.Second,
+		RequestLogRetentionDays: int(int64Env("UNISUB_REQUEST_LOG_RETENTION_DAYS", 30)),
+		AllowTestUpstreams:      boolEnv("UNISUB_ALLOW_TEST_UPSTREAMS", false),
 		Providers: ProviderURLs{
 			ClaudeAPI:    env("UNISUB_CLAUDE_API_URL", "https://api.anthropic.com/v1"),
 			ClaudeModels: env("UNISUB_CLAUDE_MODELS_URL", "https://api.anthropic.com/v1/models"),
@@ -55,18 +57,17 @@ func Load() (Config, error) {
 		},
 	}
 
-	keyText := strings.TrimSpace(os.Getenv("UNISUB_MASTER_KEY"))
-	if keyText == "" {
-		return Config{}, errors.New("UNISUB_MASTER_KEY is required (base64-encoded 32-byte key)")
-	}
-	key, err := base64.StdEncoding.DecodeString(keyText)
-	if err != nil || len(key) != 32 {
-		return Config{}, errors.New("UNISUB_MASTER_KEY must be base64-encoded and decode to exactly 32 bytes")
-	}
-	cfg.MasterKey = key
-
 	if cfg.MaxRequestBodyBytes < 1024 {
 		return Config{}, errors.New("UNISUB_MAX_BODY_BYTES must be at least 1024")
+	}
+	if cfg.ConcurrencyQueueTimeout == 0 {
+		cfg.ConcurrencyQueueTimeout = DefaultConcurrencyQueueTimeout
+	}
+	if cfg.ConcurrencyQueueTimeout < 0 || cfg.ConcurrencyQueueTimeout > 5*time.Minute {
+		return Config{}, errors.New("UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS must be between 0 and 300")
+	}
+	if cfg.RequestLogRetentionDays < 1 || cfg.RequestLogRetentionDays > 3650 {
+		return Config{}, errors.New("UNISUB_REQUEST_LOG_RETENTION_DAYS must be between 1 and 3650")
 	}
 	if err := cfg.validateUpstreams(); err != nil {
 		return Config{}, err
@@ -75,7 +76,7 @@ func Load() (Config, error) {
 }
 
 func (c Config) AdminSigningKey() []byte {
-	sum := sha256.Sum256(append(append([]byte{}, c.MasterKey...), []byte("admin-session-v1")...))
+	sum := sha256.Sum256([]byte(c.AdminUsername + "\x00" + c.AdminPassword + "\x00admin-session-v1"))
 	return sum[:]
 }
 

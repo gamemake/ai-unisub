@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -31,7 +32,22 @@ var safePathSegment = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		started := time.Now().UTC()
+		started := time.Now()
+		requestLog := repository.RequestLog{Method: c.Request.Method, Path: c.Request.URL.Path, StartedAt: started}
+		defer func() {
+			requestLog.FinishedAt = time.Now()
+			requestLog.StatusCode = c.Writer.Status()
+			if errorType, ok := c.Get("error_type"); ok {
+				requestLog.ErrorType, _ = errorType.(string)
+			}
+			if c.Request.Context().Err() != nil && requestLog.StatusCode < 400 {
+				requestLog.StatusCode = 499
+				requestLog.ErrorType = "client_canceled"
+			}
+			if err := s.repo.RecordRequest(time.Local, requestLog); err != nil {
+				slog.Error("record request failed", "method", requestLog.Method, "path", requestLog.Path, "error", err)
+			}
+		}()
 		plaintextKey := bearer(c.GetHeader("Authorization"))
 		account, err := s.repo.ResolveAPIKey(c.Request.Context(), plaintextKey)
 		if err != nil {
@@ -42,6 +58,9 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 500, "internal_error", "could not resolve API key")
 			return
 		}
+		requestLog.AccountID = &account.ID
+		requestLog.APIKeyID = &account.APIKeyID
+		requestLog.Provider = string(account.Provider)
 		if expectedProvider != "" && string(account.Provider) != expectedProvider {
 			apiError(c, 403, "provider_mismatch", "API key is bound to a different provider")
 			return
@@ -106,9 +125,11 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			upstreamURL += "?" + c.Request.URL.RawQuery
 		}
 
-		release, acquired := s.tryAcquire(account.ID, account.ConcurrencyLimit)
-		if !acquired {
-			apiError(c, http.StatusTooManyRequests, "concurrency_limited", "account concurrency limit exceeded")
+		release, err := s.acquire(c.Request.Context(), account.ID, account.ConcurrencyLimit, s.queueTimeout(account.Account))
+		if err != nil {
+			if errors.Is(err, errConcurrencyQueueTimeout) {
+				apiError(c, http.StatusTooManyRequests, "concurrency_limited", "account concurrency queue wait timed out")
+			}
 			return
 		}
 		defer release()
@@ -120,7 +141,12 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		copyDownstreamHeaders(upstreamRequest.Header, c.Request.Header)
 		injectProviderHeaders(upstreamRequest.Header, account.Provider, account.AuthType, credentials)
 
-		response, err := s.clients[string(account.Provider)].Do(upstreamRequest)
+		client, err := s.clientForAccount(account.Account)
+		if err != nil {
+			apiError(c, 502, "proxy_error", err.Error())
+			return
+		}
+		response, err := client.Do(upstreamRequest)
 		if err != nil {
 			s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, 502, started, "")
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
@@ -133,6 +159,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		}
 		copyUpstreamHeaders(c.Writer.Header(), response.Header)
 		requestID := firstNonEmpty(response.Header.Get("request-id"), response.Header.Get("x-request-id"))
+		requestLog.RequestID = requestID
 		c.Status(response.StatusCode)
 		if strings.Contains(contentType, "text/event-stream") {
 			relaySSE(c.Writer, response.Body)
@@ -141,6 +168,13 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		}
 		s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, response.StatusCode, started, requestID)
 	}
+}
+
+func (s *Server) queueTimeout(account model.Account) time.Duration {
+	if account.ConcurrencyQueueTimeoutSeconds > 0 {
+		return time.Duration(account.ConcurrencyQueueTimeoutSeconds) * time.Second
+	}
+	return s.cfg.ConcurrencyQueueTimeout
 }
 
 func (s *Server) upstreamURL(provider model.Provider, kind routeKind, suffix string) (string, error) {

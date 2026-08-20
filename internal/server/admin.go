@@ -58,14 +58,16 @@ func (s *Server) changePassword(c *gin.Context) {
 }
 
 type createAccountRequest struct {
-	Name             string            `json:"name"`
-	Provider         model.Provider    `json:"provider"`
-	AuthType         string            `json:"auth_type"`
-	Credentials      model.Credentials `json:"credentials"`
-	Metadata         json.RawMessage   `json:"metadata"`
-	ConcurrencyLimit int               `json:"concurrency_limit"`
-	RPMLimit         *int              `json:"rpm_limit"`
-	TokenExpiresAt   *time.Time        `json:"token_expires_at"`
+	Name                           string            `json:"name"`
+	Provider                       model.Provider    `json:"provider"`
+	AuthType                       string            `json:"auth_type"`
+	Credentials                    model.Credentials `json:"credentials"`
+	Metadata                       json.RawMessage   `json:"metadata"`
+	ConcurrencyLimit               int               `json:"concurrency_limit"`
+	ConcurrencyQueueTimeoutSeconds int               `json:"concurrency_queue_timeout_seconds"`
+	ProxyURL                       string            `json:"proxy_url"`
+	RPMLimit                       *int              `json:"rpm_limit"`
+	TokenExpiresAt                 *time.Time        `json:"token_expires_at"`
 }
 
 func (s *Server) createAccount(c *gin.Context) {
@@ -93,9 +95,19 @@ func (s *Server) createAccount(c *gin.Context) {
 		apiError(c, 400, "invalid_request", "metadata must be valid JSON")
 		return
 	}
+	proxyURL, err := normalizeProxyURL(request.ProxyURL)
+	if err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
+	if err := validateConcurrencyQueueTimeout(request.ConcurrencyQueueTimeoutSeconds); err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
 	account, key, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
 		Name: strings.TrimSpace(request.Name), Provider: request.Provider, AuthType: request.AuthType,
 		Credentials: request.Credentials, Metadata: request.Metadata, ConcurrencyLimit: request.ConcurrencyLimit,
+		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
 		RPMLimit: request.RPMLimit, TokenExpiresAt: request.TokenExpiresAt,
 	})
 	if err != nil {
@@ -135,7 +147,63 @@ func (s *Server) deleteAccount(c *gin.Context) {
 		handleRepoError(c, err)
 		return
 	}
+	s.closeAccountClient(id)
 	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) updateAccountProxy(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		ProxyURL string `json:"proxy_url"`
+	}
+	if c.ShouldBindJSON(&request) != nil {
+		apiError(c, 400, "invalid_request", "a JSON body is required")
+		return
+	}
+	proxyURL, err := normalizeProxyURL(request.ProxyURL)
+	if err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
+	if err := s.repo.SetAccountProxy(c.Request.Context(), id, proxyURL); err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	s.closeAccountClient(id)
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) updateConcurrencyQueue(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		TimeoutSeconds int `json:"concurrency_queue_timeout_seconds"`
+	}
+	if c.ShouldBindJSON(&request) != nil {
+		apiError(c, 400, "invalid_request", "a JSON body is required")
+		return
+	}
+	if err := validateConcurrencyQueueTimeout(request.TimeoutSeconds); err != nil {
+		apiError(c, 400, "invalid_request", err.Error())
+		return
+	}
+	if err := s.repo.SetConcurrencyQueueTimeout(c.Request.Context(), id, request.TimeoutSeconds); err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func validateConcurrencyQueueTimeout(timeoutSeconds int) error {
+	if timeoutSeconds < 0 || timeoutSeconds > 300 {
+		return errors.New("concurrency_queue_timeout_seconds must be between 0 and 300")
+	}
+	return nil
 }
 
 func (s *Server) enableAccount(c *gin.Context)  { s.setEnabled(c, true) }

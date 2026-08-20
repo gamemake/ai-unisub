@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -15,14 +16,16 @@ import (
 )
 
 type Server struct {
-	cfg      config.Config
-	repo     *repository.Repository
-	engine   *gin.Engine
-	clients  map[string]*http.Client
-	signer   tokenSigner
-	limiters sync.Map
-	rateMu   sync.Mutex
-	rates    map[string]rateWindow
+	cfg              config.Config
+	repo             *repository.Repository
+	engine           *gin.Engine
+	accountClients   sync.Map
+	signer           tokenSigner
+	limiters         sync.Map
+	rateMu           sync.Mutex
+	rates            map[string]rateWindow
+	requestLogCancel context.CancelFunc
+	requestLogWG     sync.WaitGroup
 }
 
 type rateWindow struct {
@@ -30,24 +33,22 @@ type rateWindow struct {
 	count   int
 }
 
+var errConcurrencyQueueTimeout = errors.New("concurrency queue timeout")
+
 func New(cfg config.Config, repo *repository.Repository) *Server {
 	gin.SetMode(gin.ReleaseMode)
+	if cfg.ConcurrencyQueueTimeout <= 0 {
+		cfg.ConcurrencyQueueTimeout = config.DefaultConcurrencyQueueTimeout
+	}
+	if cfg.RequestLogRetentionDays <= 0 {
+		cfg.RequestLogRetentionDays = 30
+	}
 	s := &Server{
 		cfg: cfg, repo: repo, engine: gin.New(), signer: tokenSigner{key: cfg.AdminSigningKey()},
-		clients: map[string]*http.Client{},
-		rates:   map[string]rateWindow{},
-	}
-	for _, provider := range []string{"claude", "codex", "grok"} {
-		s.clients[provider] = &http.Client{
-			Transport: &http.Transport{
-				Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, DisableCompression: true,
-				MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error { return http.ErrUseLastResponse },
-		}
+		rates: map[string]rateWindow{},
 	}
 	s.routes()
+	s.startRequestLogCleanup()
 	return s
 }
 
@@ -58,6 +59,8 @@ func (s *Server) routes() {
 	s.engine.GET("/", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, "/admin") })
 	s.engine.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
 	s.engine.GET("/admin", s.adminPage)
+	s.engine.GET("/admin/assets/admin.css", s.adminStyles)
+	s.engine.GET("/admin/assets/admin.js", s.adminScript)
 	s.engine.POST("/admin/login", s.login)
 
 	admin := s.engine.Group("/admin")
@@ -69,6 +72,8 @@ func (s *Server) routes() {
 	admin.DELETE("/accounts/:id", s.deleteAccount)
 	admin.POST("/accounts/:id/enable", s.enableAccount)
 	admin.POST("/accounts/:id/disable", s.disableAccount)
+	admin.PUT("/accounts/:id/proxy", s.updateAccountProxy)
+	admin.PUT("/accounts/:id/concurrency-queue", s.updateConcurrencyQueue)
 	admin.POST("/accounts/:id/api-key/reset", s.resetAPIKey)
 	admin.GET("/accounts/:id/usage", s.accountUsage)
 	admin.GET("/usage/summary", s.usageSummary)
@@ -107,7 +112,7 @@ func (s *Server) requireAdmin() gin.HandlerFunc {
 	}
 }
 
-func (s *Server) tryAcquire(accountID int64, limit int) (func(), bool) {
+func (s *Server) acquire(ctx context.Context, accountID int64, limit int, wait time.Duration) (func(), error) {
 	if limit <= 0 {
 		limit = 1
 	}
@@ -115,9 +120,21 @@ func (s *Server) tryAcquire(accountID int64, limit int) (func(), bool) {
 	ch := value.(chan struct{})
 	select {
 	case ch <- struct{}{}:
-		return func() { <-ch }, true
+		return func() { <-ch }, nil
 	default:
-		return nil, false
+	}
+	if wait <= 0 {
+		return nil, errConcurrencyQueueTimeout
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-timer.C:
+		return nil, errConcurrencyQueueTimeout
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -166,14 +183,67 @@ func bearer(header string) string {
 }
 
 func apiError(c *gin.Context, status int, code, message string) {
+	c.Set("error_type", code)
 	c.JSON(status, gin.H{"error": gin.H{"type": code, "message": message}})
 }
 
 func (s *Server) Shutdown(context.Context) error {
-	for _, client := range s.clients {
-		if transport, ok := client.Transport.(*http.Transport); ok {
+	if s.requestLogCancel != nil {
+		s.requestLogCancel()
+		s.requestLogWG.Wait()
+	}
+	s.accountClients.Range(func(_, value any) bool {
+		if transport, ok := value.(*http.Client).Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}
-	}
+		return true
+	})
 	return nil
+}
+
+func (s *Server) startRequestLogCleanup() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.requestLogCancel = cancel
+	s.requestLogWG.Add(1)
+	go func() {
+		defer s.requestLogWG.Done()
+		for {
+			now := time.Now()
+			next := nextRequestLogCleanup(now, time.Local)
+			timer := time.NewTimer(time.Until(next))
+			select {
+			case <-timer.C:
+				dropped, err := s.repo.CleanupRequestLogTables(ctx, time.Now(), time.Local, s.cfg.RequestLogRetentionDays)
+				if err != nil && !errors.Is(err, context.Canceled) {
+					slog.Error("request log cleanup failed", "error", err)
+				} else if len(dropped) > 0 {
+					slog.Info("expired request log tables dropped", "count", len(dropped), "tables", dropped)
+				}
+			case <-ctx.Done():
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			}
+		}
+	}()
+}
+
+func nextRequestLogCleanup(now time.Time, location *time.Location) time.Time {
+	if location == nil {
+		location = time.Local
+	}
+	local := now.In(location)
+	return time.Date(local.Year(), local.Month(), local.Day(), local.Hour()+1, 0, 0, 0, location)
+}
+
+func newHTTPTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, DisableCompression: true,
+		MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second,
+		TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
+	}
 }

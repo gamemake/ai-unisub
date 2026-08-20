@@ -5,12 +5,13 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 当前代码实现了 `SUBSCRIPTION_API_PLAN.md` 第一阶段的可运行后端基线：
 
 - Go + Gin 服务、SQLite WAL/外键/`busy_timeout`。
-- AES-256-GCM 加密保存完整凭据 JSON，数据库不保存下游 API Key 明文。
+- 账号凭据 JSON 和代理 URL 以明文保存；数据库仅保存下游 API Key 的哈希，不保存其明文。
 - 单管理员初始化、bcrypt 密码哈希、短期 HMAC-SHA256 Bearer JWT。
 - 账户创建、列表、详情、启停、删除、API Key 重置和本地 24 小时用量。
 - Claude Messages/Count Tokens、Codex Responses、Grok Responses 和三者 Models 原生透传。
 - SSE 实时 flush、客户端取消向上游传播、独立 Provider 连接池。
 - 平台别名隔离、账号并发限制、API Key RPM 限制、请求体上限。
+- 转发调用按系统当前时区写入每日请求日志分表，并在每个整点自动清理超过保留期的分表。
 - 默认拒绝的 Responses 子路径校验和敏感下游请求头清洗。
 - 一个轻量管理页：`/admin`。
 
@@ -22,10 +23,6 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 
 ```powershell
 Copy-Item .env.example .env
-# 生成 32 字节主密钥；下面是 PowerShell 示例
-$bytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-$env:UNISUB_MASTER_KEY = [Convert]::ToBase64String($bytes)
 # 可选：未设置时缺省为 admin，生产环境请务必覆盖
 $env:UNISUB_ADMIN_PASSWORD = 'replace-with-a-long-password'
 $env:UNISUB_DB_PATH = '.\data\unisub.db'
@@ -65,10 +62,24 @@ Content-Type: application/json
     "chatgpt_account_id": "..."
   },
   "concurrency_limit": 1,
+  "concurrency_queue_timeout_seconds": 5,
+  "proxy_url": "socks5://user:password@127.0.0.1:1080",
   "rpm_limit": 30,
   "token_expires_at": "2026-08-20T12:00:00Z"
 }
 ```
+
+`proxy_url` 可选，支持 `http://` 和 `socks5://`，必须包含主机和端口；用户名和密码可放在 URL 中。代理地址和账号凭据均以明文保存，管理 API 只返回 `proxy_configured`，不会回显代理地址。
+
+每个账号拥有独立的 HTTP Client、Transport 和 keep-alive 连接池。不同账号不会复用 HTTP 连接，即使它们属于同一个 Provider 或使用相同代理；同一账号内部仍会复用自己的空闲连接。
+
+`concurrency_queue_timeout_seconds` 控制账号达到最大并发数后的等待时间，范围为 0 到 300 秒。等待期间有请求释放并发槽位时会继续处理；超时后返回 `429 concurrency_limited`。账号值为 0 时继承环境变量 `UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS`；环境变量未设置或为 0 时使用内置缺省值 180 秒（3 分钟）。
+
+请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。日志只保存账号/API Key ID、Provider、方法、路径、状态码、时间、耗时、上游 request ID 和错误类型，不保存鉴权头、query 或请求体。
+
+已有账号可通过 `PUT /admin/accounts/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
+
+已有账号可通过 `PUT /admin/accounts/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
 
 响应中的 `api_key` 只显示一次。重置入口是 `POST /admin/accounts/:id/api-key/reset`，旧 Key 会立即失效。
 
@@ -118,8 +129,8 @@ Responses 子路径最多 8 段，每段最多 128 字节，只允许 ASCII 字�
 
 ## 安全与运行约束
 
-- `UNISUB_MASTER_KEY` 必须是 Base64 编码的 32 字节随机值。丢失后无法解密已保存凭据。
-- `credential_key_id` 作为 AES-GCM associated data 使用；修改数据库中的 key ID 会导致解密失败。
+- 账号凭据和代理 URL 以明文写入 SQLite。必须严格限制数据库文件、备份和宿主机的访问权限。
+- 管理 API 不回显账号凭据和代理 URL，但这不代表数据库中的字段经过加密。
 - 默认只允许方案列出的官方 HTTPS 上游，避免管理员配置任意 URL 造成 SSRF。`UNISUB_ALLOW_TEST_UPSTREAMS=true` 仅供自动化测试使用。
 - SQLite 数据文件只允许一个服务实例直接写入，不要让多个容器共享同一个数据库文件。
 - 管理 JWT 保存在管理页的 `sessionStorage`，页面关闭后清除；管理 API 不使用 Cookie，因此不依赖 Cookie CSRF 保护。
@@ -143,7 +154,6 @@ sqlite3 /backup/unisub-YYYY-MM-DD-HHMMSS.db "PRAGMA integrity_check;"
 
 ```sh
 cd deploy
-export UNISUB_MASTER_KEY="$(openssl rand -base64 32)"
 export UNISUB_ADMIN_PASSWORD="replace-with-a-long-password" # 未设置时缺省为 admin
 docker compose up --build -d
 ```
@@ -162,7 +172,6 @@ docker compose up --build -d
 docker run --rm \
   -p 127.0.0.1:9090:9090 \
   -e UNISUB_PORT=9090 \
-  -e UNISUB_MASTER_KEY="$(openssl rand -base64 32)" \
   -e UNISUB_ADMIN_PASSWORD="replace-with-a-long-password" \
   -v unisub-data:/app/data \
   ai-unisub
@@ -178,7 +187,7 @@ go vet ./...
 go build ./cmd/server
 ```
 
-测试覆盖凭据加密与篡改检测、管理员 Token 签名、API Key 生命周期、平台隔离、敏感头剥离、SSE 透传和 Responses 子路径安全校验。
+测试覆盖凭据与代理明文持久化、管理员 Token 签名、API Key 生命周期、平台隔离、敏感头剥离、SSE 透传和 Responses 子路径安全校验。
 
 ## VS Code
 
@@ -189,4 +198,4 @@ go build ./cmd/server
 - `Ctrl+Shift+B`：执行默认构建任务，输出到 `bin/ai-unisub.exe`。
 - 命令面板的 `Tasks: Run Task`：运行 `ai-unisub: test` 或 `ai-unisub: vet`。
 
-调试配置中的主密钥和管理员密码是公开的开发值，只能用于本地调试数据库，不能用于保存真实账号凭据或部署生产环境。
+调试配置中的管理员密码是公开的开发值，只能用于本地调试，不能用于部署生产环境。账号凭据以明文写入调试数据库，不要导入真实凭据。

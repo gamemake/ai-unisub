@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/ai-unisub/ai-unisub/internal/config"
-	"github.com/ai-unisub/ai-unisub/internal/cryptox"
 	"github.com/ai-unisub/ai-unisub/internal/database"
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 	appserver "github.com/ai-unisub/ai-unisub/internal/server"
@@ -24,17 +23,12 @@ func main() {
 		slog.Error("configuration error", "error", err)
 		os.Exit(1)
 	}
-	cipher, err := cryptox.New(cfg.MasterKey)
-	if err != nil {
-		slog.Error("credential cipher error", "error", err)
-		os.Exit(1)
-	}
 	db, err := database.Open(ctx, cfg.DatabasePath)
 	if err != nil {
 		slog.Error("database error", "error", err)
 		os.Exit(1)
 	}
-	repo := repository.New(db, cipher, cfg.CredentialKeyID)
+	repo := repository.New(db)
 	defer repo.Close()
 	created, err := repo.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword)
 	if err != nil {
