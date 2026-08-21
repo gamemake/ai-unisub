@@ -28,16 +28,20 @@ func (s *Server) login(c *gin.Context) {
 		apiError(c, http.StatusBadRequest, "invalid_request", "username and password are required")
 		return
 	}
-	if err := s.repo.AuthenticateAdmin(c.Request.Context(), request.Username, request.Password); err != nil {
+	user, err := s.repo.AuthenticateUser(c.Request.Context(), request.Username, request.Password)
+	if err != nil {
 		apiError(c, http.StatusUnauthorized, "invalid_credentials", "invalid username or password")
 		return
 	}
-	token, err := s.signer.issue(request.Username, s.cfg.AdminTokenTTL)
+	token, err := s.signer.issue(user.Username, s.cfg.AdminTokenTTL)
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not issue admin token")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"token": token, "token_type": "Bearer", "expires_in": int64(s.cfg.AdminTokenTTL.Seconds())})
+	c.JSON(http.StatusOK, gin.H{
+		"token": token, "token_type": "Bearer", "expires_in": int64(s.cfg.AdminTokenTTL.Seconds()),
+		"user": user,
+	})
 }
 
 func (s *Server) changePassword(c *gin.Context) {
@@ -393,7 +397,15 @@ func accountWithCredentials(account model.Account) model.Account {
 
 func handleRepoError(c *gin.Context, err error) {
 	if errors.Is(err, repository.ErrNotFound) {
-		apiError(c, 404, "not_found", "account not found")
+		apiError(c, 404, "not_found", "not found")
+		return
+	}
+	if errors.Is(err, repository.ErrConflict) {
+		apiError(c, http.StatusConflict, "conflict", "username is already taken")
+		return
+	}
+	if errors.Is(err, repository.ErrLastAdmin) {
+		apiError(c, http.StatusConflict, "last_admin", "the last enabled admin cannot be removed")
 		return
 	}
 	apiError(c, 500, "internal_error", "database operation failed")

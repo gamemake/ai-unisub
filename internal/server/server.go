@@ -81,6 +81,11 @@ func (s *Server) routes() {
 	admin := s.engine.Group("/admin")
 	admin.Use(s.requireAdmin())
 	admin.PUT("/password", s.changePassword)
+	admin.GET("/me", s.currentUser)
+	admin.GET("/users", s.listUsers)
+	admin.POST("/users", s.createUser)
+	admin.PUT("/users/:id", s.updateUser)
+	admin.DELETE("/users/:id", s.deleteUser)
 	admin.GET("/accounts", s.listAccounts)
 	admin.POST("/accounts", s.createAccount)
 	admin.GET("/accounts/:id", s.getAccount)
@@ -94,12 +99,15 @@ func (s *Server) routes() {
 	admin.POST("/accounts/:id/usage/refresh", s.refreshAccountUsage)
 	admin.GET("/usage/summary", s.usageSummary)
 	admin.GET("/api-keys", s.listAPIKeys)
+	admin.GET("/api-keys/:id", s.getAPIKey)
 	admin.POST("/api-keys", s.createAPIKey)
 	admin.PUT("/api-keys/:id", s.updateAPIKey)
 	admin.POST("/api-keys/:id/reset", s.resetAPIKey)
 	admin.DELETE("/api-keys/:id", s.deleteAPIKey)
 	admin.POST("/providers/grok/oauth/device/start", s.startGrokOAuthDevice)
 	admin.POST("/providers/grok/oauth/device/poll", s.pollGrokOAuthDevice)
+	admin.GET("/request-logs", s.listRequestLogs)
+	admin.GET("/request-logs/:day/:id", s.getRequestLog)
 
 	// Root endpoints resolve the provider exclusively from the account-bound key.
 	s.engine.GET("/v1/models", s.proxyHandler("", routeModels, ""))
@@ -130,7 +138,16 @@ func (s *Server) requireAdmin() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		c.Set("admin_username", claims.Subject)
+		user, err := s.repo.GetUserByUsername(c.Request.Context(), claims.Subject)
+		if err != nil || !user.Enabled {
+			apiError(c, http.StatusUnauthorized, "unauthorized", "valid admin bearer token required")
+			c.Abort()
+			return
+		}
+		c.Set("admin_username", user.Username)
+		c.Set("user_id", user.ID)
+		c.Set("user_role", user.Role)
+		c.Set("current_user", user)
 		c.Next()
 	}
 }

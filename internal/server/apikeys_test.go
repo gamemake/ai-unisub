@@ -58,6 +58,17 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 	if listRecorder.Code != http.StatusOK || !bytes.Contains(listRecorder.Body.Bytes(), []byte(`"team-a"`)) || !bytes.Contains(listRecorder.Body.Bytes(), []byte(`"team-b"`)) {
 		t.Fatalf("list status=%d body=%s", listRecorder.Code, listRecorder.Body.String())
 	}
+	if bytes.Contains(listRecorder.Body.Bytes(), []byte(created.APIKey)) {
+		t.Fatalf("list leaked plaintext api key: %s", listRecorder.Body.String())
+	}
+
+	detail := httptest.NewRequest(http.MethodGet, "/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10), nil)
+	detail.Header.Set("Authorization", "Bearer "+adminToken)
+	detailRecorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(detailRecorder, detail)
+	if detailRecorder.Code != http.StatusOK || !bytes.Contains(detailRecorder.Body.Bytes(), []byte(created.APIKey)) {
+		t.Fatalf("detail status=%d body=%s", detailRecorder.Code, detailRecorder.Body.String())
+	}
 
 	reset := postJSON(t, application, adminToken, "/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10)+"/reset", `{}`)
 	if reset.Code != http.StatusOK {

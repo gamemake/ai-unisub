@@ -155,6 +155,107 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 	}
 }
 
+func TestProxyRecordsHTTPAndTokens(t *testing.T) {
+	requestBody := []byte(`{"model":"gpt-test","input":"hello"}`)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("request-id", "up-99")
+		_, _ = io.WriteString(w, `{"id":"r1","model":"gpt-test","usage":{"input_tokens":15,"output_tokens":8,"total_tokens":23}}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/responses")
+	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "log-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "upstream-token"},
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses?stream=0", bytes.NewReader(requestBody))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("X-Custom", "trace")
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	logs, total, err := repo.ListRequestLogs(context.Background(), time.Local, repository.RequestLogFilter{Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(logs) != 1 {
+		t.Fatalf("logs total=%d len=%d", total, len(logs))
+	}
+	summary := logs[0]
+	if summary.AccountID == nil || *summary.AccountID != account.ID || summary.Path != "/v1/responses" || summary.Query != "stream=0" {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if summary.InputTokens == nil || *summary.InputTokens != 15 || summary.OutputTokens == nil || *summary.OutputTokens != 8 {
+		t.Fatalf("tokens = in:%v out:%v", summary.InputTokens, summary.OutputTokens)
+	}
+	detail, err := repo.GetRequestLog(context.Background(), summary.Day, summary.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail.RequestBody, `"model":"gpt-test"`) {
+		t.Fatalf("request body = %s", detail.RequestBody)
+	}
+	if !strings.Contains(detail.ResponseBody, `"id":"r1"`) {
+		t.Fatalf("response body = %s", detail.ResponseBody)
+	}
+	if strings.Contains(strings.ToLower(detail.RequestHeaders), "bearer "+strings.ToLower(key)) || strings.Contains(detail.RequestHeaders, key) {
+		t.Fatalf("api key leaked into request headers: %s", detail.RequestHeaders)
+	}
+	if !strings.Contains(detail.RequestHeaders, "[redacted]") {
+		t.Fatalf("authorization was not redacted: %s", detail.RequestHeaders)
+	}
+	if !strings.Contains(detail.RequestHeaders, "X-Custom") {
+		t.Fatalf("custom header missing: %s", detail.RequestHeaders)
+	}
+	if !strings.Contains(detail.ResponseHeaders, "up-99") {
+		t.Fatalf("response headers missing request id: %s", detail.ResponseHeaders)
+	}
+	if !strings.Contains(detail.ResponseHeaders, "application/json") {
+		t.Fatalf("response headers missing content type: %s", detail.ResponseHeaders)
+	}
+
+	usage, err := repo.UsageSummary(context.Background(), account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.Requests24H != 1 || usage.InputTokens24H != 15 || usage.OutputTokens24H != 8 {
+		t.Fatalf("local usage = %+v", usage)
+	}
+}
+
+func TestProxyRecordsSSETokens(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-test\",\"usage\":{\"input_tokens\":3,\"output_tokens\":2}}}\n\n")
+	}))
+	defer upstream.Close()
+	application, repo := testServer(t, upstream.URL+"/responses")
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "sse-log", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "upstream-token"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	logs, _, err := repo.ListRequestLogs(context.Background(), time.Local, repository.RequestLogFilter{Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].InputTokens == nil || *logs[0].InputTokens != 3 || logs[0].OutputTokens == nil || *logs[0].OutputTokens != 2 {
+		t.Fatalf("sse log = %+v", logs)
+	}
+}
+
 func createAccountWithKey(t *testing.T, repo *repository.Repository, p repository.CreateAccountParams) (model.Account, string) {
 	t.Helper()
 	account, err := repo.CreateAccount(context.Background(), p)
@@ -176,6 +277,9 @@ func testServer(t *testing.T, responsesURL string) (*Server, *repository.Reposit
 	}
 	repo := repository.New(db)
 	t.Cleanup(func() { _ = repo.Close() })
+	if _, err := repo.BootstrapAdmin(context.Background(), "admin", "test-password-ok"); err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.Config{
 		ListenAddress: ":0", DatabasePath: "unused", AdminUsername: "admin", AdminPassword: "test-password",
 		AdminTokenTTL: time.Hour, MaxRequestBodyBytes: 1 << 20, AllowTestUpstreams: true,

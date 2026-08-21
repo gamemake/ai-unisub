@@ -5,13 +5,13 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 当前代码实现了 `SUBSCRIPTION_API_PLAN.md` 第一阶段的可运行后端基线：
 
 - Go + Gin 服务、SQLite WAL/外键/`busy_timeout`。
-- 账号凭据 JSON 和代理 URL 以明文保存；数据库仅保存下游 API Key 的哈希，不保存其明文。
-- 单管理员初始化、bcrypt 密码哈希、短期 HMAC-SHA256 Bearer JWT。
+- 账号凭据 JSON、代理 URL 和下游 API Key 明文均保存在数据库中；请求鉴权仍比对 API Key 哈希。
+- 多用户登录、bcrypt 密码哈希、短期 HMAC-SHA256 Bearer JWT。首次启动创建初始管理员。
 - 账户创建、列表、详情、启停、删除，以及独立的 API Key 签发/重置/删除和本地 24 小时用量。
 - Claude Messages/Count Tokens、Codex Responses、Grok Responses 和三者 Models 原生透传。
 - SSE 实时 flush、客户端取消向上游传播、独立 Provider 连接池。
 - 平台别名隔离、账号并发限制、API Key RPM 限制、请求体上限。
-- 转发调用按系统当前时区写入每日请求日志分表，并在每个整点自动清理超过保留期的分表。
+- 转发调用按系统当前时区写入每日请求日志分表（含脱敏后的完整 HTTP 请求/响应和 Token 用量），并在每个整点自动清理超过保留期的分表。控制台「调用记录」可浏览这些记录。
 - 默认拒绝的 Responses 子路径校验和敏感下游请求头清洗。
 - Grok 官方 device-code OAuth 登录，以及 access token 到期前的自动刷新。
 - 一个轻量管理页：`/admin`。
@@ -30,7 +30,7 @@ $env:UNISUB_DB_PATH = '.\data\unisub.db'
 go run ./cmd/server
 ```
 
-启动时若 `admin` 表为空，服务使用 `UNISUB_ADMIN_USERNAME` 和 `UNISUB_ADMIN_PASSWORD` 创建唯一管理员。两个缺省值都是 `admin`，可通过环境变量覆盖。环境变量只用于首次初始化，后续启动不会覆盖数据库中已有的密码。生产环境不得使用缺省密码。
+启动时若用户表为空，服务使用 `UNISUB_ADMIN_USERNAME` 和 `UNISUB_ADMIN_PASSWORD` 创建初始管理员。两个缺省值都是 `admin`，可通过环境变量覆盖。环境变量只用于首次初始化，后续用户在控制台「用户与安全」中管理。生产环境不得使用缺省密码。
 
 打开 `http://127.0.0.1:8080/admin`。添加 Grok OAuth 账号时，后台会显示设备码和 xAI 官方授权链接；Claude/Codex 仍需手动导入凭据。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
 
@@ -72,7 +72,7 @@ Content-Type: application/json
 
 ### Grok OAuth 登录
 
-管理页选择“Grok”与“OAuth Token”，点击“登录并绑定 Grok”。服务端会调用 xAI 的 device-code OAuth，页面显示授权码并轮询授权结果；成功后自动创建 Grok 账号。下游 `unisub_*` API Key 在独立的 API Key 页面签发，明文只显示一次。账号密码只在 xAI 官方页面输入，不会经过 UniSub。
+管理页选择“Grok”与“OAuth Token”，点击“登录并绑定 Grok”。服务端会调用 xAI 的 device-code OAuth，页面显示授权码并轮询授权结果；成功后自动创建 Grok 账号。下游 `unisub_*` API Key 在独立的 API Key 页面签发；签发窗口会显示明文，之后也可在 Key 详情和 CC Switch 导入中读取。账号密码只在 xAI 官方页面输入，不会经过 UniSub。
 
 对应管理 API 为：
 
@@ -101,16 +101,24 @@ UNISUB_GROK_BILLING_URL=https://cli-chat-proxy.grok.com/v1/billing?format=credit
 
 `concurrency_queue_timeout_seconds` 控制账号达到最大并发数后的等待时间，范围为 0 到 300 秒。等待期间有请求释放并发槽位时会继续处理；超时后返回 `429 concurrency_limited`。账号值为 0 时继承环境变量 `UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS`；环境变量未设置或为 0 时使用内置缺省值 180 秒（3 分钟）。
 
-请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。日志只保存账号/API Key ID、Provider、方法、路径、状态码、时间、耗时、上游 request ID 和错误类型，不保存鉴权头、query 或请求体。
+请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。每条记录保存方法、路径、query、状态码、耗时、上游 request ID、错误类型、模型、Token 用量，以及脱敏后的请求/响应头和正文（正文超过 1 MiB 会截断）。`Authorization`、`Cookie`、`x-api-key` 等敏感头只记录为 `[redacted]`。管理入口：
+
+```text
+GET /admin/request-logs
+GET /admin/request-logs/:day/:id
+```
+
+列表支持 `account_id`、`api_key_id`、`provider`、`status`、`q`、`limit`、`offset`。详情接口返回完整 HTTP 文本。控制台「调用记录」页面对应这组接口。
 
 已有账号可通过 `PUT /admin/accounts/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
 
 已有账号可通过 `PUT /admin/accounts/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
 
-下游 API Key 与订阅账号是多对一：一个账号可以签发多把 Key，每把 Key 只绑定一个账号。明文只在创建或重置时显示一次。管理入口：
+下游 API Key 与订阅账号是多对一：一个账号可以签发多把 Key，每把 Key 只绑定一个账号。请求鉴权仍使用哈希；明文会保存在数据库中，供管理详情和 CC Switch 导入使用。列表接口不回显明文。管理入口：
 
 ```text
 GET    /admin/api-keys
+GET    /admin/api-keys/:id
 POST   /admin/api-keys
 PUT    /admin/api-keys/:id
 POST   /admin/api-keys/:id/reset
@@ -121,6 +129,11 @@ DELETE /admin/api-keys/:id
 
 ```text
 PUT    /admin/password
+GET    /admin/me
+GET    /admin/users
+POST   /admin/users
+PUT    /admin/users/:id
+DELETE /admin/users/:id
 GET    /admin/accounts
 GET    /admin/accounts/:id
 PUT    /admin/accounts/:id
@@ -134,7 +147,7 @@ POST   /admin/providers/grok/oauth/device/start
 POST   /admin/providers/grok/oauth/device/poll
 ```
 
-账号详情会回显凭据 JSON，便于在管理页编辑；代理地址仍不回显。不要把 Token、Cookie、完整请求体或下游 API Key 写入日志。
+账号详情会回显凭据 JSON，便于在管理页编辑；代理地址仍不回显。请求日志会保存完整请求/响应正文，但鉴权头、Cookie 与下游 API Key 不会以明文写入。
 
 ## 转发 API
 

@@ -45,7 +45,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key == "" || createdKey.KeyPrefix == "" || createdKey.AccountID != account.ID {
+	if key == "" || createdKey.KeyPrefix == "" || createdKey.AccountID != account.ID || createdKey.APIKey != key {
 		t.Fatal("account key was not returned")
 	}
 	account, err = repo.GetAccount(ctx, account.ID)
@@ -127,7 +127,7 @@ func TestUpdateAccountSettings(t *testing.T) {
 	repo := testRepository(t)
 	account, err := repo.CreateAccount(ctx, CreateAccountParams{
 		Name: "edit-me", Provider: model.ProviderGrok, AuthType: "oauth",
-		Credentials: model.Credentials{AccessToken: "token"},
+		Credentials:      model.Credentials{AccessToken: "token"},
 		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
 	})
 	if err != nil {

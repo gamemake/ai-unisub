@@ -33,7 +33,13 @@ var safePathSegment = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		started := time.Now()
-		requestLog := repository.RequestLog{Method: c.Request.Method, Path: c.Request.URL.Path, StartedAt: started}
+		capture := newCapturingWriter(c.Writer, requestLogBodyMaxBytes)
+		c.Writer = capture
+		requestLog := repository.RequestLog{
+			Method: c.Request.Method, Path: c.Request.URL.Path, Query: c.Request.URL.RawQuery, StartedAt: started,
+			RequestHeaders: sanitizeHeadersJSON(c.Request.Header),
+		}
+		var requestBody []byte
 		defer func() {
 			requestLog.FinishedAt = time.Now()
 			requestLog.StatusCode = c.Writer.Status()
@@ -44,6 +50,19 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 				requestLog.StatusCode = 499
 				requestLog.ErrorType = "client_canceled"
 			}
+			requestLog.RequestBody, requestLog.RequestTruncated = truncateForLog(requestBody, requestLogBodyMaxBytes)
+			requestLog.ResponseHeaders = sanitizeHeadersJSON(c.Writer.Header())
+			requestLog.ResponseBody = capture.Body()
+			requestLog.ResponseTruncated = capture.Truncated()
+			tokens := capture.TokenUsage()
+			if requestLog.Model == "" {
+				requestLog.Model = firstNonEmpty(tokens.Model, requestModel(requestBody))
+			}
+			requestLog.InputTokens = tokens.Input
+			requestLog.OutputTokens = tokens.Output
+			requestLog.CacheReadTokens = tokens.CacheRead
+			requestLog.CacheCreationTokens = tokens.CacheCreation
+			requestLog.TotalTokens = tokens.Total
 			if err := s.repo.RecordRequest(time.Local, requestLog); err != nil {
 				slog.Error("record request failed", "method", requestLog.Method, "path", requestLog.Path, "error", err)
 			}
@@ -104,6 +123,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			}
 		}
 		body, err := readBody(c.Request, s.cfg.MaxRequestBodyBytes)
+		requestBody = body
 		if err != nil {
 			if errors.Is(err, errBodyTooLarge) {
 				apiError(c, 413, "request_too_large", "request body exceeds configured limit")
@@ -112,6 +132,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			}
 			return
 		}
+		requestLog.Model = requestModel(body)
 		if kind != routeModels && !json.Valid(body) {
 			apiError(c, 400, "invalid_json", "request body must be valid JSON")
 			return
@@ -159,7 +180,10 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		}
 		response, err := client.Do(upstreamRequest)
 		if err != nil {
-			s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, 502, started, "")
+			s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
+				AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
+				Model: requestLog.Model, StatusCode: 502, StartedAt: started,
+			})
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
 			return
 		}
@@ -177,7 +201,10 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			}
 			response, err = client.Do(upstreamRequest)
 			if err != nil {
-				s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, 502, started, "")
+				s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
+					AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
+					Model: requestLog.Model, StatusCode: 502, StartedAt: started,
+				})
 				apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider after refreshing credentials")
 				return
 			}
@@ -202,7 +229,12 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		} else {
 			_, _ = io.Copy(c.Writer, response.Body)
 		}
-		s.repo.RecordUsage(c.Request.Context(), account.ID, account.Provider, c.Request.URL.Path, response.StatusCode, started, requestID)
+		tokens := capture.TokenUsage()
+		s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
+			AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
+			Model: firstNonEmpty(requestLog.Model, tokens.Model), StatusCode: response.StatusCode, StartedAt: started,
+			RequestID: requestID, InputTokens: tokens.Input, OutputTokens: tokens.Output,
+		})
 	}
 }
 

@@ -65,6 +65,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			account_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			key_hash BLOB NOT NULL UNIQUE,
+			key_plaintext TEXT,
 			key_prefix TEXT NOT NULL,
 			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
 			rpm_limit INTEGER,
@@ -79,6 +80,15 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			username TEXT NOT NULL UNIQUE,
 			password_hash TEXT NOT NULL,
 			totp_secret TEXT,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE TABLE IF NOT EXISTS users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			username TEXT NOT NULL UNIQUE,
+			password_hash TEXT NOT NULL,
+			role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','user')),
+			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -165,6 +175,31 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		}
 	}
 	if err := rebuildAPIKeysWithoutAccountUnique(ctx, db, now); err != nil {
+		return err
+	}
+	if err := migrateUsersFromAdmin(ctx, db, now); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "api_keys", "key_plaintext", `ALTER TABLE api_keys ADD COLUMN key_plaintext TEXT`); err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateUsersFromAdmin(ctx context.Context, db *sql.DB, now string) error {
+	var migrated int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=6`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(username, password_hash, role, enabled, created_at, updated_at)
+		SELECT username, password_hash, 'admin', 1, created_at, updated_at FROM admin
+		WHERE NOT EXISTS (SELECT 1 FROM users)`); err != nil {
+		return fmt.Errorf("migrate admin users: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(6, ?)`, now); err != nil {
 		return err
 	}
 	return nil

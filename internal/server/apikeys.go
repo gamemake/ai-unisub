@@ -36,6 +36,19 @@ func (s *Server) listAPIKeys(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"data": keys})
 }
 
+func (s *Server) getAPIKey(c *gin.Context) {
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	key, err := s.repo.GetAPIKey(c.Request.Context(), id)
+	if err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"key": key, "api_key": key.APIKey})
+}
+
 func (s *Server) createAPIKey(c *gin.Context) {
 	var request createAPIKeyRequest
 	if c.ShouldBindJSON(&request) != nil || request.AccountID <= 0 {

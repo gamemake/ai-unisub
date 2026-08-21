@@ -49,6 +49,7 @@ type APIKey struct {
 	Provider    Provider   `json:"provider"`
 	Name        string     `json:"name"`
 	KeyPrefix   string     `json:"key_prefix"`
+	APIKey      string     `json:"api_key,omitempty"`
 	Enabled     bool       `json:"enabled"`
 	RPMLimit    *int       `json:"rpm_limit,omitempty"`
 	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
@@ -87,4 +88,25 @@ type UsageSummary struct {
 	Requests24H     int64 `json:"requests_24h"`
 	InputTokens24H  int64 `json:"input_tokens_24h"`
 	OutputTokens24H int64 `json:"output_tokens_24h"`
+}
+
+type UserRole string
+
+const (
+	RoleAdmin UserRole = "admin"
+	RoleUser  UserRole = "user"
+)
+
+func (r UserRole) Valid() bool {
+	return r == RoleAdmin || r == RoleUser
+}
+
+type User struct {
+	ID           int64     `json:"id"`
+	Username     string    `json:"username"`
+	Role         UserRole  `json:"role"`
+	Enabled      bool      `json:"enabled"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	PasswordHash string    `json:"-"`
 }

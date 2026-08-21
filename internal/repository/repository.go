@@ -19,6 +19,7 @@ var (
 	ErrNotFound     = errors.New("not found")
 	ErrUnauthorized = errors.New("unauthorized")
 	ErrConflict     = errors.New("conflict")
+	ErrLastAdmin    = errors.New("cannot remove the last admin")
 )
 
 type Repository struct {
@@ -68,17 +69,13 @@ func (r *Repository) BootstrapAdmin(ctx context.Context, username, password stri
 		return false, nil
 	}
 	var count int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM admin`).Scan(&count); err != nil {
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&count); err != nil {
 		return false, err
 	}
 	if count != 0 {
 		return false, nil
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return false, err
-	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO admin(id, username, password_hash) VALUES(1, ?, ?)`, username, string(hash))
+	_, err := r.CreateUser(ctx, strings.TrimSpace(username), password, model.RoleAdmin)
 	if err != nil {
 		return false, err
 	}
@@ -86,30 +83,152 @@ func (r *Repository) BootstrapAdmin(ctx context.Context, username, password stri
 }
 
 func (r *Repository) AuthenticateAdmin(ctx context.Context, username, password string) error {
-	var hash string
-	err := r.db.QueryRowContext(ctx, `SELECT password_hash FROM admin WHERE id=1 AND username=?`, username).Scan(&hash)
-	if errors.Is(err, sql.ErrNoRows) {
-		return ErrUnauthorized
-	}
+	_, err := r.AuthenticateUser(ctx, username, password)
+	return err
+}
+
+func (r *Repository) AuthenticateUser(ctx context.Context, username, password string) (model.User, error) {
+	user, err := r.GetUserByUsername(ctx, username)
 	if err != nil {
-		return err
+		if errors.Is(err, ErrNotFound) {
+			return model.User{}, ErrUnauthorized
+		}
+		return model.User{}, err
 	}
-	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
-		return ErrUnauthorized
+	if !user.Enabled || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) != nil {
+		return model.User{}, ErrUnauthorized
 	}
-	return nil
+	return user, nil
 }
 
 func (r *Repository) ChangeAdminPassword(ctx context.Context, username, current, next string) error {
-	if err := r.AuthenticateAdmin(ctx, username, current); err != nil {
+	if _, err := r.AuthenticateUser(ctx, username, current); err != nil {
 		return err
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(next), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
-	_, err = r.db.ExecContext(ctx, `UPDATE admin SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=1`, string(hash))
+	_, err = r.db.ExecContext(ctx, `UPDATE users SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE username=?`, string(hash), username)
 	return err
+}
+
+func (r *Repository) ListUsers(ctx context.Context) ([]model.User, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []model.User
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, rows.Err()
+}
+
+func (r *Repository) GetUserByUsername(ctx context.Context, username string) (model.User, error) {
+	user, err := scanUser(r.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE username=?`, username))
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.User{}, ErrNotFound
+	}
+	return user, err
+}
+
+func (r *Repository) GetUser(ctx context.Context, id int64) (model.User, error) {
+	user, err := scanUser(r.db.QueryRowContext(ctx, `SELECT `+userColumns+` FROM users WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.User{}, ErrNotFound
+	}
+	return user, err
+}
+
+func (r *Repository) CreateUser(ctx context.Context, username, password string, role model.UserRole) (model.User, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return model.User{}, errors.New("username is required")
+	}
+	if !role.Valid() {
+		role = model.RoleUser
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return model.User{}, err
+	}
+	result, err := r.db.ExecContext(ctx, `INSERT INTO users(username, password_hash, role) VALUES(?,?,?)`, username, string(hash), role)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return model.User{}, ErrConflict
+		}
+		return model.User{}, err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return model.User{}, err
+	}
+	return r.GetUser(ctx, id)
+}
+
+func (r *Repository) UpdateUser(ctx context.Context, id int64, role model.UserRole, enabled bool) (model.User, error) {
+	user, err := r.GetUser(ctx, id)
+	if err != nil {
+		return model.User{}, err
+	}
+	if !role.Valid() {
+		return model.User{}, errors.New("invalid role")
+	}
+	if user.Role == model.RoleAdmin && (role != model.RoleAdmin || !enabled) {
+		if err := r.ensureRemainingAdmin(ctx, id); err != nil {
+			return model.User{}, err
+		}
+	}
+	value := 0
+	if enabled {
+		value = 1
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE users SET role=?, enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, role, value, id)
+	if err != nil {
+		return model.User{}, err
+	}
+	if err := requireAffected(result); err != nil {
+		return model.User{}, err
+	}
+	return r.GetUser(ctx, id)
+}
+
+func (r *Repository) DeleteUser(ctx context.Context, id int64) error {
+	user, err := r.GetUser(ctx, id)
+	if err != nil {
+		return err
+	}
+	if user.Role == model.RoleAdmin {
+		if err := r.ensureRemainingAdmin(ctx, id); err != nil {
+			return err
+		}
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
+func (r *Repository) ensureRemainingAdmin(ctx context.Context, exceptID int64) error {
+	var count int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role='admin' AND enabled=1 AND id!=?`, exceptID).Scan(&count); err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrLastAdmin
+	}
+	return nil
+}
+
+func isUniqueViolation(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique")
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (model.Account, error) {
@@ -347,8 +466,8 @@ func (r *Repository) CreateAPIKey(ctx context.Context, p CreateAPIKeyParams) (mo
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	result, err := r.db.ExecContext(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_prefix, rpm_limit, expires_at)
-		VALUES(?,?,?,?,?,?)`, p.AccountID, name, hash[:], prefix, rpm, expires)
+	result, err := r.db.ExecContext(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_plaintext, key_prefix, rpm_limit, expires_at)
+		VALUES(?,?,?,?,?,?,?)`, p.AccountID, name, hash[:], plaintext, prefix, rpm, expires)
 	if err != nil {
 		return model.APIKey{}, "", err
 	}
@@ -382,7 +501,15 @@ func (r *Repository) GetAPIKey(ctx context.Context, id int64) (model.APIKey, err
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.APIKey{}, ErrNotFound
 	}
-	return key, err
+	if err != nil {
+		return model.APIKey{}, err
+	}
+	var plaintext sql.NullString
+	if err := r.db.QueryRowContext(ctx, `SELECT key_plaintext FROM api_keys WHERE id=?`, id).Scan(&plaintext); err != nil {
+		return model.APIKey{}, err
+	}
+	key.APIKey = plaintext.String
+	return key, nil
 }
 
 func (r *Repository) UpdateAPIKey(ctx context.Context, id int64, p UpdateAPIKeyParams) (model.APIKey, error) {
@@ -417,7 +544,7 @@ func (r *Repository) ResetAPIKey(ctx context.Context, id int64) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE api_keys SET key_hash=?, key_prefix=?, created_at=CURRENT_TIMESTAMP WHERE id=?`, hash[:], prefix, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE api_keys SET key_hash=?, key_plaintext=?, key_prefix=?, created_at=CURRENT_TIMESTAMP WHERE id=?`, hash[:], plaintext, prefix, id)
 	if err != nil {
 		return "", err
 	}
@@ -435,11 +562,13 @@ func (r *Repository) DeleteAPIKey(ctx context.Context, id int64) error {
 	return requireAffected(result)
 }
 
-func (r *Repository) RecordUsage(ctx context.Context, accountID int64, provider model.Provider, endpoint string, status int, started time.Time, requestID string) {
+func (r *Repository) RecordUsage(ctx context.Context, entry UsageLog) {
 	finished := time.Now().UTC()
-	_, _ = r.db.ExecContext(ctx, `INSERT INTO usage_logs(account_id, provider, endpoint, status_code, started_at, finished_at, request_id)
-		VALUES(?,?,?,?,?,?,?)`, accountID, provider, endpoint, status, started.UTC().Format(time.RFC3339Nano), finished.Format(time.RFC3339Nano), requestID)
-	_, _ = r.db.ExecContext(ctx, `UPDATE accounts SET last_used_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, finished.Format(time.RFC3339Nano), accountID)
+	_, _ = r.db.ExecContext(ctx, `INSERT INTO usage_logs(account_id, provider, endpoint, model, status_code, input_tokens, output_tokens, started_at, finished_at, request_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`, entry.AccountID, entry.Provider, entry.Endpoint, nullableString(entry.Model), entry.StatusCode,
+		nullableInt64(entry.InputTokens), nullableInt64(entry.OutputTokens),
+		entry.StartedAt.UTC().Format(time.RFC3339Nano), finished.Format(time.RFC3339Nano), entry.RequestID)
+	_, _ = r.db.ExecContext(ctx, `UPDATE accounts SET last_used_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, finished.Format(time.RFC3339Nano), entry.AccountID)
 }
 
 func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.UsageSummary, error) {
@@ -448,6 +577,23 @@ func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.U
 		FROM usage_logs WHERE account_id=? AND started_at>=?`, accountID, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339Nano)).
 		Scan(&summary.Requests24H, &summary.InputTokens24H, &summary.OutputTokens24H)
 	return summary, err
+}
+
+const userColumns = `id, username, password_hash, role, enabled, created_at, updated_at`
+
+func scanUser(s scanner) (model.User, error) {
+	var user model.User
+	var role string
+	var enabled int
+	var created, updated string
+	if err := s.Scan(&user.ID, &user.Username, &user.PasswordHash, &role, &enabled, &created, &updated); err != nil {
+		return model.User{}, err
+	}
+	user.Role = model.UserRole(role)
+	user.Enabled = enabled == 1
+	user.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
+	user.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+	return user, nil
 }
 
 const accountBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
