@@ -34,6 +34,10 @@ go run ./cmd/server
 
 打开 `http://127.0.0.1:8080/home`。添加 Grok OAuth 账号时，后台会显示设备码和 xAI 官方授权链接；Claude/Codex 仍需手动导入凭据。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
 
+## API 文档
+
+完整接口说明（鉴权、请求/响应示例、错误码、转发规则）见 [`docs/api.md`](docs/api.md)。数据库结构见 [`docs/database.md`](docs/database.md)。
+
 ## 管理 API
 
 登录：
