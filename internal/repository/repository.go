@@ -114,6 +114,21 @@ func (r *Repository) ChangeAdminPassword(ctx context.Context, username, current,
 	return err
 }
 
+func (r *Repository) SetUserPassword(ctx context.Context, id int64, password string) error {
+	if _, err := r.GetUser(ctx, id); err != nil {
+		return err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	result, err := r.db.ExecContext(ctx, `UPDATE users SET password_hash=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, string(hash), id)
+	if err != nil {
+		return err
+	}
+	return requireAffected(result)
+}
+
 func (r *Repository) ListUsers(ctx context.Context) ([]model.User, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT `+userColumns+` FROM users ORDER BY id`)
 	if err != nil {

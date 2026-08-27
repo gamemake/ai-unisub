@@ -85,6 +85,7 @@ func (s *Server) routes() {
 	admin.GET("/users", s.listUsers)
 	admin.POST("/users", s.createUser)
 	admin.PUT("/users/:id", s.updateUser)
+	admin.POST("/users/:id/password", s.resetUserPassword)
 	admin.DELETE("/users/:id", s.deleteUser)
 	admin.GET("/accounts", s.listAccounts)
 	admin.POST("/accounts", s.createAccount)

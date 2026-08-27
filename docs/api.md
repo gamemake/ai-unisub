@@ -287,6 +287,32 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 不能删除当前登录用户（`400`）；不能删除最后一个启用 admin（`409 last_admin`）。
 
+### `POST /api/users/:id/password`
+
+管理员直接为指定用户设定新密码，**不需要**旧密码。普通成员修改自己的密码仍使用 [`PUT /api/password`](#put-apipassword)。
+
+**请求**
+
+```json
+{
+  "password": "at-least-12-chars"
+}
+```
+
+| 字段 | 约束 |
+| --- | --- |
+| `password` | 必填；至少 12 字符 |
+
+**响应** `204 No Content`
+
+| 错误 type | HTTP | 说明 |
+| --- | --- | --- |
+| `invalid_request` | 400 | 密码缺失或过短 |
+| `forbidden` | 403 | 非 admin |
+| `not_found` | 404 | 用户不存在 |
+
+重置后旧密码立即失效；已签发的管理 JWT 在过期前仍可用（与自助改密行为一致）。
+
 ---
 
 ## 6. 账号管理

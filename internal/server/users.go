@@ -108,6 +108,28 @@ func (s *Server) deleteUser(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+func (s *Server) resetUserPassword(c *gin.Context) {
+	if !requireRole(c, model.RoleAdmin) {
+		return
+	}
+	id, ok := idParam(c)
+	if !ok {
+		return
+	}
+	var request struct {
+		Password string `json:"password"`
+	}
+	if c.ShouldBindJSON(&request) != nil || len(request.Password) < 12 {
+		apiError(c, http.StatusBadRequest, "invalid_request", "password must contain at least 12 characters")
+		return
+	}
+	if err := s.repo.SetUserPassword(c.Request.Context(), id, request.Password); err != nil {
+		handleRepoError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func userFromContext(c *gin.Context) model.User {
 	value, _ := c.Get("current_user")
 	user, _ := value.(model.User)

@@ -137,6 +137,7 @@ GET    /api/me
 GET    /api/users
 POST   /api/users
 PUT    /api/users/:id
+POST   /api/users/:id/password
 DELETE /api/users/:id
 GET    /api/accounts
 GET    /api/accounts/:id

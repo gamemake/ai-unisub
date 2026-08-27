@@ -69,6 +69,65 @@ func TestCannotDeleteLastAdmin(t *testing.T) {
 	}
 }
 
+func TestAdminCanResetUserPassword(t *testing.T) {
+	application, repo := testServer(t, "https://example.invalid/responses")
+	user, err := repo.CreateUser(context.Background(), "operator", "old-password-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := application.signer.issue("admin", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	short := postJSON(t, application, adminToken, "/api/users/"+strconv.FormatInt(user.ID, 10)+"/password", `{"password":"too-short"}`)
+	if short.Code != http.StatusBadRequest {
+		t.Fatalf("short password status=%d body=%s", short.Code, short.Body.String())
+	}
+
+	missing := postJSON(t, application, adminToken, "/api/users/99999/password", `{"password":"replacement-password"}`)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing user status=%d body=%s", missing.Code, missing.Body.String())
+	}
+
+	reset := postJSON(t, application, adminToken, "/api/users/"+strconv.FormatInt(user.ID, 10)+"/password", `{"password":"replacement-password"}`)
+	if reset.Code != http.StatusNoContent {
+		t.Fatalf("reset status=%d body=%s", reset.Code, reset.Body.String())
+	}
+
+	oldLogin := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"username":"operator","password":"old-password-ok"}`))
+	oldLogin.Header.Set("Content-Type", "application/json")
+	oldRecorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(oldRecorder, oldLogin)
+	if oldRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("old password login status=%d body=%s", oldRecorder.Code, oldRecorder.Body.String())
+	}
+
+	newLogin := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"username":"operator","password":"replacement-password"}`))
+	newLogin.Header.Set("Content-Type", "application/json")
+	newRecorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(newRecorder, newLogin)
+	if newRecorder.Code != http.StatusOK {
+		t.Fatalf("new password login status=%d body=%s", newRecorder.Code, newRecorder.Body.String())
+	}
+}
+
+func TestMemberCannotResetUserPassword(t *testing.T) {
+	application, repo := testServer(t, "https://example.invalid/responses")
+	user, err := repo.CreateUser(context.Background(), "member", "member-pass-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	memberToken, err := application.signer.issue("member", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reset := postJSON(t, application, memberToken, "/api/users/"+strconv.FormatInt(user.ID, 10)+"/password", `{"password":"replacement-password"}`)
+	if reset.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s", reset.Code, reset.Body.String())
+	}
+}
+
 func TestUserLoginAndMe(t *testing.T) {
 	application, _ := testServer(t, "https://example.invalid/responses")
 	login := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"username":"admin","password":"test-password-ok"}`))
