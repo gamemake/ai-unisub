@@ -30,7 +30,7 @@ func TestUpdateAccountAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 	}
 
 	body := `{"name":"grok-edited","enabled":false,"concurrency_limit":3,"concurrency_queue_timeout_seconds":12,"proxy_url":"http://127.0.0.1:9090"}`
-	request := httptest.NewRequest(http.MethodPut, "/admin/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -78,7 +78,7 @@ func TestUpdateAccountAPIKeepsProxyWhenOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"keep-proxy","enabled":true,"concurrency_limit":1,"concurrency_queue_timeout_seconds":0}`
-	request := httptest.NewRequest(http.MethodPut, "/admin/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -110,7 +110,7 @@ func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list := httptest.NewRequest(http.MethodGet, "/admin/accounts", nil)
+	list := httptest.NewRequest(http.MethodGet, "/api/accounts", nil)
 	list.Header.Set("Authorization", "Bearer "+adminToken)
 	listRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(listRecorder, list)
@@ -118,7 +118,7 @@ func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
 		t.Fatalf("list leaked credentials: status=%d body=%s", listRecorder.Code, listRecorder.Body.String())
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/admin/accounts/"+strconv.FormatInt(account.ID, 10), nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/accounts/"+strconv.FormatInt(account.ID, 10), nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -152,7 +152,7 @@ func TestUpdateAccountReplacesCredentialsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"edit-creds","enabled":true,"concurrency_limit":1,"concurrency_queue_timeout_seconds":0,"credentials":{"access_token":"new-token","refresh_token":"new-refresh"}}`
-	request := httptest.NewRequest(http.MethodPut, "/admin/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()

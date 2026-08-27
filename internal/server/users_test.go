@@ -19,11 +19,11 @@ func TestAdminCanCreateAndListUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := postJSON(t, application, adminToken, "/admin/users", `{"username":"operator","password":"operator-pass-ok","role":"user"}`)
+	created := postJSON(t, application, adminToken, "/api/users", `{"username":"operator","password":"operator-pass-ok","role":"user"}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
 	}
-	list := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	list := httptest.NewRequest(http.MethodGet, "/api/users", nil)
 	list.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, list)
@@ -41,7 +41,7 @@ func TestMemberCannotManageUsers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := httptest.NewRequest(http.MethodGet, "/admin/users", nil)
+	list := httptest.NewRequest(http.MethodGet, "/api/users", nil)
 	list.Header.Set("Authorization", "Bearer "+memberToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, list)
@@ -60,7 +60,7 @@ func TestCannotDeleteLastAdmin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodDelete, "/admin/users/"+strconv.FormatInt(users[0].ID, 10), nil)
+	request := httptest.NewRequest(http.MethodDelete, "/api/users/"+strconv.FormatInt(users[0].ID, 10), nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -71,7 +71,7 @@ func TestCannotDeleteLastAdmin(t *testing.T) {
 
 func TestUserLoginAndMe(t *testing.T) {
 	application, _ := testServer(t, "https://example.invalid/responses")
-	login := httptest.NewRequest(http.MethodPost, "/admin/login", bytes.NewBufferString(`{"username":"admin","password":"test-password-ok"}`))
+	login := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"username":"admin","password":"test-password-ok"}`))
 	login.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, login)
@@ -88,7 +88,7 @@ func TestUserLoginAndMe(t *testing.T) {
 	if body.Token == "" || body.User.Username != "admin" || body.User.Role != model.RoleAdmin {
 		t.Fatalf("login body = %+v", body)
 	}
-	me := httptest.NewRequest(http.MethodGet, "/admin/me", nil)
+	me := httptest.NewRequest(http.MethodGet, "/api/me", nil)
 	me.Header.Set("Authorization", "Bearer "+body.Token)
 	meRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(meRecorder, me)

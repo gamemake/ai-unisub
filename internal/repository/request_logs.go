@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
 var requestLogTablePattern = regexp.MustCompile(`^request_logs_([0-9]{8})$`)
@@ -24,6 +26,7 @@ type RequestLog struct {
 	Method              string    `json:"method"`
 	Path                string    `json:"path"`
 	Query               string    `json:"query,omitempty"`
+	ClientIP            string    `json:"client_ip,omitempty"`
 	StatusCode          int       `json:"status_code"`
 	StartedAt           time.Time `json:"started_at"`
 	FinishedAt          time.Time `json:"finished_at"`
@@ -46,24 +49,13 @@ type RequestLog struct {
 
 type RequestLogFilter struct {
 	AccountID  *int64
+	AccountIDs []int64
 	APIKeyID   *int64
 	Provider   string
 	StatusCode *int
 	Query      string
 	Limit      int
 	Offset     int
-}
-
-type UsageLog struct {
-	AccountID    int64
-	Provider     string
-	Endpoint     string
-	Model        string
-	StatusCode   int
-	StartedAt    time.Time
-	RequestID    string
-	InputTokens  *int64
-	OutputTokens *int64
 }
 
 func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) error {
@@ -86,13 +78,13 @@ func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) er
 		duration = 0
 	}
 	query := fmt.Sprintf(`INSERT INTO %s
-		(account_id, api_key_id, provider, method, path, query, status_code, started_at, finished_at, duration_ms,
+		(account_id, api_key_id, provider, method, path, query, client_ip, status_code, started_at, finished_at, duration_ms,
 		 request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
 		 request_headers, request_body, response_headers, response_body, request_truncated, response_truncated)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, table)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, table)
 	_, err = tx.ExecContext(ctx, query,
 		nullableInt64(entry.AccountID), nullableInt64(entry.APIKeyID), nullableString(entry.Provider),
-		entry.Method, entry.Path, nullableString(entry.Query), entry.StatusCode,
+		entry.Method, entry.Path, nullableString(entry.Query), nullableString(entry.ClientIP), entry.StatusCode,
 		entry.StartedAt.UTC().Format(time.RFC3339Nano), entry.FinishedAt.UTC().Format(time.RFC3339Nano), duration.Milliseconds(),
 		nullableString(entry.RequestID), nullableString(entry.ErrorType), nullableString(entry.Model),
 		nullableInt64(entry.InputTokens), nullableInt64(entry.OutputTokens), nullableInt64(entry.CacheReadTokens),
@@ -102,6 +94,12 @@ func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) er
 		boolToInt(entry.RequestTruncated), boolToInt(entry.ResponseTruncated))
 	if err != nil {
 		return err
+	}
+	if entry.AccountID != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE accounts SET last_used_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+			entry.FinishedAt.UTC().Format(time.RFC3339Nano), *entry.AccountID); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -132,7 +130,7 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 	for _, table := range tables {
 		day := strings.TrimPrefix(table, "request_logs_")
 		unions = append(unions, fmt.Sprintf(`SELECT '%s' AS day, l.id, l.account_id, a.name AS account_name, l.api_key_id, k.name AS api_key_name, k.key_prefix,
-			l.provider, l.method, l.path, l.query, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
+			l.provider, l.method, l.path, l.query, l.client_ip, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
 			l.model, l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens, l.total_tokens,
 			l.request_truncated, l.response_truncated
 			FROM %s l
@@ -146,7 +144,7 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	listQuery := "SELECT day, id, account_id, account_name, api_key_id, api_key_name, key_prefix, provider, method, path, query, status_code, started_at, finished_at, duration_ms, request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, request_truncated, response_truncated FROM " +
+	listQuery := "SELECT day, id, account_id, account_name, api_key_id, api_key_name, key_prefix, provider, method, path, query, client_ip, status_code, started_at, finished_at, duration_ms, request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, request_truncated, response_truncated FROM " +
 		from + " logs " + where + " ORDER BY started_at DESC LIMIT ? OFFSET ?"
 	rows, err := r.db.QueryContext(ctx, listQuery, append(append([]any{}, args...), filter.Limit, filter.Offset)...)
 	if err != nil {
@@ -186,7 +184,7 @@ func (r *Repository) GetRequestLog(ctx context.Context, day string, id int64) (R
 		return RequestLog{}, err
 	}
 	query := fmt.Sprintf(`SELECT '%s' AS day, l.id, l.account_id, a.name AS account_name, l.api_key_id, k.name AS api_key_name, k.key_prefix,
-		l.provider, l.method, l.path, l.query, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
+		l.provider, l.method, l.path, l.query, l.client_ip, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
 		l.model, l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens, l.total_tokens,
 		l.request_headers, l.request_body, l.response_headers, l.response_body, l.request_truncated, l.response_truncated
 		FROM %s l
@@ -270,12 +268,79 @@ func (r *Repository) requestLogTables(ctx context.Context) ([]string, error) {
 	return tables, nil
 }
 
+func requestLogTablesSince(tables []string, since time.Time, location *time.Location) []string {
+	if location == nil {
+		location = time.Local
+	}
+	sinceDay := since.In(location).Format("20060102")
+	out := make([]string, 0, len(tables))
+	for _, table := range tables {
+		day := strings.TrimPrefix(table, "request_logs_")
+		if day >= sinceDay {
+			out = append(out, table)
+		}
+	}
+	return out
+}
+
+func (r *Repository) usageSummaryFromRequestLogs(ctx context.Context, accountID int64, since time.Time, location *time.Location) (model.UsageSummary, error) {
+	var summary model.UsageSummary
+	if location == nil {
+		location = time.Local
+	}
+	tables, err := r.requestLogTables(ctx)
+	if err != nil {
+		return summary, err
+	}
+	tables = requestLogTablesSince(tables, since, location)
+	if len(tables) == 0 {
+		return summary, nil
+	}
+	for _, table := range tables {
+		if err := ensureRequestLogColumns(ctx, r.db, table); err != nil {
+			return summary, err
+		}
+	}
+	unions := make([]string, 0, len(tables))
+	args := make([]any, 0, len(tables)*2)
+	sinceText := since.UTC().Format(time.RFC3339Nano)
+	for _, table := range tables {
+		unions = append(unions, fmt.Sprintf(`SELECT input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens
+			FROM %s WHERE account_id=? AND started_at>=?`, table))
+		args = append(args, accountID, sinceText)
+	}
+	query := `SELECT COUNT(*),
+		COALESCE(SUM(input_tokens),0),
+		COALESCE(SUM(output_tokens),0),
+		COALESCE(SUM(cache_read_tokens),0),
+		COALESCE(SUM(cache_creation_tokens),0),
+		COALESCE(SUM(CASE WHEN total_tokens IS NOT NULL THEN total_tokens ELSE COALESCE(input_tokens,0)+COALESCE(output_tokens,0) END),0)
+		FROM (` + strings.Join(unions, " UNION ALL ") + `)`
+	err = r.db.QueryRowContext(ctx, query, args...).Scan(
+		&summary.Requests24H,
+		&summary.InputTokens24H,
+		&summary.OutputTokens24H,
+		&summary.CacheReadTokens24H,
+		&summary.CacheCreationTokens24H,
+		&summary.TotalTokens24H,
+	)
+	return summary, err
+}
+
 func requestLogWhere(filter RequestLogFilter) (string, []any) {
 	clauses := []string{"1=1"}
 	var args []any
 	if filter.AccountID != nil {
 		clauses = append(clauses, "account_id=?")
 		args = append(args, *filter.AccountID)
+	}
+	if len(filter.AccountIDs) > 0 {
+		placeholders := make([]string, 0, len(filter.AccountIDs))
+		for _, id := range filter.AccountIDs {
+			placeholders = append(placeholders, "?")
+			args = append(args, id)
+		}
+		clauses = append(clauses, "account_id IN ("+strings.Join(placeholders, ",")+")")
 	}
 	if filter.APIKeyID != nil {
 		clauses = append(clauses, "api_key_id=?")
@@ -291,8 +356,8 @@ func requestLogWhere(filter RequestLogFilter) (string, []any) {
 	}
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
-		clauses = append(clauses, `(IFNULL(path,'') LIKE ? OR IFNULL(query,'') LIKE ? OR IFNULL(model,'') LIKE ? OR IFNULL(request_id,'') LIKE ? OR IFNULL(error_type,'') LIKE ? OR IFNULL(account_name,'') LIKE ? OR IFNULL(api_key_name,'') LIKE ?)`)
-		args = append(args, like, like, like, like, like, like, like)
+		clauses = append(clauses, `(IFNULL(path,'') LIKE ? OR IFNULL(query,'') LIKE ? OR IFNULL(client_ip,'') LIKE ? OR IFNULL(model,'') LIKE ? OR IFNULL(request_id,'') LIKE ? OR IFNULL(error_type,'') LIKE ? OR IFNULL(account_name,'') LIKE ? OR IFNULL(api_key_name,'') LIKE ?)`)
+		args = append(args, like, like, like, like, like, like, like, like)
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
@@ -313,6 +378,7 @@ func createRequestLogTable(ctx context.Context, tx *sql.Tx, table string) error 
 		method TEXT NOT NULL,
 		path TEXT NOT NULL,
 		query TEXT,
+		client_ip TEXT,
 		status_code INTEGER NOT NULL,
 		started_at TEXT NOT NULL,
 		finished_at TEXT NOT NULL,
@@ -375,6 +441,7 @@ func ensureRequestLogColumns(ctx context.Context, db execQuerier, table string) 
 	}
 	for _, column := range []struct{ name, def string }{
 		{"query", "TEXT"},
+		{"client_ip", "TEXT"},
 		{"model", "TEXT"},
 		{"input_tokens", "INTEGER"},
 		{"output_tokens", "INTEGER"},
@@ -405,11 +472,11 @@ type requestLogScanner interface {
 func scanRequestLogSummary(s requestLogScanner) (RequestLog, error) {
 	var entry RequestLog
 	var accountID, apiKeyID, input, output, cacheRead, cacheCreation, total sql.NullInt64
-	var accountName, apiKeyName, prefix, provider, query, requestID, errorType, model sql.NullString
+	var accountName, apiKeyName, prefix, provider, query, clientIP, requestID, errorType, model sql.NullString
 	var started, finished string
 	var requestTrunc, responseTrunc int
 	if err := s.Scan(&entry.Day, &entry.ID, &accountID, &accountName, &apiKeyID, &apiKeyName, &prefix, &provider,
-		&entry.Method, &entry.Path, &query, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
+		&entry.Method, &entry.Path, &query, &clientIP, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
 		&model, &input, &output, &cacheRead, &cacheCreation, &total, &requestTrunc, &responseTrunc); err != nil {
 		return RequestLog{}, err
 	}
@@ -420,6 +487,7 @@ func scanRequestLogSummary(s requestLogScanner) (RequestLog, error) {
 	entry.APIKeyPrefix = prefix.String
 	entry.Provider = provider.String
 	entry.Query = query.String
+	entry.ClientIP = clientIP.String
 	entry.RequestID = requestID.String
 	entry.ErrorType = errorType.String
 	entry.Model = model.String
@@ -438,12 +506,12 @@ func scanRequestLogSummary(s requestLogScanner) (RequestLog, error) {
 func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	var entry RequestLog
 	var accountID, apiKeyID, input, output, cacheRead, cacheCreation, total sql.NullInt64
-	var accountName, apiKeyName, prefix, provider, query, requestID, errorType, model sql.NullString
+	var accountName, apiKeyName, prefix, provider, query, clientIP, requestID, errorType, model sql.NullString
 	var requestHeaders, requestBody, responseHeaders, responseBody sql.NullString
 	var started, finished string
 	var requestTrunc, responseTrunc int
 	if err := s.Scan(&entry.Day, &entry.ID, &accountID, &accountName, &apiKeyID, &apiKeyName, &prefix, &provider,
-		&entry.Method, &entry.Path, &query, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
+		&entry.Method, &entry.Path, &query, &clientIP, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
 		&model, &input, &output, &cacheRead, &cacheCreation, &total,
 		&requestHeaders, &requestBody, &responseHeaders, &responseBody, &requestTrunc, &responseTrunc); err != nil {
 		return RequestLog{}, err
@@ -455,6 +523,7 @@ func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	entry.APIKeyPrefix = prefix.String
 	entry.Provider = provider.String
 	entry.Query = query.String
+	entry.ClientIP = clientIP.String
 	entry.RequestID = requestID.String
 	entry.ErrorType = errorType.String
 	entry.Model = model.String

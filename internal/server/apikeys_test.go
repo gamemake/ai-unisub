@@ -28,11 +28,11 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first := postJSON(t, application, adminToken, "/admin/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-a","rpm_limit":20}`)
+	first := postJSON(t, application, adminToken, "/api/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-a","rpm_limit":20}`)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create first status=%d body=%s", first.Code, first.Body.String())
 	}
-	second := postJSON(t, application, adminToken, "/admin/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-b"}`)
+	second := postJSON(t, application, adminToken, "/api/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-b"}`)
 	if second.Code != http.StatusCreated {
 		t.Fatalf("create second status=%d body=%s", second.Code, second.Body.String())
 	}
@@ -51,7 +51,7 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 		t.Fatalf("created key = %+v", created)
 	}
 
-	list := httptest.NewRequest(http.MethodGet, "/admin/api-keys", nil)
+	list := httptest.NewRequest(http.MethodGet, "/api/api-keys", nil)
 	list.Header.Set("Authorization", "Bearer "+adminToken)
 	listRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(listRecorder, list)
@@ -62,7 +62,7 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 		t.Fatalf("list leaked plaintext api key: %s", listRecorder.Body.String())
 	}
 
-	detail := httptest.NewRequest(http.MethodGet, "/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10), nil)
+	detail := httptest.NewRequest(http.MethodGet, "/api/api-keys/"+strconv.FormatInt(created.Key.ID, 10), nil)
 	detail.Header.Set("Authorization", "Bearer "+adminToken)
 	detailRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(detailRecorder, detail)
@@ -70,7 +70,7 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 		t.Fatalf("detail status=%d body=%s", detailRecorder.Code, detailRecorder.Body.String())
 	}
 
-	reset := postJSON(t, application, adminToken, "/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10)+"/reset", `{}`)
+	reset := postJSON(t, application, adminToken, "/api/api-keys/"+strconv.FormatInt(created.Key.ID, 10)+"/reset", `{}`)
 	if reset.Code != http.StatusOK {
 		t.Fatalf("reset status=%d body=%s", reset.Code, reset.Body.String())
 	}
@@ -81,7 +81,7 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 		t.Fatalf("reset body = %s", reset.Body.String())
 	}
 
-	del := httptest.NewRequest(http.MethodDelete, "/admin/api-keys/"+strconv.FormatInt(created.Key.ID, 10), nil)
+	del := httptest.NewRequest(http.MethodDelete, "/api/api-keys/"+strconv.FormatInt(created.Key.ID, 10), nil)
 	del.Header.Set("Authorization", "Bearer "+adminToken)
 	delRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(delRecorder, del)

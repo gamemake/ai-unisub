@@ -35,7 +35,7 @@ func TestAccountUsageReturnsStoredQuotaForOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/admin/accounts/1/usage", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/accounts/1/usage", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -82,7 +82,7 @@ func TestAccountUsageKeepsUnknownWhenQuotaUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminToken, _ := application.signer.issue("admin", time.Hour)
-	request := httptest.NewRequest(http.MethodGet, "/admin/accounts/1/usage", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/accounts/1/usage", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)

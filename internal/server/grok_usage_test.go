@@ -66,7 +66,7 @@ func TestRefreshGrokUsageFetchesAndNormalizesCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/admin/accounts/"+strconv.FormatInt(account.ID, 10)+"/usage/refresh", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/accounts/"+strconv.FormatInt(account.ID, 10)+"/usage/refresh", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)

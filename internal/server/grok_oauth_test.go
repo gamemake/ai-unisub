@@ -63,7 +63,7 @@ func TestGrokDeviceOAuthCreatesBoundAccount(t *testing.T) {
 	}
 
 	startBody := `{"name":"grok-subscription","concurrency_limit":2,"concurrency_queue_timeout_seconds":5}`
-	start := httptest.NewRequest(http.MethodPost, "/admin/providers/grok/oauth/device/start", strings.NewReader(startBody))
+	start := httptest.NewRequest(http.MethodPost, "/api/providers/grok/oauth/device/start", strings.NewReader(startBody))
 	start.Header.Set("Authorization", "Bearer "+adminToken)
 	start.Header.Set("Content-Type", "application/json")
 	startRecorder := httptest.NewRecorder()
@@ -243,7 +243,7 @@ func TestGrokOAuthRetriesOnceAfterUpstreamUnauthorized(t *testing.T) {
 func pollOAuth(t *testing.T, application *Server, adminToken, flowID string) *httptest.ResponseRecorder {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"flow_id": flowID})
-	request := httptest.NewRequest(http.MethodPost, "/admin/providers/grok/oauth/device/poll", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/providers/grok/oauth/device/poll", bytes.NewReader(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()

@@ -107,11 +107,12 @@ func (s *Server) createAccount(c *gin.Context) {
 		apiError(c, 400, "invalid_request", err.Error())
 		return
 	}
+	userID := userFromContext(c).ID
 	account, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
 		Name: strings.TrimSpace(request.Name), Provider: request.Provider, AuthType: request.AuthType,
 		Credentials: request.Credentials, Metadata: request.Metadata, ConcurrencyLimit: request.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
-		TokenExpiresAt: request.TokenExpiresAt,
+		TokenExpiresAt: request.TokenExpiresAt, CreatedByUserID: &userID,
 	})
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not create account")

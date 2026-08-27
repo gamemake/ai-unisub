@@ -36,6 +36,7 @@ type CreateAccountParams struct {
 	ConcurrencyQueueTimeoutSeconds int
 	ProxyURL                       string
 	TokenExpiresAt                 *time.Time
+	CreatedByUserID                *int64
 }
 
 type UpdateAccountParams struct {
@@ -249,8 +250,8 @@ func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	result, err := r.db.ExecContext(ctx, `INSERT INTO accounts
-		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
+		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, created_by_user_id)
+		VALUES(?,?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires, nullableInt64(p.CreatedByUserID))
 	if err != nil {
 		return model.Account{}, err
 	}
@@ -562,21 +563,8 @@ func (r *Repository) DeleteAPIKey(ctx context.Context, id int64) error {
 	return requireAffected(result)
 }
 
-func (r *Repository) RecordUsage(ctx context.Context, entry UsageLog) {
-	finished := time.Now().UTC()
-	_, _ = r.db.ExecContext(ctx, `INSERT INTO usage_logs(account_id, provider, endpoint, model, status_code, input_tokens, output_tokens, started_at, finished_at, request_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, entry.AccountID, entry.Provider, entry.Endpoint, nullableString(entry.Model), entry.StatusCode,
-		nullableInt64(entry.InputTokens), nullableInt64(entry.OutputTokens),
-		entry.StartedAt.UTC().Format(time.RFC3339Nano), finished.Format(time.RFC3339Nano), entry.RequestID)
-	_, _ = r.db.ExecContext(ctx, `UPDATE accounts SET last_used_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, finished.Format(time.RFC3339Nano), entry.AccountID)
-}
-
 func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.UsageSummary, error) {
-	var summary model.UsageSummary
-	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0)
-		FROM usage_logs WHERE account_id=? AND started_at>=?`, accountID, time.Now().UTC().Add(-24*time.Hour).Format(time.RFC3339Nano)).
-		Scan(&summary.Requests24H, &summary.InputTokens24H, &summary.OutputTokens24H)
-	return summary, err
+	return r.usageSummaryFromRequestLogs(ctx, accountID, time.Now().UTC().Add(-24*time.Hour), time.Local)
 }
 
 const userColumns = `id, username, password_hash, role, enabled, created_at, updated_at`
@@ -598,7 +586,7 @@ func scanUser(s scanner) (model.User, error) {
 
 const accountBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
 	a.metadata_json, a.proxy_url, a.status, a.enabled, a.concurrency_limit, a.concurrency_queue_timeout_seconds, a.token_expires_at, a.quota_json,
-	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_at, a.updated_at`
+	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_by_user_id, a.created_at, a.updated_at`
 
 const accountSelect = `SELECT ` + accountBaseColumns + `, (SELECT COUNT(*) FROM api_keys keys WHERE keys.account_id=a.id) FROM accounts a`
 
@@ -620,13 +608,14 @@ type accountScan struct {
 	quotaError   sql.NullString
 	lastUsed     sql.NullString
 	lastError    sql.NullString
+	createdBy    sql.NullInt64
 }
 
 func accountScanDest(row *accountScan) []any {
 	return []any{
 		&row.account.ID, &row.account.Name, &row.provider, &row.account.AuthType, &row.account.CredentialsJSON,
 		&row.metadata, &row.account.ProxyURL, &row.account.Status, &row.enabled, &row.account.ConcurrencyLimit, &row.account.ConcurrencyQueueTimeoutSeconds, &row.tokenExpires, &row.quota,
-		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.created, &row.updated,
+		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.createdBy, &row.created, &row.updated,
 	}
 }
 
@@ -639,6 +628,10 @@ func finishAccount(row accountScan) model.Account {
 	a.TokenExpiresAt = parseTime(row.tokenExpires)
 	a.QuotaCheckedAt = parseTime(row.quotaChecked)
 	a.LastUsedAt = parseTime(row.lastUsed)
+	if row.createdBy.Valid {
+		value := row.createdBy.Int64
+		a.CreatedByUserID = &value
+	}
 	if row.quota.Valid {
 		a.Quota = json.RawMessage(row.quota.String)
 	}
@@ -702,6 +695,26 @@ func scanAPIKey(s scanner) (model.APIKey, error) {
 		}
 	}
 	return key, nil
+}
+
+func (r *Repository) ListAccountIDsByCreator(ctx context.Context, userID int64) ([]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id FROM accounts WHERE created_by_user_id=? ORDER BY id`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if ids == nil {
+		ids = []int64{}
+	}
+	return ids, rows.Err()
 }
 
 func parseTime(value sql.NullString) *time.Time {

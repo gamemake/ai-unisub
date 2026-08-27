@@ -128,3 +128,74 @@ func TestMigrateRemovesAPIKeyAccountUniqueConstraint(t *testing.T) {
 		t.Fatalf("key count = %d err=%v", count, err)
 	}
 }
+
+func TestMigrateAddsAccountCreatedByUserID(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "created-by.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE accounts (
+			id INTEGER PRIMARY KEY,
+			name TEXT NOT NULL,
+			provider TEXT NOT NULL DEFAULT 'grok',
+			auth_type TEXT NOT NULL DEFAULT 'oauth',
+			credentials_json BLOB NOT NULL DEFAULT '{}',
+			metadata_json TEXT NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL DEFAULT 'active',
+			enabled INTEGER NOT NULL DEFAULT 1,
+			concurrency_limit INTEGER NOT NULL DEFAULT 1,
+			concurrency_queue_timeout_seconds INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
+		INSERT INTO accounts(id, name) VALUES(1, 'legacy');`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	var createdBy sql.NullInt64
+	if err := db.QueryRow(`SELECT created_by_user_id FROM accounts WHERE id=1`).Scan(&createdBy); err != nil {
+		t.Fatal(err)
+	}
+	if createdBy.Valid {
+		t.Fatalf("legacy account created_by_user_id = %v, want NULL", createdBy.Int64)
+	}
+	var migrated int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=9`).Scan(&migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated != 1 {
+		t.Fatalf("migration version 9 count = %d", migrated)
+	}
+}
+
+func TestMigrateDropsLegacyUsageLogs(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "usage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE usage_logs (id INTEGER PRIMARY KEY, account_id INTEGER NOT NULL);
+		INSERT INTO usage_logs(id, account_id) VALUES(1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	var tables int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='usage_logs'`).Scan(&tables); err != nil {
+		t.Fatal(err)
+	}
+	if tables != 0 {
+		t.Fatal("legacy usage_logs table was not dropped")
+	}
+	var migrated int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=7`).Scan(&migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated != 1 {
+		t.Fatalf("migration version 7 count = %d", migrated)
+	}
+}

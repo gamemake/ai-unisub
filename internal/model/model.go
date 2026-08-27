@@ -35,6 +35,7 @@ type Account struct {
 	LastUsedAt                     *time.Time      `json:"last_used_at,omitempty"`
 	LastError                      *string         `json:"last_error,omitempty"`
 	APIKeyCount                    int             `json:"api_key_count"`
+	CreatedByUserID                *int64          `json:"created_by_user_id,omitempty"`
 	CreatedAt                      time.Time       `json:"created_at"`
 	UpdatedAt                      time.Time       `json:"updated_at"`
 	Credentials                    json.RawMessage `json:"credentials,omitempty"`
@@ -85,9 +86,12 @@ type ResolvedAccount struct {
 }
 
 type UsageSummary struct {
-	Requests24H     int64 `json:"requests_24h"`
-	InputTokens24H  int64 `json:"input_tokens_24h"`
-	OutputTokens24H int64 `json:"output_tokens_24h"`
+	Requests24H            int64 `json:"requests_24h"`
+	InputTokens24H         int64 `json:"input_tokens_24h"`
+	OutputTokens24H        int64 `json:"output_tokens_24h"`
+	CacheReadTokens24H     int64 `json:"cache_read_tokens_24h"`
+	CacheCreationTokens24H int64 `json:"cache_creation_tokens_24h"`
+	TotalTokens24H         int64 `json:"total_tokens_24h"`
 }
 
 type UserRole string

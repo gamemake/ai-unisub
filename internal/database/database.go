@@ -57,6 +57,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			quota_error TEXT,
 			last_used_at TEXT,
 			last_error TEXT,
+			created_by_user_id INTEGER,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
@@ -92,22 +93,6 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE IF NOT EXISTS usage_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			account_id INTEGER NOT NULL,
-			provider TEXT NOT NULL,
-			endpoint TEXT NOT NULL,
-			model TEXT,
-			status_code INTEGER NOT NULL,
-			input_tokens INTEGER,
-			output_tokens INTEGER,
-			request_count INTEGER NOT NULL DEFAULT 1,
-			started_at TEXT NOT NULL,
-			finished_at TEXT,
-			request_id TEXT,
-			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_usage_logs_account_started ON usage_logs(account_id, started_at DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
@@ -181,6 +166,49 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	if err := ensureColumn(ctx, db, "api_keys", "key_plaintext", `ALTER TABLE api_keys ADD COLUMN key_plaintext TEXT`); err != nil {
+		return err
+	}
+	if err := dropUsageLogs(ctx, db, now); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "accounts", "created_by_user_id", `ALTER TABLE accounts ADD COLUMN created_by_user_id INTEGER`); err != nil {
+		return err
+	}
+	if err := migrateAccountCreatedBy(ctx, db, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func migrateAccountCreatedBy(ctx context.Context, db *sql.DB, now string) error {
+	var migrated int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=9`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_accounts_created_by ON accounts(created_by_user_id)`); err != nil {
+		return fmt.Errorf("create accounts created_by index: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(9, ?)`, now); err != nil {
+		return err
+	}
+	return nil
+}
+
+func dropUsageLogs(ctx context.Context, db *sql.DB, now string) error {
+	var migrated int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=7`).Scan(&migrated); err != nil {
+		return err
+	}
+	if migrated != 0 {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS usage_logs`); err != nil {
+		return fmt.Errorf("drop legacy usage_logs: %w", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES(7, ?)`, now); err != nil {
 		return err
 	}
 	return nil

@@ -14,7 +14,7 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 - 转发调用按系统当前时区写入每日请求日志分表（含脱敏后的完整 HTTP 请求/响应和 Token 用量），并在每个整点自动清理超过保留期的分表。控制台「调用记录」可浏览这些记录。
 - 默认拒绝的 Responses 子路径校验和敏感下游请求头清洗。
 - Grok 官方 device-code OAuth 登录，以及 access token 到期前的自动刷新。
-- 一个轻量管理页：`/admin`。
+- 一个轻量管理页：`/home`。
 
 尚未实现：Claude/Codex 浏览器 PKCE OAuth、Claude/Codex 权威上游额度适配器、Codex WebSocket 和完整审计 UI。Claude/Codex 当前仍通过管理接口手动导入 OAuth Token；Grok 已支持官方 device-code OAuth、refresh token 自动续期，以及 Grok Build credits 主动刷新。Grok CLI billing 接口不是公开版本化 API，上游字段或路径变化时额度页会保留最后一次成功数据并显示查询错误，不会推算官方剩余额度。
 
@@ -30,16 +30,16 @@ $env:UNISUB_DB_PATH = '.\data\unisub.db'
 go run ./cmd/server
 ```
 
-启动时若用户表为空，服务使用 `UNISUB_ADMIN_USERNAME` 和 `UNISUB_ADMIN_PASSWORD` 创建初始管理员。两个缺省值都是 `admin`，可通过环境变量覆盖。环境变量只用于首次初始化，后续用户在控制台「用户与安全」中管理。生产环境不得使用缺省密码。
+启动时若用户表为空，服务使用 `UNISUB_ADMIN_USERNAME` 和 `UNISUB_ADMIN_PASSWORD` 创建初始管理员。两个缺省值都是 `admin`，可通过环境变量覆盖。环境变量只用于首次初始化，后续用户在控制台「用户管理」中管理，当前用户密码在「安全设置」中修改。生产环境不得使用缺省密码。
 
-打开 `http://127.0.0.1:8080/admin`。添加 Grok OAuth 账号时，后台会显示设备码和 xAI 官方授权链接；Claude/Codex 仍需手动导入凭据。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
+打开 `http://127.0.0.1:8080/home`。添加 Grok OAuth 账号时，后台会显示设备码和 xAI 官方授权链接；Claude/Codex 仍需手动导入凭据。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
 
 ## 管理 API
 
 登录：
 
 ```http
-POST /admin/login
+POST /api/login
 Content-Type: application/json
 
 {"username":"admin","password":"..."}
@@ -48,7 +48,7 @@ Content-Type: application/json
 创建 Codex 账号并手动导入 Token：
 
 ```http
-POST /admin/accounts
+POST /api/accounts
 Authorization: Bearer <admin-jwt>
 Content-Type: application/json
 
@@ -77,8 +77,8 @@ Content-Type: application/json
 对应管理 API 为：
 
 ```text
-POST /admin/providers/grok/oauth/device/start
-POST /admin/providers/grok/oauth/device/poll
+POST /api/providers/grok/oauth/device/start
+POST /api/providers/grok/oauth/device/poll
 ```
 
 `start` 请求接受账号名称、并发和可选代理配置，返回 `flow_id`、`user_code`、`verification_uri_complete`、过期时间和轮询间隔。`poll` 请求体为 `{"flow_id":"..."}`；授权完成时返回新账号。设备码只保存在服务进程内存中，重启后需要重新发起登录。
@@ -101,50 +101,50 @@ UNISUB_GROK_BILLING_URL=https://cli-chat-proxy.grok.com/v1/billing?format=credit
 
 `concurrency_queue_timeout_seconds` 控制账号达到最大并发数后的等待时间，范围为 0 到 300 秒。等待期间有请求释放并发槽位时会继续处理；超时后返回 `429 concurrency_limited`。账号值为 0 时继承环境变量 `UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS`；环境变量未设置或为 0 时使用内置缺省值 180 秒（3 分钟）。
 
-请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。每条记录保存方法、路径、query、状态码、耗时、上游 request ID、错误类型、模型、Token 用量，以及脱敏后的请求/响应头和正文（正文超过 1 MiB 会截断）。`Authorization`、`Cookie`、`x-api-key` 等敏感头只记录为 `[redacted]`。管理入口：
+请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。每条记录保存方法、路径、query、来源 IP、状态码、耗时、上游 request ID、错误类型、模型、Token 用量，以及脱敏后的请求/响应头和正文（正文超过 1 MiB 会截断）。来源 IP 使用 Gin `ClientIP()`：有可信反向代理时读取 `X-Forwarded-For` / `X-Real-IP`，否则记录直连地址。`Authorization`、`Cookie`、`x-api-key` 等敏感头只记录为 `[redacted]`。管理入口：
 
 ```text
-GET /admin/request-logs
-GET /admin/request-logs/:day/:id
+GET /api/request-logs
+GET /api/request-logs/:day/:id
 ```
 
 列表支持 `account_id`、`api_key_id`、`provider`、`status`、`q`、`limit`、`offset`。详情接口返回完整 HTTP 文本。控制台「调用记录」页面对应这组接口。
 
-已有账号可通过 `PUT /admin/accounts/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
+已有账号可通过 `PUT /api/accounts/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
 
-已有账号可通过 `PUT /admin/accounts/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
+已有账号可通过 `PUT /api/accounts/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
 
 下游 API Key 与订阅账号是多对一：一个账号可以签发多把 Key，每把 Key 只绑定一个账号。请求鉴权仍使用哈希；明文会保存在数据库中，供管理详情和 CC Switch 导入使用。列表接口不回显明文。管理入口：
 
 ```text
-GET    /admin/api-keys
-GET    /admin/api-keys/:id
-POST   /admin/api-keys
-PUT    /admin/api-keys/:id
-POST   /admin/api-keys/:id/reset
-DELETE /admin/api-keys/:id
+GET    /api/api-keys
+GET    /api/api-keys/:id
+POST   /api/api-keys
+PUT    /api/api-keys/:id
+POST   /api/api-keys/:id/reset
+DELETE /api/api-keys/:id
 ```
 
 其他已实现入口：
 
 ```text
-PUT    /admin/password
-GET    /admin/me
-GET    /admin/users
-POST   /admin/users
-PUT    /admin/users/:id
-DELETE /admin/users/:id
-GET    /admin/accounts
-GET    /admin/accounts/:id
-PUT    /admin/accounts/:id
-DELETE /admin/accounts/:id
-POST   /admin/accounts/:id/enable
-POST   /admin/accounts/:id/disable
-GET    /admin/accounts/:id/usage
-POST   /admin/accounts/:id/usage/refresh
-GET    /admin/usage/summary
-POST   /admin/providers/grok/oauth/device/start
-POST   /admin/providers/grok/oauth/device/poll
+PUT    /api/password
+GET    /api/me
+GET    /api/users
+POST   /api/users
+PUT    /api/users/:id
+DELETE /api/users/:id
+GET    /api/accounts
+GET    /api/accounts/:id
+PUT    /api/accounts/:id
+DELETE /api/accounts/:id
+POST   /api/accounts/:id/enable
+POST   /api/accounts/:id/disable
+GET    /api/accounts/:id/usage
+POST   /api/accounts/:id/usage/refresh
+GET    /api/usage/summary
+POST   /api/providers/grok/oauth/device/start
+POST   /api/providers/grok/oauth/device/poll
 ```
 
 账号详情会回显凭据 JSON，便于在管理页编辑；代理地址仍不回显。请求日志会保存完整请求/响应正文，但鉴权头、Cookie 与下游 API Key 不会以明文写入。
@@ -187,6 +187,8 @@ Responses 子路径最多 8 段，每段最多 128 字节，只允许 ASCII 字�
 - 登录限制为每来源 IP 每分钟 5 次。生产反向代理应限制管理网段，并确保传入的客户端地址可信。
 
 ## SQLite 备份
+
+数据库表结构、迁移版本和运维约束详见 [`docs/database.md`](docs/database.md)。
 
 WAL 模式下不要只复制主 `.db` 文件。使用 SQLite 在线备份命令，并把备份写到数据库卷之外：
 

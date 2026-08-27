@@ -36,7 +36,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		capture := newCapturingWriter(c.Writer, requestLogBodyMaxBytes)
 		c.Writer = capture
 		requestLog := repository.RequestLog{
-			Method: c.Request.Method, Path: c.Request.URL.Path, Query: c.Request.URL.RawQuery, StartedAt: started,
+			Method: c.Request.Method, Path: c.Request.URL.Path, Query: c.Request.URL.RawQuery, ClientIP: c.ClientIP(), StartedAt: started,
 			RequestHeaders: sanitizeHeadersJSON(c.Request.Header),
 		}
 		var requestBody []byte
@@ -180,10 +180,6 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		}
 		response, err := client.Do(upstreamRequest)
 		if err != nil {
-			s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
-				AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
-				Model: requestLog.Model, StatusCode: 502, StartedAt: started,
-			})
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
 			return
 		}
@@ -201,10 +197,6 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			}
 			response, err = client.Do(upstreamRequest)
 			if err != nil {
-				s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
-					AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
-					Model: requestLog.Model, StatusCode: 502, StartedAt: started,
-				})
 				apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider after refreshing credentials")
 				return
 			}
@@ -229,12 +221,6 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		} else {
 			_, _ = io.Copy(c.Writer, response.Body)
 		}
-		tokens := capture.TokenUsage()
-		s.repo.RecordUsage(c.Request.Context(), repository.UsageLog{
-			AccountID: account.ID, Provider: string(account.Provider), Endpoint: c.Request.URL.Path,
-			Model: firstNonEmpty(requestLog.Model, tokens.Model), StatusCode: response.StatusCode, StartedAt: started,
-			RequestID: requestID, InputTokens: tokens.Input, OutputTokens: tokens.Output,
-		})
 	}
 }
 

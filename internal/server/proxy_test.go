@@ -144,7 +144,7 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
 		Name: "grok", Provider: model.ProviderGrok, AuthType: "oauth", Credentials: model.Credentials{AccessToken: "token"},
 	})
-	for _, path := range []string{"/v1/responses/../admin", "/v1/responses/a%252fb", "/v1/responses/a//b"} {
+	for _, path := range []string{"/v1/responses/../home", "/v1/responses/a%252fb", "/v1/responses/a//b"} {
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"x"}`))
 		request.Header.Set("Authorization", "Bearer "+key)
 		recorder := httptest.NewRecorder()
@@ -173,6 +173,8 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses?stream=0", bytes.NewReader(requestBody))
 	request.Header.Set("Authorization", "Bearer "+key)
 	request.Header.Set("X-Custom", "trace")
+	request.Header.Set("X-Forwarded-For", "198.51.100.20")
+	request.RemoteAddr = "127.0.0.1:54321"
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -187,7 +189,7 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 		t.Fatalf("logs total=%d len=%d", total, len(logs))
 	}
 	summary := logs[0]
-	if summary.AccountID == nil || *summary.AccountID != account.ID || summary.Path != "/v1/responses" || summary.Query != "stream=0" {
+	if summary.AccountID == nil || *summary.AccountID != account.ID || summary.Path != "/v1/responses" || summary.Query != "stream=0" || summary.ClientIP != "198.51.100.20" {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.InputTokens == nil || *summary.InputTokens != 15 || summary.OutputTokens == nil || *summary.OutputTokens != 8 {
@@ -223,7 +225,7 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if usage.Requests24H != 1 || usage.InputTokens24H != 15 || usage.OutputTokens24H != 8 {
+	if usage.Requests24H != 1 || usage.InputTokens24H != 15 || usage.OutputTokens24H != 8 || usage.TotalTokens24H != 23 {
 		t.Fatalf("local usage = %+v", usage)
 	}
 }

@@ -71,14 +71,14 @@ func (s *Server) Handler() http.Handler { return s.engine }
 
 func (s *Server) routes() {
 	s.engine.Use(gin.Recovery(), requestLogger())
-	s.engine.GET("/", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, "/admin") })
+	s.engine.GET("/", func(c *gin.Context) { c.Redirect(http.StatusTemporaryRedirect, "/home") })
 	s.engine.GET("/healthz", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"status": "ok"}) })
-	s.engine.GET("/admin", s.adminPage)
-	s.engine.GET("/admin/assets/admin.css", s.adminStyles)
-	s.engine.GET("/admin/assets/admin.js", s.adminScript)
-	s.engine.POST("/admin/login", s.login)
+	s.engine.GET("/home", s.adminPage)
+	s.engine.GET("/assets/admin.css", s.adminStyles)
+	s.engine.GET("/assets/admin.js", s.adminScript)
+	s.engine.POST("/api/login", s.login)
 
-	admin := s.engine.Group("/admin")
+	admin := s.engine.Group("/api")
 	admin.Use(s.requireAdmin())
 	admin.PUT("/password", s.changePassword)
 	admin.GET("/me", s.currentUser)

@@ -303,11 +303,12 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 		TokenType: firstNonEmpty(token.TokenType, "Bearer"), ClientID: s.cfg.GrokOAuth.ClientID, Scope: token.Scope,
 	}
 	expiresAt := oauthTokenExpiry(token.ExpiresIn)
+	userID := userFromContext(c).ID
 	account, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
 		Name: accountRequest.Name, Provider: model.ProviderGrok, AuthType: "oauth", Credentials: credentials,
 		Metadata: accountRequest.Metadata, ConcurrencyLimit: accountRequest.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: accountRequest.ConcurrencyQueueTimeoutSeconds,
-		ProxyURL: accountRequest.ProxyURL, TokenExpiresAt: expiresAt,
+		ProxyURL: accountRequest.ProxyURL, TokenExpiresAt: expiresAt, CreatedByUserID: &userID,
 	})
 	if err != nil {
 		s.grokOAuthMu.Lock()

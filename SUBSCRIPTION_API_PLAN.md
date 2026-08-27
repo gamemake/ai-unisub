@@ -322,41 +322,15 @@ CREATE TABLE admin (
 
 应用层创建管理员时固定写入 `id=1`，已有记录时拒绝再次初始化。密码使用 Argon2id 或 bcrypt，管理员会话使用短期 JWT 或随机服务端 Session Cookie。
 
-### 4.4 usage_logs
-
-额度页面主要显示上游订阅额度，同时保留本地请求统计，便于确认消耗来源：
-
-```sql
-CREATE TABLE usage_logs (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_id      INTEGER NOT NULL,
-    provider        TEXT NOT NULL,
-    endpoint        TEXT NOT NULL,
-    model           TEXT,
-    status_code     INTEGER NOT NULL,
-    input_tokens    INTEGER,
-    output_tokens   INTEGER,
-    request_count   INTEGER NOT NULL DEFAULT 1,
-    started_at      TEXT NOT NULL,
-    finished_at     TEXT,
-    request_id      TEXT,
-
-    FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-);
-
-CREATE INDEX idx_usage_logs_account_started
-ON usage_logs(account_id, started_at DESC);
-```
-
-本地统计不是计费系统。若上游响应没有 usage 字段，只记录请求次数、状态码和持续时间，不推算 Token。
-
-### 4.5 按日请求日志分表
+### 4.4 按日请求日志分表
 
 每次转发接口调用都必须记录，包括鉴权失败、Provider 不匹配、请求校验失败、RPM 限流、并发队列超时、上游连接失败和正常响应。日志按系统当前时区中请求开始时所在的自然日写入独立表：
 
 ```text
 request_logs_YYYYMMDD
 ```
+
+本地请求次数和 Token 统计直接聚合这些分表，不再维护一张内容重复的 `usage_logs` 表。本地统计不是计费系统；若上游响应没有 usage 字段，对应 Token 字段保持为空，不推算 Token。
 
 每张表结构一致：
 
@@ -450,8 +424,8 @@ Grok：
 首选方式是 OAuth PKCE：
 
 ```text
-POST /admin/providers/claude/oauth/start
-POST /admin/providers/claude/oauth/exchange
+POST /api/providers/claude/oauth/start
+POST /api/providers/claude/oauth/exchange
 ```
 
 流程：
@@ -468,7 +442,7 @@ POST /admin/providers/claude/oauth/exchange
 可选方式是 `sessionKey` 自动交换：
 
 ```text
-POST /admin/providers/claude/session/import
+POST /api/providers/claude/session/import
 ```
 
 服务端临时使用 `sessionKey`：
@@ -548,8 +522,8 @@ expires_at <= now + 10 minutes
 管理接口：
 
 ```text
-POST /admin/providers/codex/oauth/start
-POST /admin/providers/codex/oauth/exchange
+POST /api/providers/codex/oauth/start
+POST /api/providers/codex/oauth/exchange
 ```
 
 使用 Codex CLI OAuth PKCE：
@@ -717,8 +691,8 @@ WebSocket 需要覆盖 Sub2API 同等级别的测试场景：Upgrade 鉴权、�
 支持：
 
 ```text
-POST /admin/providers/grok/oauth/device/start
-POST /admin/providers/grok/oauth/device/poll
+POST /api/providers/grok/oauth/device/start
+POST /api/providers/grok/oauth/device/poll
 ```
 
 当前采用 RFC 8628 device-code OAuth，适用于本地、Docker 和远程部署，不依赖浏览器能够回调服务端 loopback 地址：
@@ -1024,37 +998,37 @@ websocket_connection_id
 建议最小控制面：
 
 ```text
-POST   /admin/login
-POST   /admin/logout
-PUT    /admin/password
+POST   /api/login
+POST   /api/logout
+PUT    /api/password
 
-POST   /admin/accounts
+POST   /api/accounts
 
-GET    /admin/accounts
-GET    /admin/accounts/:id
-PATCH  /admin/accounts/:id
-DELETE /admin/accounts/:id
-POST   /admin/accounts/:id/api-key/reset
-POST   /admin/accounts/:id/test
-POST   /admin/accounts/:id/refresh
-POST   /admin/accounts/:id/enable
-POST   /admin/accounts/:id/disable
-PUT    /admin/accounts/:id/proxy
-PUT    /admin/accounts/:id/concurrency-queue
-GET    /admin/accounts/:id/usage
-POST   /admin/accounts/:id/usage/refresh
-GET    /admin/usage/summary
+GET    /api/accounts
+GET    /api/accounts/:id
+PATCH  /api/accounts/:id
+DELETE /api/accounts/:id
+POST   /api/accounts/:id/api-key/reset
+POST   /api/accounts/:id/test
+POST   /api/accounts/:id/refresh
+POST   /api/accounts/:id/enable
+POST   /api/accounts/:id/disable
+PUT    /api/accounts/:id/proxy
+PUT    /api/accounts/:id/concurrency-queue
+GET    /api/accounts/:id/usage
+POST   /api/accounts/:id/usage/refresh
+GET    /api/usage/summary
 
-POST   /admin/providers/claude/oauth/start
-POST   /admin/providers/claude/oauth/exchange
-POST   /admin/providers/claude/session/import
+POST   /api/providers/claude/oauth/start
+POST   /api/providers/claude/oauth/exchange
+POST   /api/providers/claude/session/import
 
-POST   /admin/providers/codex/oauth/start
-POST   /admin/providers/codex/oauth/exchange
+POST   /api/providers/codex/oauth/start
+POST   /api/providers/codex/oauth/exchange
 
-POST   /admin/providers/grok/oauth/start
-POST   /admin/providers/grok/oauth/exchange
-POST   /admin/providers/grok/sso/exchange
+POST   /api/providers/grok/oauth/start
+POST   /api/providers/grok/oauth/exchange
+POST   /api/providers/grok/sso/exchange
 ```
 
 创建账号时可同时提交：
@@ -1077,7 +1051,7 @@ POST   /admin/providers/grok/sso/exchange
 修改或清除账号代理：
 
 ```http
-PUT /admin/accounts/:id/proxy
+PUT /api/accounts/:id/proxy
 Content-Type: application/json
 
 {"proxy_url":"http://127.0.0.1:8080"}
@@ -1086,7 +1060,7 @@ Content-Type: application/json
 传入 `{"proxy_url":""}` 清除代理。修改并发队列等待时间：
 
 ```http
-PUT /admin/accounts/:id/concurrency-queue
+PUT /api/accounts/:id/concurrency-queue
 Content-Type: application/json
 
 {"concurrency_queue_timeout_seconds":5}
@@ -1151,7 +1125,7 @@ Content-Type: application/json
 - HTTP/SOCKS5 账号代理配置、明文存储和运行时修改。
 - HTTP Client、Transport、keep-alive 与 HTTP/2 session 的账号级隔离。
 - 运行指标。
-- SQLite 在线备份和 usage_logs 清理。
+- SQLite 在线备份和每日请求日志分表的保留期清理。
 
 ### 13.4 第四阶段：管理体验
 

@@ -8,6 +8,66 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
+func TestListRequestLogsFiltersByAccountIDs(t *testing.T) {
+	repo := testRepository(t)
+	ctx := context.Background()
+	ownerA, err := repo.CreateUser(ctx, "owner-a", "owner-a-pass-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerB, err := repo.CreateUser(ctx, "owner-b", "owner-b-pass-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountA, err := repo.CreateAccount(ctx, CreateAccountParams{
+		Name: "account-a", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token-a"}, CreatedByUserID: &ownerA.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountB, err := repo.CreateAccount(ctx, CreateAccountParams{
+		Name: "account-b", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token-b"}, CreatedByUserID: &ownerB.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyA, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: accountA.ID, Name: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyB, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: accountB.ID, Name: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)
+	for i, item := range []struct {
+		accountID int64
+		keyID     int64
+	}{{accountA.ID, keyA.ID}, {accountB.ID, keyB.ID}} {
+		accountID, apiKeyID := item.accountID, item.keyID
+		if err := repo.RecordRequest(time.UTC, RequestLog{
+			AccountID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+			StatusCode: 200, StartedAt: started.Add(time.Duration(i) * time.Second), FinishedAt: started.Add(time.Duration(i)*time.Second + time.Millisecond),
+			Model: "gpt-test",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owned, err := repo.ListAccountIDsByCreator(ctx, ownerA.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{AccountIDs: owned, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(logs) != 1 || logs[0].AccountID == nil || *logs[0].AccountID != accountA.ID {
+		t.Fatalf("owner-a logs = total:%d data:%+v", total, logs)
+	}
+}
+
 func TestRecordRequestUsesConfiguredTimezoneDailyTable(t *testing.T) {
 	repo := testRepository(t)
 	location, err := time.LoadLocation("Asia/Taipei")
@@ -52,7 +112,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	started := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
 	err = repo.RecordRequest(time.UTC, RequestLog{
 		AccountID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
-		Query: "beta=1", StatusCode: 200, StartedAt: started, FinishedAt: started.Add(40 * time.Millisecond),
+		Query: "beta=1", ClientIP: "203.0.113.10", StatusCode: 200, StartedAt: started, FinishedAt: started.Add(40 * time.Millisecond),
 		RequestID: "req_1", Model: "gpt-test", InputTokens: &input, OutputTokens: &output, TotalTokens: &total,
 		RequestHeaders:  `{"Content-Type":["application/json"],"Authorization":["[redacted]"]}`,
 		RequestBody:     `{"model":"gpt-test"}`,
@@ -70,7 +130,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 		t.Fatalf("list count=%d len=%d", totalCount, len(logs))
 	}
 	summary := logs[0]
-	if summary.AccountName != "codex-main" || summary.APIKeyName != "bot" || summary.Model != "gpt-test" {
+	if summary.AccountName != "codex-main" || summary.APIKeyName != "bot" || summary.Model != "gpt-test" || summary.ClientIP != "203.0.113.10" {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.InputTokens == nil || *summary.InputTokens != 12 || summary.RequestBody != "" {
@@ -80,7 +140,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.RequestBody != `{"model":"gpt-test"}` || detail.Query != "beta=1" || detail.ResponseBody == "" {
+	if detail.RequestBody != `{"model":"gpt-test"}` || detail.Query != "beta=1" || detail.ClientIP != "203.0.113.10" || detail.ResponseBody == "" {
 		t.Fatalf("detail http = %+v", detail)
 	}
 	if detail.RequestHeaders != `{"Content-Type":["application/json"],"Authorization":["[redacted]"]}` {
@@ -91,6 +151,53 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	}
 	if detail.TotalTokens == nil || *detail.TotalTokens != 46 {
 		t.Fatalf("detail tokens = %+v", detail)
+	}
+	updatedAccount, err := repo.GetAccount(ctx, account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updatedAccount.LastUsedAt == nil || !updatedAccount.LastUsedAt.Equal(started.Add(40*time.Millisecond)) {
+		t.Fatalf("account last_used_at = %v", updatedAccount.LastUsedAt)
+	}
+}
+
+func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
+	repo := testRepository(t)
+	ctx := context.Background()
+	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+		Name: "usage-account", Provider: model.ProviderClaude, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accountID := account.ID
+	input, output, cacheRead, cacheCreate, total := int64(10), int64(4), int64(3), int64(2), int64(14)
+	olderInput, olderOutput := int64(100), int64(50)
+	now := time.Now().UTC()
+	if err := repo.RecordRequest(time.Local, RequestLog{
+		AccountID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
+		StatusCode: 200, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-time.Hour + time.Second),
+		InputTokens: &input, OutputTokens: &output, CacheReadTokens: &cacheRead, CacheCreationTokens: &cacheCreate, TotalTokens: &total,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordRequest(time.Local, RequestLog{
+		AccountID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
+		StatusCode: 200, StartedAt: now.Add(-30 * time.Hour), FinishedAt: now.Add(-30*time.Hour + time.Second),
+		InputTokens: &olderInput, OutputTokens: &olderOutput,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	summary, err := repo.UsageSummary(ctx, accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Requests24H != 1 || summary.InputTokens24H != 10 || summary.OutputTokens24H != 4 {
+		t.Fatalf("usage summary core = %+v", summary)
+	}
+	if summary.CacheReadTokens24H != 3 || summary.CacheCreationTokens24H != 2 || summary.TotalTokens24H != 14 {
+		t.Fatalf("usage summary tokens = %+v", summary)
 	}
 }
 
