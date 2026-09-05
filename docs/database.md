@@ -2,6 +2,8 @@
 
 本文说明 `ai-unisub` 当前的 SQLite 数据库结构、初始化流程、历史迁移和运维约束。实现以 [`internal/database/database.go`](../internal/database/database.go) 为准；每日请求日志分表由 [`internal/repository/request_logs.go`](../internal/repository/request_logs.go) 管理。
 
+若要增加每日用量、并发历史等统计能力，参见规划文档 [`docs/stats-database.md`](stats-database.md)（尚未落地实现）。
+
 ## 1. 总览
 
 服务启动时通过 `database.Open` 打开数据库，并自动执行 `Migrate`：
