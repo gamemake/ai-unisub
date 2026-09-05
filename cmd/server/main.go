@@ -23,7 +23,7 @@ func main() {
 		slog.Error("configuration error", "error", err)
 		os.Exit(1)
 	}
-	db, err := database.Open(ctx, cfg.DatabasePath)
+	db, err := database.Open(ctx, cfg.DatabaseDriver, cfg.DatabaseDSN)
 	if err != nil {
 		slog.Error("database error", "error", err)
 		os.Exit(1)
@@ -45,7 +45,7 @@ func main() {
 	application := appserver.New(cfg, repo)
 	httpServer := &http.Server{Addr: cfg.ListenAddress, Handler: application.Handler(), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 1 << 20}
 	go func() {
-		slog.Info("server listening", "address", cfg.ListenAddress)
+		slog.Info("server listening", "address", cfg.ListenAddress, "db_driver", cfg.DatabaseDriver)
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			slog.Error("server stopped", "error", err)
 			os.Exit(1)

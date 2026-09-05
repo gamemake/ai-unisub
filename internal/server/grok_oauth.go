@@ -27,14 +27,6 @@ const (
 	maxOAuthTokenTTL    = 365 * 24 * time.Hour
 )
 
-type grokOAuthAccountRequest struct {
-	Name                           string          `json:"name"`
-	Metadata                       json.RawMessage `json:"metadata"`
-	ConcurrencyLimit               int             `json:"concurrency_limit"`
-	ConcurrencyQueueTimeoutSeconds int             `json:"concurrency_queue_timeout_seconds"`
-	ProxyURL                       string          `json:"proxy_url"`
-}
-
 type grokOAuthFlow struct {
 	ID               string
 	Owner            string
@@ -45,7 +37,7 @@ type grokOAuthFlow struct {
 	ExpiresAt        time.Time
 	NextPollAt       time.Time
 	PollInterval     time.Duration
-	Account          grokOAuthAccountRequest
+	Account          oauthAccountRequest
 	Client           *http.Client
 	Polling          bool
 	Finalizing       bool
@@ -83,29 +75,8 @@ func (s *Server) startGrokOAuthDevice(c *gin.Context) {
 		return
 	}
 
-	var account grokOAuthAccountRequest
-	if c.ShouldBindJSON(&account) != nil || strings.TrimSpace(account.Name) == "" {
-		apiError(c, http.StatusBadRequest, "invalid_request", "account name is required")
-		return
-	}
-	account.Name = strings.TrimSpace(account.Name)
-	if len(account.Metadata) > 0 && !json.Valid(account.Metadata) {
-		apiError(c, http.StatusBadRequest, "invalid_request", "metadata must be valid JSON")
-		return
-	}
-	if err := validateConcurrencyQueueTimeout(account.ConcurrencyQueueTimeoutSeconds); err != nil {
-		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	proxyURL, err := normalizeProxyURL(account.ProxyURL)
-	if err != nil {
-		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return
-	}
-	account.ProxyURL = proxyURL
-	client, err := newClientForProxy(proxyURL)
-	if err != nil {
-		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
+	account, client, ok := s.bindOAuthAccountRequest(c)
+	if !ok {
 		return
 	}
 
@@ -308,7 +279,7 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 		Name: accountRequest.Name, Provider: model.ProviderGrok, AuthType: "oauth", Credentials: credentials,
 		Metadata: accountRequest.Metadata, ConcurrencyLimit: accountRequest.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: accountRequest.ConcurrencyQueueTimeoutSeconds,
-		ProxyURL: accountRequest.ProxyURL, TokenExpiresAt: expiresAt, CreatedByUserID: &userID,
+		ProxyURL:                       accountRequest.ProxyURL, TokenExpiresAt: expiresAt, CreatedByUserID: &userID,
 	})
 	if err != nil {
 		s.grokOAuthMu.Lock()
@@ -333,7 +304,7 @@ func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Ac
 		return credentials, nil
 	}
 	originalAccessToken := credentials.AccessToken
-	if !force && (account.TokenExpiresAt == nil || time.Until(*account.TokenExpiresAt) > time.Minute) {
+	if !force && (account.TokenExpiresAt == nil || time.Until(*account.TokenExpiresAt) > oauthRefreshSkew(account.Provider)) {
 		return credentials, nil
 	}
 	lockValue, _ := s.grokRefreshLocks.LoadOrStore(account.ID, new(sync.Mutex))
@@ -352,7 +323,7 @@ func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Ac
 	if force && credentials.AccessToken != originalAccessToken {
 		return credentials, nil
 	}
-	if !force && (latest.TokenExpiresAt == nil || time.Until(*latest.TokenExpiresAt) > time.Minute) {
+	if !force && (latest.TokenExpiresAt == nil || time.Until(*latest.TokenExpiresAt) > oauthRefreshSkew(latest.Provider)) {
 		return credentials, nil
 	}
 	if credentials.RefreshToken == "" {

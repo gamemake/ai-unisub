@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${UNISUB_POSTGRES_USER:-unisub}
+      POSTGRES_PASSWORD: ${UNISUB_POSTGRES_PASSWORD:-unisub}
+      POSTGRES_DB: ${UNISUB_POSTGRES_DB:-unisub}
+    volumes:
+      - unisub-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${UNISUB_POSTGRES_USER:-unisub} -d ${UNISUB_POSTGRES_DB:-unisub}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:${UNISUB_POSTGRES_PORT:-5432}:5432"
+
+  ai-unisub:
+    environment:
+      UNISUB_DB_DRIVER: postgres
+      UNISUB_DB_DSN: postgres://${UNISUB_POSTGRES_USER:-unisub}:${UNISUB_POSTGRES_PASSWORD:-unisub}@postgres:5432/${UNISUB_POSTGRES_DB:-unisub}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  unisub-postgres:

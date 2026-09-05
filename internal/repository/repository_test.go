@@ -13,7 +13,7 @@ import (
 
 func testRepository(t *testing.T) *Repository {
 	t.Helper()
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "test.db"))
+	db, err := database.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -8,7 +8,9 @@ services:
       - "127.0.0.1:${UNISUB_HOST_PORT:-8080}:${UNISUB_PORT:-8080}"
     environment:
       UNISUB_PORT: "${UNISUB_PORT:-8080}"
+      UNISUB_DB_DRIVER: "${UNISUB_DB_DRIVER:-sqlite}"
       UNISUB_DB_PATH: /app/data/unisub.db
+      UNISUB_DB_DSN: "${UNISUB_DB_DSN:-}"
       UNISUB_ADMIN_USERNAME: "${UNISUB_ADMIN_USERNAME:-admin}"
       UNISUB_ADMIN_PASSWORD: "${UNISUB_ADMIN_PASSWORD:-admin}"
       UNISUB_ADMIN_TOKEN_TTL: "${UNISUB_ADMIN_TOKEN_TTL:-8h}"

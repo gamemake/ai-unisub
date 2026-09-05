@@ -99,13 +99,9 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 502, "credential_error", "account credentials are unavailable")
 			return
 		}
-		credentials, err = s.grokCredentialsForRequest(c.Request.Context(), account.Account, credentials, false)
+		credentials, err = s.credentialsForRequest(c.Request.Context(), account.Account, credentials, false)
 		if err != nil {
 			apiError(c, 401, "reauth_required", err.Error())
-			return
-		}
-		if account.TokenExpiresAt != nil && time.Now().After(*account.TokenExpiresAt) && account.Provider != model.ProviderGrok {
-			apiError(c, 401, "token_expired", "account OAuth token has expired; manually import a new token")
 			return
 		}
 		if account.RPMLimit != nil && !s.allowRate(fmt.Sprintf("api:%d", account.APIKeyID), *account.RPMLimit, time.Minute) {
@@ -183,9 +179,9 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
 			return
 		}
-		if response.StatusCode == http.StatusUnauthorized && account.Provider == model.ProviderGrok && account.AuthType == "oauth" && credentials.RefreshToken != "" {
+		if response.StatusCode == http.StatusUnauthorized && account.AuthType == "oauth" && credentials.RefreshToken != "" {
 			response.Body.Close()
-			credentials, err = s.grokCredentialsForRequest(c.Request.Context(), account.Account, credentials, true)
+			credentials, err = s.credentialsForRequest(c.Request.Context(), account.Account, credentials, true)
 			if err != nil {
 				apiError(c, http.StatusUnauthorized, "reauth_required", err.Error())
 				return

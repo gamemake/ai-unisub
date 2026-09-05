@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-unisub/ai-unisub/internal/database"
 	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
@@ -70,7 +71,7 @@ func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) er
 		return err
 	}
 	defer tx.Rollback()
-	if err := createRequestLogTable(ctx, tx, table); err != nil {
+	if err := createRequestLogTable(ctx, tx, r.db.Dialect, table); err != nil {
 		return err
 	}
 	duration := entry.FinishedAt.Sub(entry.StartedAt)
@@ -122,7 +123,7 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 		return []RequestLog{}, 0, nil
 	}
 	for _, table := range tables {
-		if err := ensureRequestLogColumns(ctx, r.db, table); err != nil {
+		if err := ensureRequestLogColumns(ctx, r.db, r.db.Dialect, table); err != nil {
 			return nil, 0, err
 		}
 	}
@@ -138,7 +139,7 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 			LEFT JOIN api_keys k ON k.id=l.api_key_id`, day, table))
 	}
 	from := "(" + strings.Join(unions, " UNION ALL ") + ")"
-	where, args := requestLogWhere(filter)
+	where, args := requestLogWhere(r.db.Dialect, filter)
 	var total int
 	countQuery := "SELECT COUNT(*) FROM " + from + " logs " + where
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
@@ -173,14 +174,14 @@ func (r *Repository) GetRequestLog(ctx context.Context, day string, id int64) (R
 		return RequestLog{}, ErrNotFound
 	}
 	table := "request_logs_" + day
-	var exists int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&exists); err != nil {
+	exists, err := r.db.TableExists(ctx, table)
+	if err != nil {
 		return RequestLog{}, err
 	}
-	if exists == 0 {
+	if !exists {
 		return RequestLog{}, ErrNotFound
 	}
-	if err := ensureRequestLogColumns(ctx, r.db, table); err != nil {
+	if err := ensureRequestLogColumns(ctx, r.db, r.db.Dialect, table); err != nil {
 		return RequestLog{}, err
 	}
 	query := fmt.Sprintf(`SELECT '%s' AS day, l.id, l.account_id, a.name AS account_name, l.api_key_id, k.name AS api_key_name, k.key_prefix,
@@ -209,17 +210,12 @@ func (r *Repository) CleanupRequestLogTables(ctx context.Context, now time.Time,
 	localNow := now.In(location)
 	today := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
 	oldestRetainedDate := today.AddDate(0, 0, -(retentionDays - 1))
-	rows, err := r.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'request_logs_%'`)
+	names, err := r.db.ListTablesLike(ctx, "request_logs_%")
 	if err != nil {
 		return nil, err
 	}
 	var expired []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			rows.Close()
-			return nil, err
-		}
+	for _, table := range names {
 		match := requestLogTablePattern.FindStringSubmatch(table)
 		if match == nil {
 			continue
@@ -228,13 +224,6 @@ func (r *Repository) CleanupRequestLogTables(ctx context.Context, now time.Time,
 		if err == nil && date.Before(oldestRetainedDate) {
 			expired = append(expired, table)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
 	}
 	sort.Strings(expired)
 	for _, table := range expired {
@@ -246,23 +235,15 @@ func (r *Repository) CleanupRequestLogTables(ctx context.Context, now time.Time,
 }
 
 func (r *Repository) requestLogTables(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'request_logs_%'`)
+	names, err := r.db.ListTablesLike(ctx, "request_logs_%")
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			return nil, err
-		}
+	for _, table := range names {
 		if requestLogTablePattern.MatchString(table) {
 			tables = append(tables, table)
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	sort.Slice(tables, func(i, j int) bool { return tables[i] > tables[j] })
 	return tables, nil
@@ -297,7 +278,7 @@ func (r *Repository) usageSummaryFromRequestLogs(ctx context.Context, accountID 
 		return summary, nil
 	}
 	for _, table := range tables {
-		if err := ensureRequestLogColumns(ctx, r.db, table); err != nil {
+		if err := ensureRequestLogColumns(ctx, r.db, r.db.Dialect, table); err != nil {
 			return summary, err
 		}
 	}
@@ -327,7 +308,7 @@ func (r *Repository) usageSummaryFromRequestLogs(ctx context.Context, accountID 
 	return summary, err
 }
 
-func requestLogWhere(filter RequestLogFilter) (string, []any) {
+func requestLogWhere(dialect database.Dialect, filter RequestLogFilter) (string, []any) {
 	clauses := []string{"1=1"}
 	var args []any
 	if filter.AccountID != nil {
@@ -356,7 +337,8 @@ func requestLogWhere(filter RequestLogFilter) (string, []any) {
 	}
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
-		clauses = append(clauses, `(IFNULL(path,'') LIKE ? OR IFNULL(query,'') LIKE ? OR IFNULL(client_ip,'') LIKE ? OR IFNULL(model,'') LIKE ? OR IFNULL(request_id,'') LIKE ? OR IFNULL(error_type,'') LIKE ? OR IFNULL(account_name,'') LIKE ? OR IFNULL(api_key_name,'') LIKE ?)`)
+		op := dialect.LikeOperator()
+		clauses = append(clauses, fmt.Sprintf(`(COALESCE(path,'') %s ? OR COALESCE(query,'') %s ? OR COALESCE(client_ip,'') %s ? OR COALESCE(model,'') %s ? OR COALESCE(request_id,'') %s ? OR COALESCE(error_type,'') %s ? OR COALESCE(account_name,'') %s ? OR COALESCE(api_key_name,'') %s ?)`, op, op, op, op, op, op, op, op))
 		args = append(args, like, like, like, like, like, like, like, like)
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
@@ -366,100 +348,42 @@ func requestLogTableName(at time.Time, location *time.Location) string {
 	return "request_logs_" + at.In(location).Format("20060102")
 }
 
-func createRequestLogTable(ctx context.Context, tx *sql.Tx, table string) error {
+func createRequestLogTable(ctx context.Context, tx *database.Tx, dialect database.Dialect, table string) error {
 	if !requestLogTablePattern.MatchString(table) {
 		return fmt.Errorf("invalid request log table name %q", table)
 	}
-	statement := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		account_id INTEGER,
-		api_key_id INTEGER,
-		provider TEXT,
-		method TEXT NOT NULL,
-		path TEXT NOT NULL,
-		query TEXT,
-		client_ip TEXT,
-		status_code INTEGER NOT NULL,
-		started_at TEXT NOT NULL,
-		finished_at TEXT NOT NULL,
-		duration_ms INTEGER NOT NULL,
-		request_id TEXT,
-		error_type TEXT,
-		model TEXT,
-		input_tokens INTEGER,
-		output_tokens INTEGER,
-		cache_read_tokens INTEGER,
-		cache_creation_tokens INTEGER,
-		total_tokens INTEGER,
-		request_headers TEXT,
-		request_body TEXT,
-		response_headers TEXT,
-		response_body TEXT,
-		request_truncated INTEGER NOT NULL DEFAULT 0,
-		response_truncated INTEGER NOT NULL DEFAULT 0
-	)`, table)
+	statement, err := database.RequestLogTableSQL(dialect, table)
+	if err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, statement); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_account_started ON %s(account_id, started_at DESC)`, table, table)); err != nil {
 		return err
 	}
-	return ensureRequestLogColumns(ctx, tx, table)
+	return ensureRequestLogColumns(ctx, tx, dialect, table)
 }
 
-type execQuerier interface {
+type schemaDB interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ColumnNames(ctx context.Context, table string) (map[string]bool, error)
 }
 
-func ensureRequestLogColumns(ctx context.Context, db execQuerier, table string) error {
+func ensureRequestLogColumns(ctx context.Context, db schemaDB, dialect database.Dialect, table string) error {
 	if !requestLogTablePattern.MatchString(table) {
 		return fmt.Errorf("invalid request log table name %q", table)
 	}
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	existing, err := db.ColumnNames(ctx, table)
 	if err != nil {
 		return err
 	}
-	existing := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, dataType string
-		var notNull, primaryKey int
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &primaryKey); err != nil {
-			rows.Close()
-			return err
-		}
-		existing[name] = true
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	for _, column := range []struct{ name, def string }{
-		{"query", "TEXT"},
-		{"client_ip", "TEXT"},
-		{"model", "TEXT"},
-		{"input_tokens", "INTEGER"},
-		{"output_tokens", "INTEGER"},
-		{"cache_read_tokens", "INTEGER"},
-		{"cache_creation_tokens", "INTEGER"},
-		{"total_tokens", "INTEGER"},
-		{"request_headers", "TEXT"},
-		{"request_body", "TEXT"},
-		{"response_headers", "TEXT"},
-		{"response_body", "TEXT"},
-		{"request_truncated", "INTEGER NOT NULL DEFAULT 0"},
-		{"response_truncated", "INTEGER NOT NULL DEFAULT 0"},
-	} {
-		if existing[column.name] {
+	for _, column := range database.RequestLogColumnDefs(dialect) {
+		if existing[column.Name] {
 			continue
 		}
-		if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column.name, column.def)); err != nil {
-			return fmt.Errorf("add %s.%s: %w", table, column.name, err)
+		if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s ADD COLUMN %s %s`, table, column.Name, column.Definition)); err != nil {
+			return fmt.Errorf("add %s.%s: %w", table, column.Name, err)
 		}
 	}
 	return nil
@@ -544,13 +468,25 @@ func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 }
 
 func parseLogTime(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return time.Time{}, nil
 	}
-	if t, err := time.Parse(time.RFC3339Nano, value); err == nil {
-		return t, nil
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05Z07:00",
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+	} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, nil
+		}
 	}
-	return time.Parse("2006-01-02 15:04:05", value)
+	return time.Time{}, fmt.Errorf("unrecognized time %q", value)
 }
 
 func nullInt64Ptr(value sql.NullInt64) *int64 {

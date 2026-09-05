@@ -13,6 +13,7 @@ RUN mkdir -p /app/data && chown -R unisub:unisub /app
 
 # Runtime defaults. Override them with docker run -e or Compose environment.
 ENV UNISUB_PORT=8080 \
+    UNISUB_DB_DRIVER=sqlite \
     UNISUB_DB_PATH=/app/data/unisub.db \
     UNISUB_ADMIN_USERNAME=admin \
     UNISUB_ADMIN_PASSWORD=admin \

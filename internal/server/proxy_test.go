@@ -273,7 +273,7 @@ func createAccountWithKey(t *testing.T, repo *repository.Repository, p repositor
 
 func testServer(t *testing.T, responsesURL string) (*Server, *repository.Repository) {
 	t.Helper()
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "server.db"))
+	db, err := database.OpenSQLite(context.Background(), filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
 		t.Fatal(err)
 	}

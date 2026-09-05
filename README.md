@@ -4,7 +4,7 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 
 当前代码实现了 `SUBSCRIPTION_API_PLAN.md` 第一阶段的可运行后端基线：
 
-- Go + Gin 服务、SQLite WAL/外键/`busy_timeout`。
+- Go + Gin 服务，默认 SQLite（WAL/外键/`busy_timeout`），也可使用 PostgreSQL。
 - 账号凭据 JSON、代理 URL 和下游 API Key 明文均保存在数据库中；请求鉴权仍比对 API Key 哈希。
 - 多用户登录、bcrypt 密码哈希、短期 HMAC-SHA256 Bearer JWT。首次启动创建初始管理员。
 - 账户创建、列表、详情、启停、删除，以及独立的 API Key 签发/重置/删除和本地 24 小时用量。
@@ -14,9 +14,10 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 - 转发调用按系统当前时区写入每日请求日志分表（含脱敏后的完整 HTTP 请求/响应和 Token 用量），并在每个整点自动清理超过保留期的分表。控制台「调用记录」可浏览这些记录。
 - 默认拒绝的 Responses 子路径校验和敏感下游请求头清洗。
 - Grok 官方 device-code OAuth 登录，以及 access token 到期前的自动刷新。
+- Claude / Codex 官方浏览器 PKCE OAuth 登录，以及 access token 到期前的自动刷新。
 - 一个轻量管理页：`/home`。
 
-尚未实现：Claude/Codex 浏览器 PKCE OAuth、Claude/Codex 权威上游额度适配器、Codex WebSocket 和完整审计 UI。Claude/Codex 当前仍通过管理接口手动导入 OAuth Token；Grok 已支持官方 device-code OAuth、refresh token 自动续期，以及 Grok Build credits 主动刷新。Grok CLI billing 接口不是公开版本化 API，上游字段或路径变化时额度页会保留最后一次成功数据并显示查询错误，不会推算官方剩余额度。
+尚未实现：Claude/Codex 权威上游额度适配器、Codex WebSocket 和完整审计 UI。Grok 已支持官方 device-code OAuth、refresh token 自动续期，以及 Grok Build credits 主动刷新；Claude 与 Codex 支持官方网页 PKCE 登录与 refresh token 自动续期，也可继续手动导入 Token。Grok CLI billing 接口不是公开版本化 API，上游字段或路径变化时额度页会保留最后一次成功数据并显示查询错误，不会推算官方剩余额度。
 
 ## 快速启动
 
@@ -26,13 +27,22 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 Copy-Item .env.example .env
 # 可选：未设置时缺省为 admin，生产环境请务必覆盖
 $env:UNISUB_ADMIN_PASSWORD = 'replace-with-a-long-password'
+$env:UNISUB_DB_DRIVER = 'sqlite'
 $env:UNISUB_DB_PATH = '.\data\unisub.db'
+go run ./cmd/server
+```
+
+PostgreSQL 示例：
+
+```powershell
+$env:UNISUB_DB_DRIVER = 'postgres'
+$env:UNISUB_DB_DSN = 'postgres://unisub:unisub@127.0.0.1:5432/unisub?sslmode=disable'
 go run ./cmd/server
 ```
 
 启动时若用户表为空，服务使用 `UNISUB_ADMIN_USERNAME` 和 `UNISUB_ADMIN_PASSWORD` 创建初始管理员。两个缺省值都是 `admin`，可通过环境变量覆盖。环境变量只用于首次初始化，后续用户在控制台「用户管理」中管理，当前用户密码在「安全设置」中修改。生产环境不得使用缺省密码。
 
-打开 `http://127.0.0.1:8080/home`。添加 Grok OAuth 账号时，后台会显示设备码和 xAI 官方授权链接；Claude/Codex 仍需手动导入凭据。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
+打开 `http://127.0.0.1:8080/home`。添加 OAuth 账号时：Grok 显示设备码和 xAI 官方授权链接；Claude/Codex 打开官方授权页，登录后把授权码或回调 URL 粘贴回控制台。生产部署应放在具备 TLS 的反向代理之后，且不要公开管理入口。
 
 ## API 文档
 
@@ -99,6 +109,38 @@ UNISUB_GROK_BILLING_URL=https://cli-chat-proxy.grok.com/v1/billing?format=credit
 
 生产模式会拒绝非 `https://auth.x.ai` 的 OAuth issuer。OAuth 登录与后续 Token 刷新都会使用该账号配置的 HTTP/SOCKS5 代理。Access Token 在到期前一分钟自动使用 refresh token 续期；刷新失败时请求返回 `401 reauth_required`，需要重新绑定账号。
 
+### Claude / Codex 网页登录
+
+管理页选择 Claude 或 Codex 与 “OAuth Token”，点击“登录并绑定”。服务端生成 PKCE 与 state，返回官方授权 URL；你在 Claude 或 ChatGPT 页面登录后，把授权码（Claude 的 `code#state`）或 Codex 回调 URL 粘贴回控制台，服务端交换 Token 并创建账号。账号密码只在官方页面输入。
+
+对应管理 API 为：
+
+```text
+POST /api/providers/claude/oauth/start
+POST /api/providers/claude/oauth/exchange
+POST /api/providers/codex/oauth/start
+POST /api/providers/codex/oauth/exchange
+```
+
+`start` 请求体与 Grok 相同（账号名称、并发、可选代理）。响应包含 `flow_id` 和 `authorization_url`。`exchange` 请求体为 `{"flow_id":"...","code":"..."}`，`code` 可以是授权码、`code#state`，或完整回调 URL。PKCE verifier 只保存在服务进程内存中，重启后需要重新发起登录。
+
+Claude 使用 Claude Code 公共客户端和 `https://console.anthropic.com/oauth/code/callback` 复制粘贴回调。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时浏览器会跳到本机该地址，把地址栏完整 URL 粘贴回来即可。通常不需要修改；如官方客户端契约更新，可覆盖：
+
+```env
+UNISUB_CLAUDE_OAUTH_AUTHORIZE_URL=https://claude.ai/oauth/authorize
+UNISUB_CLAUDE_OAUTH_TOKEN_URL=https://console.anthropic.com/v1/oauth/token
+UNISUB_CLAUDE_OAUTH_REDIRECT_URI=https://console.anthropic.com/oauth/code/callback
+UNISUB_CLAUDE_OAUTH_CLIENT_ID=9d1c250a-e61b-44d9-88ed-5944d1962f5e
+UNISUB_CLAUDE_OAUTH_SCOPES="org:create_api_key user:profile user:inference"
+UNISUB_CODEX_OAUTH_AUTHORIZE_URL=https://auth.openai.com/oauth/authorize
+UNISUB_CODEX_OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
+UNISUB_CODEX_OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback
+UNISUB_CODEX_OAUTH_CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
+UNISUB_CODEX_OAUTH_SCOPES="openid profile email offline_access"
+```
+
+生产模式会拒绝非官方 authorize / token / redirect URL。OAuth 登录与后续 Token 刷新都会使用该账号配置的 HTTP/SOCKS5 代理。Claude 与 Codex 的 access token 在到期前约十分钟自动使用 refresh token 续期；上游返回 401 时也会再刷新一次。刷新失败时请求返回 `401 reauth_required`，需要重新绑定账号。Codex 会从 id_token 解析 `chatgpt_account_id`。
+
 `proxy_url` 可选，支持 `http://` 和 `socks5://`，必须包含主机和端口；用户名和密码可放在 URL 中。代理地址和账号凭据均以明文保存，管理 API 只返回 `proxy_configured`，不会回显代理地址。
 
 每个账号拥有独立的 HTTP Client、Transport 和 keep-alive 连接池。不同账号不会复用 HTTP 连接，即使它们属于同一个 Provider 或使用相同代理；同一账号内部仍会复用自己的空闲连接。
@@ -150,6 +192,10 @@ POST   /api/accounts/:id/usage/refresh
 GET    /api/usage/summary
 POST   /api/providers/grok/oauth/device/start
 POST   /api/providers/grok/oauth/device/poll
+POST   /api/providers/claude/oauth/start
+POST   /api/providers/claude/oauth/exchange
+POST   /api/providers/codex/oauth/start
+POST   /api/providers/codex/oauth/exchange
 ```
 
 账号详情会回显凭据 JSON，便于在管理页编辑；代理地址仍不回显。请求日志会保存完整请求/响应正文，但鉴权头、Cookie 与下游 API Key 不会以明文写入。
@@ -184,12 +230,18 @@ Responses 子路径最多 8 段，每段最多 128 字节，只允许 ASCII 字�
 
 ## 安全与运行约束
 
-- 账号凭据和代理 URL 以明文写入 SQLite。必须严格限制数据库文件、备份和宿主机的访问权限。
+- 账号凭据和代理 URL 以明文写入数据库。必须严格限制 SQLite 文件、PostgreSQL 访问权限、备份和宿主机的访问权限。
 - 管理 API 的账号详情会回显凭据 JSON，代理 URL 仍不回显；这不代表数据库中的字段经过加密。
 - 默认只允许方案列出的官方 HTTPS 上游，避免管理员配置任意 URL 造成 SSRF。`UNISUB_ALLOW_TEST_UPSTREAMS=true` 仅供自动化测试使用。
-- SQLite 数据文件只允许一个服务实例直接写入，不要让多个容器共享同一个数据库文件。
+- SQLite 数据文件只允许一个服务实例直接写入，不要让多个容器共享同一个数据库文件。PostgreSQL 可供多个实例共享，但仍应避免未协调的 schema 变更。
 - 管理 JWT 保存在管理页的 `sessionStorage`，页面关闭后清除；管理 API 不使用 Cookie，因此不依赖 Cookie CSRF 保护。
 - 登录限制为每来源 IP 每分钟 5 次。生产反向代理应限制管理网段，并确保传入的客户端地址可信。
+
+## 数据库
+
+默认驱动是 SQLite，路径由 `UNISUB_DB_PATH` 配置（缺省 `./data/unisub.db`）。设置 `UNISUB_DB_DRIVER=postgres` 并提供 `UNISUB_DB_DSN` 可改用 PostgreSQL。若未设置 `UNISUB_DB_DRIVER`，以 `postgres://` 或 `postgresql://` 开头的 DSN 会自动选择 PostgreSQL。
+
+表结构、迁移和备份说明见 [`docs/database.md`](docs/database.md)。
 
 ## SQLite 备份
 
@@ -207,12 +259,20 @@ sqlite3 /app/data/unisub.db ".timeout 5000" ".backup '/backup/unisub-$(date +%F-
 sqlite3 /backup/unisub-YYYY-MM-DD-HHMMSS.db "PRAGMA integrity_check;"
 ```
 
+PostgreSQL 请使用 `pg_dump` 备份，不要只复制数据目录。
+
 ## Docker Compose
 
 ```sh
 cd deploy
 export UNISUB_ADMIN_PASSWORD="replace-with-a-long-password" # 未设置时缺省为 admin
 docker compose up --build -d
+```
+
+默认使用 SQLite 数据卷。若要改用 PostgreSQL：
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
 ```
 
 Compose 默认只绑定 `127.0.0.1:8080`。可分别使用 `UNISUB_HOST_PORT` 和 `UNISUB_PORT` 设置宿主机与容器端口：
@@ -242,6 +302,12 @@ docker run --rm \
 go test ./...
 go vet ./...
 go build ./cmd/server
+```
+
+PostgreSQL 集成测试默认跳过。本地有可写实例时可运行：
+
+```sh
+UNISUB_TEST_POSTGRES_DSN='postgres://unisub:unisub@127.0.0.1:5432/unisub?sslmode=disable' go test ./internal/database ./internal/repository
 ```
 
 测试覆盖凭据与代理明文持久化、管理员 Token 签名、API Key 生命周期、平台隔离、敏感头剥离、SSE 透传和 Responses 子路径安全校验。

@@ -1,12 +1,23 @@
 # 数据库设计与迁移说明
 
-本文说明 `ai-unisub` 当前的 SQLite 数据库结构、初始化流程、历史迁移和运维约束。实现以 [`internal/database/database.go`](../internal/database/database.go) 为准；每日请求日志分表由 [`internal/repository/request_logs.go`](../internal/repository/request_logs.go) 管理。
+本文说明 `ai-unisub` 当前的数据库结构、初始化流程、历史迁移和运维约束。服务同时支持 **SQLite** 和 **PostgreSQL**。实现以 [`internal/database`](../internal/database) 为准；每日请求日志分表由 [`internal/repository/request_logs.go`](../internal/repository/request_logs.go) 管理。
 
 若要增加每日用量、并发历史等统计能力，参见规划文档 [`docs/stats-database.md`](stats-database.md)（尚未落地实现）。
 
 ## 1. 总览
 
-服务启动时通过 `database.Open` 打开数据库，并自动执行 `Migrate`：
+服务启动时通过 `database.Open` 打开数据库，并自动执行迁移。驱动由 `UNISUB_DB_DRIVER` 选择：
+
+| 值 | 说明 |
+| --- | --- |
+| `sqlite`（缺省） | 使用 `UNISUB_DB_PATH` 或 `UNISUB_DB_DSN` 作为文件路径 |
+| `postgres` / `postgresql` / `pg` | 使用 `UNISUB_DB_DSN` 连接 PostgreSQL |
+
+未设置 `UNISUB_DB_DRIVER` 时，若 `UNISUB_DB_DSN` 以 `postgres://` 或 `postgresql://` 开头（或为 libpq `host=...` 格式），会自动选择 PostgreSQL。
+
+应用层 SQL 统一使用 `?` 占位符；PostgreSQL 连接会在执行前改写为 `$1,$2,...`。插入主键使用 `RETURNING id`，因此两种驱动都不依赖 `LastInsertId`。
+
+### 1.1 SQLite
 
 1. 以 `0700` 权限创建数据库所在目录。
 2. 打开 SQLite 数据库。
@@ -14,7 +25,7 @@
 4. 验证数据库连接。
 5. 创建基础表、索引并执行兼容迁移。
 
-数据库默认路径由 `UNISUB_DB_PATH` 配置。当前设计面向单服务实例：不要让多个进程或容器同时直接写入同一个数据库文件。
+SQLite 默认路径由 `UNISUB_DB_PATH` 配置（缺省 `./data/unisub.db`）。该模式面向单服务实例：不要让多个进程或容器同时直接写入同一个数据库文件。
 
 启动时设置以下 SQLite 参数：
 
@@ -24,6 +35,22 @@
 | `foreign_keys` | `ON` | 启用外键和级联删除 |
 | `busy_timeout` | `5000` | 数据库锁冲突时最多等待 5 秒 |
 | 最大连接数 | `1` | 避免 SQLite 多连接写入竞争，并确保连接级 PRAGMA 保持一致 |
+
+### 1.2 PostgreSQL
+
+1. 解析 `UNISUB_DB_DSN`（`postgres://user:pass@host:5432/dbname?sslmode=disable` 或 libpq 关键字格式）。
+2. 会话时区设为 UTC。
+3. 使用连接池（最多 25 个打开连接）。
+4. 验证数据库连接。
+5. 按当前结构创建表和索引，并写入迁移版本 1–7、9，便于后续与 SQLite 共用版本号。
+
+PostgreSQL 新库直接使用当前结构，不重放 SQLite 历史字段重命名/表重建。SQLite 的 `INTEGER` 在 PostgreSQL 中对主键、外键和 Token 计数字段使用 `BIGINT`/`BIGSERIAL`，凭据哈希使用 `BYTEA`。
+
+Compose 可用：
+
+```sh
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -d
+```
 
 ## 2. 数据关系
 
@@ -140,34 +167,34 @@ request_logs_YYYYMMDD
 
 关系图中的 `REQUEST_LOGS_DAILY` 是这组每日物理分表的逻辑名称，并不存在一张名为 `REQUEST_LOGS_DAILY` 的表。例如，2026 年 8 月 27 日的日志表为 `request_logs_20260827`。每张分表的完整结构如下：
 
-| 字段 | SQLite 类型 | 约束/默认值 | 说明 |
+| 字段 | SQLite 类型 | PostgreSQL 类型 | 约束/默认值 | 说明 |
 | --- | --- | --- | --- |
-| `id` | INTEGER | 主键，自增 | 当天分表内的日志 ID，不保证跨天唯一 |
-| `account_id` | INTEGER | 可空 | 上游账号 ID；未声明外键 |
-| `api_key_id` | INTEGER | 可空 | 下游 API Key ID；未声明外键 |
-| `provider` | TEXT | 可空 | Provider，例如 `claude`、`codex` 或 `grok` |
-| `method` | TEXT | 非空 | HTTP 请求方法 |
-| `path` | TEXT | 非空 | 请求路径 |
-| `query` | TEXT | 可空 | URL 查询参数，不包含开头的 `?` |
-| `client_ip` | TEXT | 可空 | 来源 IP；优先取反向代理头（`X-Forwarded-For` / `X-Real-IP`），否则为直连地址 |
-| `status_code` | INTEGER | 非空 | 返回给下游的 HTTP 状态码 |
-| `started_at` | TEXT | 非空 | 请求开始时间 |
-| `finished_at` | TEXT | 非空 | 请求结束时间 |
-| `duration_ms` | INTEGER | 非空 | 请求总耗时，单位为毫秒 |
-| `request_id` | TEXT | 可空 | 上游请求 ID 或链路请求 ID |
-| `error_type` | TEXT | 可空 | 归一化后的错误类型 |
-| `model` | TEXT | 可空 | 请求使用的模型 |
-| `input_tokens` | INTEGER | 可空 | 输入 Token 数 |
-| `output_tokens` | INTEGER | 可空 | 输出 Token 数 |
-| `cache_read_tokens` | INTEGER | 可空 | 从缓存读取的 Token 数 |
-| `cache_creation_tokens` | INTEGER | 可空 | 用于创建缓存的 Token 数 |
-| `total_tokens` | INTEGER | 可空 | 总 Token 数 |
-| `request_headers` | TEXT | 可空 | 脱敏后的完整请求头文本 |
-| `request_body` | TEXT | 可空 | 请求正文；超过记录上限时截断 |
-| `response_headers` | TEXT | 可空 | 脱敏后的完整响应头文本 |
-| `response_body` | TEXT | 可空 | 响应正文；超过记录上限时截断 |
-| `request_truncated` | INTEGER | 非空，默认 `0` | 请求正文是否被截断：`0` 否，`1` 是 |
-| `response_truncated` | INTEGER | 非空，默认 `0` | 响应正文是否被截断：`0` 否，`1` 是 |
+| `id` | INTEGER | BIGSERIAL | 主键，自增 | 当天分表内的日志 ID，不保证跨天唯一 |
+| `account_id` | INTEGER | BIGINT | 可空 | 上游账号 ID；未声明外键 |
+| `api_key_id` | INTEGER | BIGINT | 可空 | 下游 API Key ID；未声明外键 |
+| `provider` | TEXT | TEXT | 可空 | Provider，例如 `claude`、`codex` 或 `grok` |
+| `method` | TEXT | TEXT | 非空 | HTTP 请求方法 |
+| `path` | TEXT | TEXT | 非空 | 请求路径 |
+| `query` | TEXT | TEXT | 可空 | URL 查询参数，不包含开头的 `?` |
+| `client_ip` | TEXT | TEXT | 可空 | 来源 IP；优先取反向代理头（`X-Forwarded-For` / `X-Real-IP`），否则为直连地址 |
+| `status_code` | INTEGER | INTEGER | 非空 | 返回给下游的 HTTP 状态码 |
+| `started_at` | TEXT | TEXT | 非空 | 请求开始时间 |
+| `finished_at` | TEXT | TEXT | 非空 | 请求结束时间 |
+| `duration_ms` | INTEGER | BIGINT | 非空 | 请求总耗时，单位为毫秒 |
+| `request_id` | TEXT | TEXT | 可空 | 上游请求 ID 或链路请求 ID |
+| `error_type` | TEXT | TEXT | 可空 | 归一化后的错误类型 |
+| `model` | TEXT | TEXT | 可空 | 请求使用的模型 |
+| `input_tokens` | INTEGER | BIGINT | 可空 | 输入 Token 数 |
+| `output_tokens` | INTEGER | BIGINT | 可空 | 输出 Token 数 |
+| `cache_read_tokens` | INTEGER | BIGINT | 可空 | 从缓存读取的 Token 数 |
+| `cache_creation_tokens` | INTEGER | BIGINT | 可空 | 用于创建缓存的 Token 数 |
+| `total_tokens` | INTEGER | BIGINT | 可空 | 总 Token 数 |
+| `request_headers` | TEXT | TEXT | 可空 | 脱敏后的完整请求头文本 |
+| `request_body` | TEXT | TEXT | 可空 | 请求正文；超过记录上限时截断 |
+| `response_headers` | TEXT | TEXT | 可空 | 脱敏后的完整响应头文本 |
+| `response_body` | TEXT | TEXT | 可空 | 响应正文；超过记录上限时截断 |
+| `request_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 请求正文是否被截断：`0` 否，`1` 是 |
+| `response_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 响应正文是否被截断：`0` 否，`1` 是 |
 
 每张分表创建索引 `idx_request_logs_YYYYMMDD_account_started`，索引字段为 `(account_id, started_at DESC)`。
 
@@ -205,13 +232,14 @@ request_logs_YYYYMMDD
 - 字段重命名先检查新旧字段是否存在，避免重复执行。
 - `api_keys` 的表重建在事务内完成，并在操作期间临时关闭外键检查。
 - 迁移失败时 `Open` 会关闭数据库并中止服务启动，不允许带着不完整结构继续运行。
-- 当前迁移不是“每个版本一个独立文件”的模式；修改时应同步更新 `Migrate`、迁移版本说明和兼容测试。
+- 当前迁移不是“每个版本一个独立文件”的模式；修改时应同步更新 SQLite `Migrate`、PostgreSQL `migratePostgres`、迁移版本说明和兼容测试。
+- PostgreSQL 新库只应用当前结构并标记已有版本；不要把 SQLite 专用的 `PRAGMA`、表重建和字段重命名搬到 PostgreSQL。
 
 ## 7. 安全与运维
 
 ### 敏感数据
 
-以下内容以明文保存在 SQLite 中：
+以下内容以明文保存在数据库中：
 
 - `accounts.credentials_json`；
 - `accounts.proxy_url`；
@@ -221,7 +249,7 @@ request_logs_YYYYMMDD
 
 ### 备份
 
-WAL 模式下不要在服务运行时只复制主 `.db` 文件。推荐使用 SQLite 在线备份：
+SQLite WAL 模式下不要在服务运行时只复制主 `.db` 文件。推荐使用 SQLite 在线备份：
 
 ```sh
 sqlite3 /app/data/unisub.db ".timeout 5000" ".backup '/backup/unisub-YYYY-MM-DD-HHMMSS.db'"
@@ -229,6 +257,8 @@ sqlite3 /backup/unisub-YYYY-MM-DD-HHMMSS.db "PRAGMA integrity_check;"
 ```
 
 恢复前应停止写入服务，保留原数据库文件，并先在副本上验证迁移和完整性。
+
+PostgreSQL 使用 `pg_dump` / `pg_restore`（或实例级备份）。DSN 中的用户需要具备目标库的读写权限；生产环境应限制网络来源并使用 `sslmode`。
 
 ## 8. 测试与变更检查
 
@@ -244,6 +274,12 @@ sqlite3 /backup/unisub-YYYY-MM-DD-HHMMSS.db "PRAGMA integrity_check;"
 ```sh
 go test ./internal/database ./internal/repository
 go test ./...
+```
+
+PostgreSQL 集成测试默认跳过。设置 `UNISUB_TEST_POSTGRES_DSN` 后会在独立 schema 中执行：
+
+```sh
+UNISUB_TEST_POSTGRES_DSN='postgres://unisub:unisub@127.0.0.1:5432/unisub?sslmode=disable' go test ./internal/database ./internal/repository
 ```
 
 新增迁移时，建议同时验证全新数据库、目标历史版本数据库、重复执行迁移和迁移失败后的数据完整性。

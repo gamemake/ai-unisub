@@ -228,9 +228,9 @@ func TestCleanupRequestLogTablesKeepsConfiguredCalendarDays(t *testing.T) {
 		t.Fatalf("dropped tables = %v", dropped)
 	}
 	for _, table := range []string{"request_logs_20260721", "request_logs_20260819", "request_logs_invalid"} {
-		var count int
-		if err := repo.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&count); err != nil || count != 1 {
-			t.Fatalf("table %s was not retained: count=%d err=%v", table, count, err)
+		exists, err := repo.db.TableExists(context.Background(), table)
+		if err != nil || !exists {
+			t.Fatalf("table %s was not retained: exists=%v err=%v", table, exists, err)
 		}
 	}
 }

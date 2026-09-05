@@ -6,94 +6,61 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
-func Open(ctx context.Context, path string) (*sql.DB, error) {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, fmt.Errorf("create database directory: %w", err)
-	}
-	db, err := sql.Open("sqlite", path)
+func Open(ctx context.Context, driver, dsn string) (*DB, error) {
+	dialect, err := ParseDriver(driver)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(1)
-	db.SetConnMaxLifetime(0)
-	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+	if strings.TrimSpace(dsn) == "" {
+		return nil, fmt.Errorf("database DSN is required")
+	}
+	switch dialect {
+	case PostgreSQL:
+		return openPostgres(ctx, dsn)
+	case SQLite:
+		return openSQLite(ctx, dsn)
+	default:
+		return nil, fmt.Errorf("unsupported database driver %q", driver)
+	}
+}
+
+func OpenSQLite(ctx context.Context, path string) (*DB, error) {
+	return Open(ctx, string(SQLite), path)
+}
+
+func openSQLite(ctx context.Context, path string) (*DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, fmt.Errorf("create database directory: %w", err)
+	}
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
 		return nil, err
 	}
-	if err := Migrate(ctx, db); err != nil {
-		db.Close()
+	raw.SetMaxOpenConns(1)
+	raw.SetConnMaxLifetime(0)
+	if err := raw.PingContext(ctx); err != nil {
+		raw.Close()
 		return nil, err
 	}
-	return db, nil
+	if err := Migrate(ctx, raw); err != nil {
+		raw.Close()
+		return nil, err
+	}
+	return &DB{raw: raw, Dialect: SQLite}, nil
 }
 
 func Migrate(ctx context.Context, db *sql.DB) error {
-	statements := []string{
+	statements := append([]string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA foreign_keys=ON`,
 		`PRAGMA busy_timeout=5000`,
-		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS accounts (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL,
-			provider TEXT NOT NULL CHECK (provider IN ('claude','codex','grok')),
-			auth_type TEXT NOT NULL CHECK (auth_type IN ('oauth','api_key')),
-			credentials_json BLOB NOT NULL,
-			metadata_json TEXT NOT NULL DEFAULT '{}',
-			proxy_url TEXT,
-			status TEXT NOT NULL DEFAULT 'active',
-			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-			concurrency_limit INTEGER NOT NULL DEFAULT 1,
-			concurrency_queue_timeout_seconds INTEGER NOT NULL DEFAULT 0,
-			token_expires_at TEXT,
-			rate_limit_reset_at TEXT,
-			quota_json TEXT,
-			quota_checked_at TEXT,
-			quota_error TEXT,
-			last_used_at TEXT,
-			last_error TEXT,
-			created_by_user_id INTEGER,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS api_keys (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			account_id INTEGER NOT NULL,
-			name TEXT NOT NULL,
-			key_hash BLOB NOT NULL UNIQUE,
-			key_plaintext TEXT,
-			key_prefix TEXT NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-			rpm_limit INTEGER,
-			concurrency INTEGER,
-			expires_at TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_api_keys_account ON api_keys(account_id)`,
-		`CREATE TABLE IF NOT EXISTS admin (
-			id INTEGER PRIMARY KEY CHECK (id = 1),
-			username TEXT NOT NULL UNIQUE,
-			password_hash TEXT NOT NULL,
-			totp_secret TEXT,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-		`CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT NOT NULL UNIQUE,
-			password_hash TEXT NOT NULL,
-			role TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','user')),
-			enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0,1)),
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`,
-	}
+	}, currentSchema(SQLite)...)
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("database migration failed: %w", err)

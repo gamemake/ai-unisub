@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-unisub/ai-unisub/internal/database"
 	"github.com/ai-unisub/ai-unisub/internal/model"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -23,7 +24,7 @@ var (
 )
 
 type Repository struct {
-	db *sql.DB
+	db *database.DB
 }
 
 type CreateAccountParams struct {
@@ -61,7 +62,7 @@ type UpdateAPIKeyParams struct {
 	ExpiresAt *time.Time
 }
 
-func New(db *sql.DB) *Repository {
+func New(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
 
@@ -174,15 +175,11 @@ func (r *Repository) CreateUser(ctx context.Context, username, password string, 
 	if err != nil {
 		return model.User{}, err
 	}
-	result, err := r.db.ExecContext(ctx, `INSERT INTO users(username, password_hash, role) VALUES(?,?,?)`, username, string(hash), role)
+	id, err := r.db.InsertID(ctx, `INSERT INTO users(username, password_hash, role) VALUES(?,?,?)`, username, string(hash), role)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return model.User{}, ErrConflict
 		}
-		return model.User{}, err
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
 		return model.User{}, err
 	}
 	return r.GetUser(ctx, id)
@@ -244,7 +241,7 @@ func (r *Repository) ensureRemainingAdmin(ctx context.Context, exceptID int64) e
 }
 
 func isUniqueViolation(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique")
+	return database.IsUniqueViolation(err)
 }
 
 func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (model.Account, error) {
@@ -264,13 +261,9 @@ func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (
 	if p.TokenExpiresAt != nil {
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	result, err := r.db.ExecContext(ctx, `INSERT INTO accounts
+	accountID, err := r.db.InsertID(ctx, `INSERT INTO accounts
 		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, created_by_user_id)
 		VALUES(?,?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires, nullableInt64(p.CreatedByUserID))
-	if err != nil {
-		return model.Account{}, err
-	}
-	accountID, err := result.LastInsertId()
 	if err != nil {
 		return model.Account{}, err
 	}
@@ -482,12 +475,8 @@ func (r *Repository) CreateAPIKey(ctx context.Context, p CreateAPIKeyParams) (mo
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	result, err := r.db.ExecContext(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_plaintext, key_prefix, rpm_limit, expires_at)
+	id, err := r.db.InsertID(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_plaintext, key_prefix, rpm_limit, expires_at)
 		VALUES(?,?,?,?,?,?,?)`, p.AccountID, name, hash[:], plaintext, prefix, rpm, expires)
-	if err != nil {
-		return model.APIKey{}, "", err
-	}
-	id, err := result.LastInsertId()
 	if err != nil {
 		return model.APIKey{}, "", err
 	}
@@ -594,8 +583,8 @@ func scanUser(s scanner) (model.User, error) {
 	}
 	user.Role = model.UserRole(role)
 	user.Enabled = enabled == 1
-	user.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", created)
-	user.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+	user.CreatedAt, _ = parseLogTime(created)
+	user.UpdatedAt, _ = parseLogTime(updated)
 	return user, nil
 }
 
@@ -656,8 +645,8 @@ func finishAccount(row accountScan) model.Account {
 	if row.lastError.Valid {
 		a.LastError = &row.lastError.String
 	}
-	a.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", row.created)
-	a.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", row.updated)
+	a.CreatedAt, _ = parseLogTime(row.created)
+	a.UpdatedAt, _ = parseLogTime(row.updated)
 	return a
 }
 
@@ -703,9 +692,7 @@ func scanAPIKey(s scanner) (model.APIKey, error) {
 	}
 	key.ExpiresAt = parseTime(expires)
 	if created.Valid {
-		if parsed, err := time.Parse("2006-01-02 15:04:05", created.String); err == nil {
-			key.CreatedAt = parsed
-		} else if parsed, err := time.Parse(time.RFC3339Nano, created.String); err == nil {
+		if parsed, err := parseLogTime(created.String); err == nil {
 			key.CreatedAt = parsed
 		}
 	}
@@ -736,12 +723,11 @@ func parseTime(value sql.NullString) *time.Time {
 	if !value.Valid || value.String == "" {
 		return nil
 	}
-	for _, layout := range []string{time.RFC3339Nano, "2006-01-02 15:04:05"} {
-		if parsed, err := time.Parse(layout, value.String); err == nil {
-			return &parsed
-		}
+	parsed, err := parseLogTime(value.String)
+	if err != nil {
+		return nil
 	}
-	return nil
+	return &parsed
 }
 
 func generateAPIKey() (string, [32]byte, string, error) {

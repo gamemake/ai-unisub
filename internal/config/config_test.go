@@ -12,6 +12,9 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	t.Setenv("UNISUB_GROK_OAUTH_SCOPES", "")
 	t.Setenv("UNISUB_GROK_CLIENT_VERSION", "")
 	t.Setenv("UNISUB_GROK_BILLING_URL", "")
+	t.Setenv("UNISUB_DB_DRIVER", "")
+	t.Setenv("UNISUB_DB_DSN", "")
+	t.Setenv("UNISUB_DB_PATH", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -35,8 +38,57 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	if len(cfg.GrokOAuth.Scopes) == 0 || cfg.GrokOAuth.ClientVersion != DefaultGrokOAuthClientVersion {
 		t.Fatalf("Grok OAuth scopes/version = %+v", cfg.GrokOAuth)
 	}
+	if cfg.ClaudeOAuth.ClientID != DefaultClaudeOAuthClientID || cfg.ClaudeOAuth.AuthorizeURL != DefaultClaudeOAuthAuthorizeURL {
+		t.Fatalf("Claude OAuth defaults = %+v", cfg.ClaudeOAuth)
+	}
+	if cfg.CodexOAuth.ClientID != DefaultCodexOAuthClientID || cfg.CodexOAuth.RedirectURI != DefaultCodexOAuthRedirectURI {
+		t.Fatalf("Codex OAuth defaults = %+v", cfg.CodexOAuth)
+	}
 	if cfg.Providers.GrokBilling != DefaultGrokBillingURL {
 		t.Fatalf("Grok billing URL = %q", cfg.Providers.GrokBilling)
+	}
+	if cfg.DatabaseDriver != "sqlite" || cfg.DatabaseDSN != "./data/unisub.db" || cfg.DatabasePath != "./data/unisub.db" {
+		t.Fatalf("database defaults = %s %s %s", cfg.DatabaseDriver, cfg.DatabaseDSN, cfg.DatabasePath)
+	}
+}
+
+func TestLoadUsesSQLitePathFromEnvironment(t *testing.T) {
+	t.Setenv("UNISUB_DB_DRIVER", "sqlite")
+	t.Setenv("UNISUB_DB_PATH", "./tmp/custom.db")
+	t.Setenv("UNISUB_DB_DSN", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseDriver != "sqlite" || cfg.DatabaseDSN != "./tmp/custom.db" {
+		t.Fatalf("sqlite config = %s %s", cfg.DatabaseDriver, cfg.DatabaseDSN)
+	}
+}
+
+func TestLoadDetectsPostgresDSN(t *testing.T) {
+	t.Setenv("UNISUB_DB_DRIVER", "")
+	t.Setenv("UNISUB_DB_DSN", "postgres://unisub:unisub@127.0.0.1:5432/unisub?sslmode=disable")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseDriver != "postgres" {
+		t.Fatalf("driver = %q", cfg.DatabaseDriver)
+	}
+}
+
+func TestLoadRequiresPostgresDSN(t *testing.T) {
+	t.Setenv("UNISUB_DB_DRIVER", "postgres")
+	t.Setenv("UNISUB_DB_DSN", "")
+	if _, err := Load(); err == nil {
+		t.Fatal("postgres without DSN was accepted")
+	}
+}
+
+func TestLoadRejectsUnknownDatabaseDriver(t *testing.T) {
+	t.Setenv("UNISUB_DB_DRIVER", "mysql")
+	if _, err := Load(); err == nil {
+		t.Fatal("mysql driver was accepted")
 	}
 }
 
@@ -128,5 +180,21 @@ func TestProductionRejectsNonOfficialGrokOAuthIssuer(t *testing.T) {
 	t.Setenv("UNISUB_GROK_OAUTH_ISSUER", "https://example.com")
 	if _, err := Load(); err == nil {
 		t.Fatal("non-official Grok OAuth issuer was accepted")
+	}
+}
+
+func TestProductionRejectsNonOfficialClaudeOAuthURLs(t *testing.T) {
+	t.Setenv("UNISUB_ALLOW_TEST_UPSTREAMS", "false")
+	t.Setenv("UNISUB_CLAUDE_OAUTH_TOKEN_URL", "https://example.com/token")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-official Claude OAuth token URL was accepted")
+	}
+}
+
+func TestProductionRejectsNonOfficialCodexOAuthURLs(t *testing.T) {
+	t.Setenv("UNISUB_ALLOW_TEST_UPSTREAMS", "false")
+	t.Setenv("UNISUB_CODEX_OAUTH_REDIRECT_URI", "https://example.com/callback")
+	if _, err := Load(); err == nil {
+		t.Fatal("non-official Codex OAuth redirect URI was accepted")
 	}
 }

@@ -16,19 +16,22 @@ import (
 )
 
 type Server struct {
-	cfg              config.Config
-	repo             *repository.Repository
-	engine           *gin.Engine
-	accountClients   sync.Map
-	signer           tokenSigner
-	limiters         sync.Map
-	rateMu           sync.Mutex
-	rates            map[string]rateWindow
-	requestLogCancel context.CancelFunc
-	requestLogWG     sync.WaitGroup
-	grokOAuthMu      sync.Mutex
-	grokOAuthFlows   map[string]*grokOAuthFlow
-	grokRefreshLocks sync.Map
+	cfg               config.Config
+	repo              *repository.Repository
+	engine            *gin.Engine
+	accountClients    sync.Map
+	signer            tokenSigner
+	limiters          sync.Map
+	rateMu            sync.Mutex
+	rates             map[string]rateWindow
+	requestLogCancel  context.CancelFunc
+	requestLogWG      sync.WaitGroup
+	grokOAuthMu       sync.Mutex
+	grokOAuthFlows    map[string]*grokOAuthFlow
+	grokRefreshLocks  sync.Map
+	pkceOAuthMu       sync.Mutex
+	pkceOAuthFlows    map[string]*pkceOAuthFlow
+	oauthRefreshLocks sync.Map
 }
 
 type rateWindow struct {
@@ -58,9 +61,40 @@ func New(cfg config.Config, repo *repository.Repository) *Server {
 	if cfg.GrokOAuth.ClientVersion == "" {
 		cfg.GrokOAuth.ClientVersion = config.DefaultGrokOAuthClientVersion
 	}
+	if cfg.ClaudeOAuth.AuthorizeURL == "" {
+		cfg.ClaudeOAuth.AuthorizeURL = config.DefaultClaudeOAuthAuthorizeURL
+	}
+	if cfg.ClaudeOAuth.TokenURL == "" {
+		cfg.ClaudeOAuth.TokenURL = config.DefaultClaudeOAuthTokenURL
+	}
+	if cfg.ClaudeOAuth.RedirectURI == "" {
+		cfg.ClaudeOAuth.RedirectURI = config.DefaultClaudeOAuthRedirectURI
+	}
+	if cfg.ClaudeOAuth.ClientID == "" {
+		cfg.ClaudeOAuth.ClientID = config.DefaultClaudeOAuthClientID
+	}
+	if len(cfg.ClaudeOAuth.Scopes) == 0 {
+		cfg.ClaudeOAuth.Scopes = append([]string(nil), config.DefaultClaudeOAuthScopes...)
+	}
+	if cfg.CodexOAuth.AuthorizeURL == "" {
+		cfg.CodexOAuth.AuthorizeURL = config.DefaultCodexOAuthAuthorizeURL
+	}
+	if cfg.CodexOAuth.TokenURL == "" {
+		cfg.CodexOAuth.TokenURL = config.DefaultCodexOAuthTokenURL
+	}
+	if cfg.CodexOAuth.RedirectURI == "" {
+		cfg.CodexOAuth.RedirectURI = config.DefaultCodexOAuthRedirectURI
+	}
+	if cfg.CodexOAuth.ClientID == "" {
+		cfg.CodexOAuth.ClientID = config.DefaultCodexOAuthClientID
+	}
+	if len(cfg.CodexOAuth.Scopes) == 0 {
+		cfg.CodexOAuth.Scopes = append([]string(nil), config.DefaultCodexOAuthScopes...)
+	}
 	s := &Server{
 		cfg: cfg, repo: repo, engine: gin.New(), signer: tokenSigner{key: cfg.AdminSigningKey()},
 		rates: map[string]rateWindow{}, grokOAuthFlows: map[string]*grokOAuthFlow{},
+		pkceOAuthFlows: map[string]*pkceOAuthFlow{},
 	}
 	s.routes()
 	s.startRequestLogCleanup()
@@ -107,6 +141,10 @@ func (s *Server) routes() {
 	admin.DELETE("/api-keys/:id", s.deleteAPIKey)
 	admin.POST("/providers/grok/oauth/device/start", s.startGrokOAuthDevice)
 	admin.POST("/providers/grok/oauth/device/poll", s.pollGrokOAuthDevice)
+	admin.POST("/providers/claude/oauth/start", s.startClaudeOAuth)
+	admin.POST("/providers/claude/oauth/exchange", s.exchangeClaudeOAuth)
+	admin.POST("/providers/codex/oauth/start", s.startCodexOAuth)
+	admin.POST("/providers/codex/oauth/exchange", s.exchangeCodexOAuth)
 	admin.GET("/request-logs", s.listRequestLogs)
 	admin.GET("/request-logs/:day/:id", s.getRequestLog)
 
@@ -245,6 +283,12 @@ func (s *Server) Shutdown(context.Context) error {
 		delete(s.grokOAuthFlows, id)
 	}
 	s.grokOAuthMu.Unlock()
+	s.pkceOAuthMu.Lock()
+	for id, flow := range s.pkceOAuthFlows {
+		closeHTTPClient(flow.Client)
+		delete(s.pkceOAuthFlows, id)
+	}
+	s.pkceOAuthMu.Unlock()
 	return nil
 }
 

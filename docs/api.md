@@ -22,10 +22,11 @@
 7. [API Key 管理](#7-api-key-管理)
 8. [用量与额度](#8-用量与额度)
 9. [Grok OAuth](#9-grok-oauth)
-10. [请求日志](#10-请求日志)
-11. [下游转发 API](#11-下游转发-api)
-12. [错误码一览](#12-错误码一览)
-13. [尚未实现](#13-尚未实现)
+10. [Claude / Codex OAuth](#10-claude--codex-oauth)
+11. [请求日志](#11-请求日志)
+12. [下游转发 API](#12-下游转发-api)
+13. [错误码一览](#13-错误码一览)
+14. [尚未实现](#14-尚未实现)
 
 ---
 
@@ -352,7 +353,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ### `POST /api/accounts`
 
-手动导入上游 Token / API Key 并创建账号。Grok 推荐走 [Grok OAuth](#9-grok-oauth)。
+手动导入上游 Token / API Key 并创建账号。OAuth 推荐走 [Grok OAuth](#9-grok-oauth) 或 [Claude / Codex OAuth](#10-claude--codex-oauth)。
 
 **请求**
 
@@ -742,7 +743,82 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ---
 
-## 10. 请求日志
+## 10. Claude / Codex OAuth
+
+浏览器 PKCE 流程。`code_verifier` 和 `state` 只保存在**服务进程内存**中，重启后需重新发起。同一用户每分钟最多 10 次 `start`；Claude 与 Codex 合计同时最多 20 个进行中的 flow。授权码有效期约 10 分钟。
+
+### `POST /api/providers/claude/oauth/start`
+
+### `POST /api/providers/codex/oauth/start`
+
+**请求**
+
+```json
+{
+  "name": "claude-main",
+  "metadata": {},
+  "concurrency_limit": 1,
+  "concurrency_queue_timeout_seconds": 0,
+  "proxy_url": ""
+}
+```
+
+`name` 必填；其余字段语义同创建账号。
+
+**响应 `201`**
+
+```json
+{
+  "flow_id": "...",
+  "status": "pending",
+  "authorization_url": "https://claude.ai/oauth/authorize?...",
+  "expires_at": "2026-08-27T12:00:00Z"
+}
+```
+
+客户端应打开 `authorization_url`，完成官方登录后调用 `exchange`。响应不会返回 `code_verifier`。
+
+### `POST /api/providers/claude/oauth/exchange`
+
+### `POST /api/providers/codex/oauth/exchange`
+
+**请求**
+
+```json
+{
+  "flow_id": "...",
+  "code": "authorization-code#state"
+}
+```
+
+`code` 接受：
+
+- 纯授权码
+- Claude 回调页显示的 `code#state`
+- 完整回调 URL，例如 Codex 的 `http://localhost:1455/auth/callback?code=...&state=...`
+
+**完成 `201`**
+
+```json
+{
+  "status": "complete",
+  "account": { "...": "..." }
+}
+```
+
+| 错误 type | HTTP | 说明 |
+| --- | --- | --- |
+| `oauth_flow_not_found` | 404 | flow 不存在、非本人、平台不匹配或已过期 |
+| `oauth_state_mismatch` | 400 | 粘贴的 state 与本次登录不一致 |
+| `oauth_invalid_grant` | 400 | 授权码无效或已使用 |
+| `oauth_capacity` | 429 | 待处理 OAuth 过多 |
+| `oauth_unavailable` / `oauth_rejected` / `oauth_invalid_response` | 502 | 与官方 token 端点交互失败 |
+
+Claude 使用 Claude Code 公共客户端和 `https://console.anthropic.com/oauth/code/callback`。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时把浏览器地址栏完整 URL 粘贴回来。Codex 交换成功后会从 id_token 解析 `chatgpt_account_id`。账号密码只在官方页面输入。OAuth 与后续 Token 刷新会使用该账号配置的代理。Access Token 到期前约十分钟自动用 refresh token 续期；上游 401 时也会再刷新一次。刷新失败时下游请求返回 `401 reauth_required`。
+
+---
+
+## 11. 请求日志
 
 转发调用按本地时区写入每日分表 `request_logs_YYYYMMDD`。敏感头（如 `Authorization`、`Cookie`、`x-api-key`）记录为 `[redacted]`；正文超过约 1 MiB 会截断。保留天数由 `UNISUB_REQUEST_LOG_RETENTION_DAYS` 控制（默认 30），整点清理过期整表。
 
@@ -826,11 +902,11 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ---
 
-## 11. 下游转发 API
+## 12. 下游转发 API
 
 网关将请求**原生透传**到账号绑定的上游，不改写 `model`、`messages`、`input`、`tools`、`reasoning`、`stream` 等业务字段。
 
-### 11.1 鉴权
+### 12.1 鉴权
 
 ```http
 Authorization: Bearer unisub_xxxxxxxxx
@@ -838,7 +914,7 @@ Authorization: Bearer unisub_xxxxxxxxx
 
 Key 解析失败：`401 invalid_api_key`。
 
-### 11.2 入口一览
+### 12.2 入口一览
 
 根路径根据 Key 绑定的 Provider 决定上游；平台别名路径会强制校验 Provider 一致。
 
@@ -871,7 +947,7 @@ Key 解析失败：`401 invalid_api_key`。
 
 查询字符串会原样追加到上游 URL。
 
-### 11.3 请求体要求
+### 12.3 请求体要求
 
 | 规则 | 说明 |
 | --- | --- |
@@ -879,7 +955,7 @@ Key 解析失败：`401 invalid_api_key`。
 | JSON | 非 `models` 路由体必须是合法 JSON |
 | `model` | `POST .../messages` 与无子路径的 `POST .../responses` 必须包含非空字符串 `model` |
 
-### 11.4 Responses 子路径安全规则
+### 12.4 Responses 子路径安全规则
 
 默认拒绝。通过条件：
 
@@ -892,7 +968,7 @@ Key 解析失败：`401 invalid_api_key`。
 
 合法示例：`POST /v1/responses/compact`、`POST /codex/v1/responses/compact`
 
-### 11.5 并发、限流与取消
+### 12.5 并发、限流与取消
 
 | 机制 | 行为 |
 | --- | --- |
@@ -904,20 +980,20 @@ Key 解析失败：`401 invalid_api_key`。
 
 每个账号使用独立 HTTP Client / 连接池；不同账号不复用连接。
 
-### 11.6 敏感下游头清洗
+### 12.6 敏感下游头清洗
 
 转发前会剥离客户端传入的鉴权与部分 Provider 头，再由网关注入上游所需头，包括但不限于：
 
 `Authorization`、`x-api-key`、`Cookie`、`chatgpt-account-id`、`Host`、`Content-Length`、`Connection`、`Transfer-Encoding`、`Upgrade`，以及若干 Grok 客户端头。
 
-### 11.7 Token 过期
+### 12.7 Token 过期
 
 | Provider | 行为 |
 | --- | --- |
-| Grok OAuth | 到期前自动 refresh；失败或需重登：`401 reauth_required` |
-| Claude / Codex | `token_expires_at` 已过期：`401 token_expired`（需管理接口手动更新凭据） |
+| Grok OAuth | 到期前约一分钟自动 refresh；失败或需重登：`401 reauth_required` |
+| Claude / Codex OAuth | 到期前约十分钟自动 refresh；上游 401 时再刷新一次；失败或需重登：`401 reauth_required` |
 
-### 11.8 调用示例
+### 12.8 调用示例
 
 **Claude Messages**
 
@@ -952,13 +1028,12 @@ Content-Type: application/json
 
 响应状态码与正文（含 SSE）基本等同上游。
 
-### 11.9 下游错误 type（网关侧）
+### 12.9 下游错误 type（网关侧）
 
 | type | HTTP | 说明 |
 | --- | --- | --- |
 | `invalid_api_key` | 401 | Key 无效 |
-| `reauth_required` | 401 | Grok 需重新 OAuth |
-| `token_expired` | 401 | 非 Grok OAuth Token 过期 |
+| `reauth_required` | 401 | OAuth 刷新失败，需重新网页登录 |
 | `provider_mismatch` | 403 | 平台/路由不匹配 |
 | `invalid_request` / `invalid_json` | 400 | 体或 model 校验失败 |
 | `request_too_large` | 413 | 超过 body 上限 |
@@ -973,7 +1048,7 @@ Content-Type: application/json
 
 ---
 
-## 12. 错误码一览
+## 13. 错误码一览
 
 管理与下游共用同一错误信封。常见 `error.type`：
 
@@ -987,7 +1062,7 @@ Content-Type: application/json
 | `conflict` | 用户名冲突等 |
 | `last_admin` | 不能移除最后一个启用 admin |
 | `rate_limited` | 登录 / OAuth start / RPM / usage refresh |
-| `oauth_*` | Grok 设备码流程 |
+| `oauth_*` | Grok 设备码 / Claude 与 Codex PKCE 流程 |
 | `usage_refresh_unsupported` / `usage_refresh_failed` | 额度刷新 |
 | `internal_error` | 服务器内部错误 |
 
@@ -995,11 +1070,10 @@ Content-Type: application/json
 
 ---
 
-## 13. 尚未实现
+## 14. 尚未实现
 
 以下能力在方案或 README 中提及，**当前代码未提供路由**：
 
-- Claude / Codex 浏览器 PKCE OAuth 管理接口
 - Claude / Codex 权威上游额度适配器（主动 refresh）
 - Codex WebSocket（`GET /v1/responses` Upgrade）
 - Grok `POST /v1/chat/completions` 透传（仅当上游原生支持时的可选能力）
