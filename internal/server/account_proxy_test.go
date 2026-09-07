@@ -12,13 +12,18 @@ import (
 )
 
 func TestNormalizeProxyURL(t *testing.T) {
-	for _, raw := range []string{
-		"http://127.0.0.1:8080",
-		"http://user:pass@proxy.example:3128",
-		"socks5://127.0.0.1:1080",
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{"http://127.0.0.1:8080", "http://127.0.0.1:8080"},
+		{"http://user:pass@proxy.example:3128", "http://user:pass@proxy.example:3128"},
+		{"socks5://127.0.0.1:1080", "socks5h://127.0.0.1:1080"},
+		{"socks5h://127.0.0.1:1080", "socks5h://127.0.0.1:1080"},
 	} {
-		if normalized, err := normalizeProxyURL(raw); err != nil || normalized != raw {
-			t.Errorf("normalizeProxyURL(%q) = %q, %v", raw, normalized, err)
+		normalized, err := normalizeProxyURL(tc.raw)
+		if err != nil || normalized != tc.want {
+			t.Errorf("normalizeProxyURL(%q) = %q, %v; want %q", tc.raw, normalized, err, tc.want)
 		}
 	}
 	for _, raw := range []string{
@@ -29,6 +34,28 @@ func TestNormalizeProxyURL(t *testing.T) {
 	} {
 		if _, err := normalizeProxyURL(raw); err == nil {
 			t.Errorf("normalizeProxyURL(%q) unexpectedly succeeded", raw)
+		}
+	}
+}
+
+func TestDirectAccountClientIgnoresEnvironmentProxy(t *testing.T) {
+	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+	t.Setenv("http_proxy", "http://127.0.0.1:9")
+	t.Setenv("https_proxy", "http://127.0.0.1:9")
+
+	client, err := newClientForProxy("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatal("expected *http.Transport")
+	}
+	if transport.Proxy != nil {
+		req, _ := http.NewRequest(http.MethodGet, "https://example.com", nil)
+		if proxyURL, err := transport.Proxy(req); err != nil || proxyURL != nil {
+			t.Fatalf("direct transport still uses proxy func result=%v err=%v", proxyURL, err)
 		}
 	}
 }

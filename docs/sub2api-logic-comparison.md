@@ -291,11 +291,11 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 
 | ID | 行动项 | 状态 | 涉及文件 | 验收标准 |
 |---|---|---|---|---|
-| A8 | **并发 limiter 随账号配置更新**：`concurrency_limit` 变更时重建/替换 channel；删除账号时清理 | todo | `server.go`，admin 更新路径 | 管理端调高/调低并发后无需重启即生效；进行中请求不 panic |
-| A9 | **直连账号禁用环境代理**：无 `proxy_url` 时 `Transport.Proxy = nil`，禁止 `ProxyFromEnvironment` | todo | `account_proxy.go`，`server.go` | 设置 `HTTP_PROXY` 时，无代理账号仍直连上游 |
-| A10 | **SOCKS5 使用远端 DNS（socks5h 语义）**：避免本机解析目标主机 | todo | `account_proxy.go` | 代理抓包/解析行为符合远端 DNS；配置校验文档同步 |
-| A11 | **剥离 `Proxy-Authorization`**：加入转发黑名单（日志脱敏已有则保持） | todo | `proxy.go` | 客户端带 `Proxy-Authorization` 时上游请求不含该头 |
-| A12 | **处理 `Accept-Encoding` / 压缩体**：不透传或出站关闭压缩协商，或对响应解压后再做本地 usage 解析与日志截断 | todo | `proxy.go`，`usage_parse.go` / `httplog.go` | 客户端带 `Accept-Encoding` 时本地 Token 统计仍正确 |
+| A8 | **并发 limiter 随账号配置更新**：`concurrency_limit` 变更时重建/替换 channel；删除账号时清理 | done | `server.go`，`admin.go` | 管理端调高/调低并发后无需重启即生效；进行中请求不 panic |
+| A9 | **直连账号禁用环境代理**：无 `proxy_url` 时 `Transport.Proxy = nil`，禁止 `ProxyFromEnvironment` | done | `account_proxy.go`，`server.go` | 设置 `HTTP_PROXY` 时，无代理账号仍直连上游 |
+| A10 | **SOCKS5 使用远端 DNS（socks5h 语义）**：避免本机解析目标主机 | done | `account_proxy.go` | `socks5://` 规范化为 `socks5h://`；`FromURL` + 带超时 forward dialer |
+| A11 | **剥离 `Proxy-Authorization`**：加入转发黑名单（日志脱敏已有则保持） | done | `proxy.go` | 客户端带 `Proxy-Authorization` 时上游请求不含该头 |
+| A12 | **处理 `Accept-Encoding` / 压缩体**：不透传或出站关闭压缩协商，或对响应解压后再做本地 usage 解析与日志截断 | done | `proxy.go` | 剥离客户端 `Accept-Encoding`；配合 `DisableCompression` 保证本地 Token 统计可读 |
 
 ### P3 — 可选增强（非阻塞）
 
@@ -311,7 +311,7 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 
 1. ~~**A1**（Codex 404 风险）→ **A2**（停止破坏真 Claude Code）→ **A3**（SDK 鉴权）~~ **已完成**
 2. ~~**A4 / A5**（Claude 非 CLI OAuth）→ **A6**（Grok 身份）→ **A7**（Claude 被动额度）~~ **已完成**
-3. **A8 → A9 → A10 → A11 → A12**（并发与出口隔离、统计）
+3. ~~**A8 → A9 → A10 → A11 → A12**（并发与出口隔离、统计）~~ **已完成**
 4. **A13–A17** 按需
 
 ### Claude UA 决策备忘（供 A2/A4/A5）
@@ -329,6 +329,16 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 | A5 | pin 集中在 `claudeCLIVersionPin` / `defaultClaudeCLIUserAgent`；文件头注释说明与 beta 同步维护 |
 | A6 | 默认 `UNISUB_GROK_CLIENT_VERSION=0.2.114`；UA=`xai-grok-workspace/<ver>`；去掉 `x-authenticateresponse`；CLI host 仍带 `X-XAI-Token-Auth` |
 | A7 | `quota_headers.go` 解析 `anthropic-ratelimit-unified-{5h,7d,7d_oi}-*` 写入 `windows[]`；保留 `x-ratelimit-*` |
+
+### P2 落地摘要（2026-09-07）
+
+| 项 | 实现要点 |
+|---|---|
+| A8 | `accountLimiter{limit,ch}` + `CompareAndSwap` 按新 limit 换 channel；账号更新 `resetAccountLimiter`；删除走 `forgetAccountRuntime` |
+| A9 | `newHTTPTransport` 固定 `Proxy: nil`，不再 `ProxyFromEnvironment` |
+| A10 | 校验接受 `socks5h`；`socks5://` 存成 `socks5h://`；`proxy.FromURL` + 带超时 `net.Dialer` |
+| A11 | `strippedRequestHeaders` 增加 `proxy-authorization` |
+| A12 | `strippedRequestHeaders` 增加 `accept-encoding`，避免 gzip 体破坏本地 usage 解析 |
 
 ---
 

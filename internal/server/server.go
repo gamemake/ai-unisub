@@ -200,12 +200,16 @@ func (s *Server) requireAdmin() gin.HandlerFunc {
 	}
 }
 
+type accountLimiter struct {
+	limit int
+	ch    chan struct{}
+}
+
 func (s *Server) acquire(ctx context.Context, accountID int64, limit int, wait time.Duration) (func(), error) {
 	if limit <= 0 {
 		limit = 1
 	}
-	value, _ := s.limiters.LoadOrStore(accountID, make(chan struct{}, limit))
-	ch := value.(chan struct{})
+	ch := s.limiterChannel(accountID, limit)
 	select {
 	case ch <- struct{}{}:
 		return func() { <-ch }, nil
@@ -224,6 +228,34 @@ func (s *Server) acquire(ctx context.Context, accountID int64, limit int, wait t
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (s *Server) limiterChannel(accountID int64, limit int) chan struct{} {
+	for {
+		value, _ := s.limiters.LoadOrStore(accountID, &accountLimiter{
+			limit: limit,
+			ch:    make(chan struct{}, limit),
+		})
+		current := value.(*accountLimiter)
+		if current.limit == limit {
+			return current.ch
+		}
+		replacement := &accountLimiter{limit: limit, ch: make(chan struct{}, limit)}
+		if s.limiters.CompareAndSwap(accountID, current, replacement) {
+			return replacement.ch
+		}
+	}
+}
+
+func (s *Server) resetAccountLimiter(accountID int64) {
+	s.limiters.Delete(accountID)
+}
+
+func (s *Server) forgetAccountRuntime(accountID int64) {
+	s.closeAccountClient(accountID)
+	s.resetAccountLimiter(accountID)
+	s.grokRefreshLocks.Delete(accountID)
+	s.oauthRefreshLocks.Delete(accountID)
 }
 
 func (s *Server) allowRate(key string, limit int, window time.Duration) bool {
@@ -342,7 +374,8 @@ func nextRequestLogCleanup(now time.Time, location *time.Location) time.Time {
 
 func newHTTPTransport() *http.Transport {
 	return &http.Transport{
-		Proxy: http.ProxyFromEnvironment, ForceAttemptHTTP2: true, DisableCompression: true,
+		// Explicit nil: direct accounts must not inherit HTTP_PROXY/HTTPS_PROXY.
+		Proxy: nil, ForceAttemptHTTP2: true, DisableCompression: true,
 		MaxIdleConns: 100, MaxIdleConnsPerHost: 20, IdleConnTimeout: 90 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second, ResponseHeaderTimeout: 60 * time.Second,
 	}

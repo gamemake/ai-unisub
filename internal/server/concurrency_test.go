@@ -81,3 +81,34 @@ func TestAcquireQueueTimeoutAndCancellation(t *testing.T) {
 		t.Fatalf("cancellation error = %v", err)
 	}
 }
+
+func TestAcquireRebuildsLimiterWhenConcurrencyLimitChanges(t *testing.T) {
+	server := &Server{}
+	releaseA, err := server.acquire(context.Background(), 9, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = server.acquire(context.Background(), 9, 1, 0)
+	if !errors.Is(err, errConcurrencyQueueTimeout) {
+		t.Fatalf("limit=1 should be full: %v", err)
+	}
+
+	releaseB, err := server.acquire(context.Background(), 9, 2, 0)
+	if err != nil {
+		t.Fatalf("raising limit should create a new channel: %v", err)
+	}
+	releaseC, err := server.acquire(context.Background(), 9, 2, 0)
+	if err != nil {
+		t.Fatalf("new limit=2 should allow a second slot: %v", err)
+	}
+	releaseA()
+	releaseB()
+	releaseC()
+
+	server.resetAccountLimiter(9)
+	releaseD, err := server.acquire(context.Background(), 9, 1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releaseD()
+}

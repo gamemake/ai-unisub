@@ -208,6 +208,8 @@ func (s *Server) updateAccount(c *gin.Context) {
 	if proxyURL != nil {
 		s.closeAccountClient(id)
 	}
+	// Concurrency capacity is sticky on the in-memory channel; rebuild on every settings update.
+	s.resetAccountLimiter(id)
 	c.JSON(http.StatusOK, gin.H{"account": accountWithCredentials(account)})
 }
 
@@ -220,8 +222,7 @@ func (s *Server) deleteAccount(c *gin.Context) {
 		handleRepoError(c, err)
 		return
 	}
-	s.closeAccountClient(id)
-	s.grokRefreshLocks.Delete(id)
+	s.forgetAccountRuntime(id)
 	c.Status(http.StatusNoContent)
 }
 

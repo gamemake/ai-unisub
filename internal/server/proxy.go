@@ -330,9 +330,11 @@ func downstreamAPIKey(header http.Header) string {
 }
 
 var strippedRequestHeaders = map[string]bool{
-	"authorization": true, "x-api-key": true, "x-goog-api-key": true, "cookie": true,
+	"authorization": true, "proxy-authorization": true, "x-api-key": true, "x-goog-api-key": true, "cookie": true,
 	"chatgpt-account-id": true, "host": true, "content-length": true, "connection": true,
 	"proxy-connection": true, "keep-alive": true, "transfer-encoding": true, "upgrade": true,
+	// Outbound compression is disabled; do not advertise Accept-Encoding or local usage parsing sees gzip bytes.
+	"accept-encoding": true,
 	"x-xai-token-auth": true, "x-authenticateresponse": true, "x-grok-client-version": true,
 	"x-grok-client-identifier": true, "x-grok-client-mode": true,
 }

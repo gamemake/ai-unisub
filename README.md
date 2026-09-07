@@ -143,7 +143,7 @@ UNISUB_CODEX_OAUTH_SCOPES="openid profile email offline_access"
 
 生产模式会拒绝非官方 authorize / token / redirect URL。OAuth 登录与后续 Token 刷新都会使用该账号配置的 HTTP/SOCKS5 代理。Claude 与 Codex 的 access token 在到期前约十分钟自动使用 refresh token 续期；上游返回 401 时也会再刷新一次。刷新失败时请求返回 `401 reauth_required`，需要重新绑定账号。Codex 会从 id_token 解析 `chatgpt_account_id`。
 
-`proxy_url` 可选，支持 `http://` 和 `socks5://`，必须包含主机和端口；用户名和密码可放在 URL 中。代理地址和账号凭据均以明文保存，管理 API 只返回 `proxy_configured`，不会回显代理地址。
+`proxy_url` 可选，支持 `http://`、`socks5://` 和 `socks5h://`，必须包含主机和端口；用户名和密码可放在 URL 中。写入 `socks5://` 时会规范化为 `socks5h://`（由代理做远端 DNS）。未配置代理的账号不会继承进程环境变量里的 `HTTP_PROXY`/`HTTPS_PROXY`。代理地址和账号凭据均以明文保存，管理 API 只返回 `proxy_configured`，不会回显代理地址。
 
 每个账号拥有独立的 HTTP Client、Transport 和 keep-alive 连接池。不同账号不会复用 HTTP 连接，即使它们属于同一个 Provider 或使用相同代理；同一账号内部仍会复用自己的空闲连接。
 

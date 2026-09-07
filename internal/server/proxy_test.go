@@ -89,6 +89,42 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 	}
 }
 
+func TestProxyStripsProxyAuthorizationAndAcceptEncoding(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Proxy-Authorization"); got != "" {
+			t.Errorf("Proxy-Authorization leaked: %q", got)
+		}
+		if got := r.Header.Get("Accept-Encoding"); got != "" {
+			t.Errorf("Accept-Encoding leaked: %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"r1","usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/responses")
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "strip-headers", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "upstream-token"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("Proxy-Authorization", "Basic cHJveHk6c2VjcmV0")
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	logs, _, err := repo.ListRequestLogs(context.Background(), time.Local, repository.RequestLogFilter{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 || logs[0].InputTokens == nil || *logs[0].InputTokens != 4 {
+		t.Fatalf("token stats = %+v", logs)
+	}
+}
+
 func TestClaudePreservesClientUserAgent(t *testing.T) {
 	const clientUA = "claude-cli/2.1.220 (external, cli)"
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
