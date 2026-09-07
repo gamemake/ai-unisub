@@ -161,9 +161,28 @@ func readOAuthResponse(client *http.Client, request *http.Request, output any) (
 		}
 		return response.StatusCode, grokOAuthErrorResponse{}, nil
 	}
+	return response.StatusCode, parseOAuthErrorBody(body), nil
+}
+
+func parseOAuthErrorBody(body []byte) grokOAuthErrorResponse {
 	var oauthErr grokOAuthErrorResponse
-	_ = json.Unmarshal(body, &oauthErr)
-	return response.StatusCode, oauthErr, nil
+	if err := json.Unmarshal(body, &oauthErr); err == nil && (oauthErr.Error != "" || oauthErr.ErrorDescription != "") {
+		return oauthErr
+	}
+	var nested struct {
+		Type  string `json:"type"`
+		Error struct {
+			Type    string `json:"type"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &nested); err == nil && nested.Error.Message != "" {
+		return grokOAuthErrorResponse{
+			Error:            firstNonEmpty(nested.Error.Type, nested.Type, "oauth_error"),
+			ErrorDescription: nested.Error.Message,
+		}
+	}
+	return oauthErr
 }
 
 func createOAuthAccountParams(account oauthAccountRequest, provider model.Provider, credentials model.Credentials, expiresAt *time.Time, userID int64) repository.CreateAccountParams {

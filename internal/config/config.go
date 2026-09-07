@@ -49,9 +49,10 @@ const (
 	DefaultGrokOAuthClientVersion = "1.0.6"
 	DefaultGrokBillingURL         = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 
-	DefaultClaudeOAuthAuthorizeURL = "https://claude.ai/oauth/authorize"
-	DefaultClaudeOAuthTokenURL     = "https://console.anthropic.com/v1/oauth/token"
-	DefaultClaudeOAuthRedirectURI  = "https://console.anthropic.com/oauth/code/callback"
+	// Claude Code public OAuth client (v2.1.81+ uses platform.claude.com).
+	DefaultClaudeOAuthAuthorizeURL = "https://claude.com/cai/oauth/authorize"
+	DefaultClaudeOAuthTokenURL     = "https://platform.claude.com/v1/oauth/token"
+	DefaultClaudeOAuthRedirectURI  = "https://platform.claude.com/oauth/code/callback"
 	DefaultClaudeOAuthClientID     = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 
 	DefaultCodexOAuthAuthorizeURL = "https://auth.openai.com/oauth/authorize"
@@ -67,6 +68,7 @@ var DefaultGrokOAuthScopes = []string{
 
 var DefaultClaudeOAuthScopes = []string{
 	"org:create_api_key", "user:profile", "user:inference",
+	"user:sessions:claude_code", "user:mcp_servers", "user:file_upload",
 }
 
 var DefaultCodexOAuthScopes = []string{

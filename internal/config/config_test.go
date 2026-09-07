@@ -41,6 +41,12 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	if cfg.ClaudeOAuth.ClientID != DefaultClaudeOAuthClientID || cfg.ClaudeOAuth.AuthorizeURL != DefaultClaudeOAuthAuthorizeURL {
 		t.Fatalf("Claude OAuth defaults = %+v", cfg.ClaudeOAuth)
 	}
+	if cfg.ClaudeOAuth.TokenURL != DefaultClaudeOAuthTokenURL || cfg.ClaudeOAuth.RedirectURI != DefaultClaudeOAuthRedirectURI {
+		t.Fatalf("Claude OAuth token/redirect = %+v", cfg.ClaudeOAuth)
+	}
+	if len(cfg.ClaudeOAuth.Scopes) < 3 {
+		t.Fatalf("Claude OAuth scopes = %+v", cfg.ClaudeOAuth.Scopes)
+	}
 	if cfg.CodexOAuth.ClientID != DefaultCodexOAuthClientID || cfg.CodexOAuth.RedirectURI != DefaultCodexOAuthRedirectURI {
 		t.Fatalf("Codex OAuth defaults = %+v", cfg.CodexOAuth)
 	}

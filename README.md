@@ -124,14 +124,14 @@ POST /api/providers/codex/oauth/exchange
 
 `start` 请求体与 Grok 相同（账号名称、并发、可选代理）。响应包含 `flow_id` 和 `authorization_url`。`exchange` 请求体为 `{"flow_id":"...","code":"..."}`，`code` 可以是授权码、`code#state`，或完整回调 URL。PKCE verifier 只保存在服务进程内存中，重启后需要重新发起登录。
 
-Claude 使用 Claude Code 公共客户端和 `https://console.anthropic.com/oauth/code/callback` 复制粘贴回调。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时浏览器会跳到本机该地址，把地址栏完整 URL 粘贴回来即可。通常不需要修改；如官方客户端契约更新，可覆盖：
+Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/code/callback` 复制粘贴回调。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时浏览器会跳到本机该地址，把地址栏完整 URL 粘贴回来即可。通常不需要修改；如官方客户端契约更新，可覆盖：
 
 ```env
-UNISUB_CLAUDE_OAUTH_AUTHORIZE_URL=https://claude.ai/oauth/authorize
-UNISUB_CLAUDE_OAUTH_TOKEN_URL=https://console.anthropic.com/v1/oauth/token
-UNISUB_CLAUDE_OAUTH_REDIRECT_URI=https://console.anthropic.com/oauth/code/callback
+UNISUB_CLAUDE_OAUTH_AUTHORIZE_URL=https://claude.com/cai/oauth/authorize
+UNISUB_CLAUDE_OAUTH_TOKEN_URL=https://platform.claude.com/v1/oauth/token
+UNISUB_CLAUDE_OAUTH_REDIRECT_URI=https://platform.claude.com/oauth/code/callback
 UNISUB_CLAUDE_OAUTH_CLIENT_ID=9d1c250a-e61b-44d9-88ed-5944d1962f5e
-UNISUB_CLAUDE_OAUTH_SCOPES="org:create_api_key user:profile user:inference"
+UNISUB_CLAUDE_OAUTH_SCOPES="org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"
 UNISUB_CODEX_OAUTH_AUTHORIZE_URL=https://auth.openai.com/oauth/authorize
 UNISUB_CODEX_OAUTH_TOKEN_URL=https://auth.openai.com/oauth/token
 UNISUB_CODEX_OAUTH_REDIRECT_URI=http://localhost:1455/auth/callback

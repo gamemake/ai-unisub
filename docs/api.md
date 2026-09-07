@@ -771,7 +771,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 {
   "flow_id": "...",
   "status": "pending",
-  "authorization_url": "https://claude.ai/oauth/authorize?...",
+  "authorization_url": "https://claude.com/cai/oauth/authorize?...",
   "expires_at": "2026-08-27T12:00:00Z"
 }
 ```
@@ -814,7 +814,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 | `oauth_capacity` | 429 | 待处理 OAuth 过多 |
 | `oauth_unavailable` / `oauth_rejected` / `oauth_invalid_response` | 502 | 与官方 token 端点交互失败 |
 
-Claude 使用 Claude Code 公共客户端和 `https://console.anthropic.com/oauth/code/callback`。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时把浏览器地址栏完整 URL 粘贴回来。Codex 交换成功后会从 id_token 解析 `chatgpt_account_id`。账号密码只在官方页面输入。OAuth 与后续 Token 刷新会使用该账号配置的代理。Access Token 到期前约十分钟自动用 refresh token 续期；上游 401 时也会再刷新一次。刷新失败时下游请求返回 `401 reauth_required`。
+Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/code/callback`。Codex 使用 Codex CLI 公共客户端；官方 redirect 固定为 `http://localhost:1455/auth/callback`，远程部署时把浏览器地址栏完整 URL 粘贴回来。Codex 交换成功后会从 id_token 解析 `chatgpt_account_id`。账号密码只在官方页面输入。OAuth 与后续 Token 刷新会使用该账号配置的代理。Access Token 到期前约十分钟自动用 refresh token 续期；上游 401 时也会再刷新一次。刷新失败时下游请求返回 `401 reauth_required`。
 
 ---
 

@@ -16,6 +16,17 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 )
 
+func TestParseOAuthErrorBody(t *testing.T) {
+	standard := parseOAuthErrorBody([]byte(`{"error":"invalid_grant","error_description":"Invalid 'code' in request."}`))
+	if standard.Error != "invalid_grant" || standard.ErrorDescription == "" {
+		t.Fatalf("standard oauth error = %+v", standard)
+	}
+	nested := parseOAuthErrorBody([]byte(`{"type":"error","error":{"type":"not_found_error","message":"Not found"}}`))
+	if nested.Error != "not_found_error" || nested.ErrorDescription != "Not found" {
+		t.Fatalf("nested anthropic error = %+v", nested)
+	}
+}
+
 func TestParseAuthorizationInput(t *testing.T) {
 	tests := []struct {
 		raw   string
@@ -26,6 +37,7 @@ func TestParseAuthorizationInput(t *testing.T) {
 		{raw: "abc123#state-value", code: "abc123", state: "state-value"},
 		{raw: "http://localhost:1455/auth/callback?code=codex-code&state=codex-state", code: "codex-code", state: "codex-state"},
 		{raw: "https://console.anthropic.com/oauth/code/callback#code=frag-code&state=frag-state", code: "frag-code", state: "frag-state"},
+		{raw: "https://platform.claude.com/oauth/code/callback#code=plat-code&state=plat-state", code: "plat-code", state: "plat-state"},
 	}
 	for _, test := range tests {
 		code, state, err := parseAuthorizationInput(test.raw)
@@ -73,7 +85,7 @@ func TestClaudePKCEOAuthCreatesBoundAccount(t *testing.T) {
 	application, repo := testServer(t, oauth.URL+"/messages")
 	application.cfg.ClaudeOAuth.AuthorizeURL = oauth.URL + "/oauth/authorize"
 	application.cfg.ClaudeOAuth.TokenURL = oauth.URL + "/v1/oauth/token"
-	application.cfg.ClaudeOAuth.RedirectURI = "https://console.anthropic.com/oauth/code/callback"
+	application.cfg.ClaudeOAuth.RedirectURI = "https://platform.claude.com/oauth/code/callback"
 	application.cfg.ClaudeOAuth.ClientID = "test-claude-client"
 	adminToken := adminBearer(t, application)
 
