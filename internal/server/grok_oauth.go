@@ -377,7 +377,7 @@ func (s *Server) doGrokOAuthForm(ctx context.Context, client *http.Client, path 
 	request.Header.Set("User-Agent", "grok-shell/"+s.cfg.GrokOAuth.ClientVersion+" ai-unisub")
 	request.Header.Set("x-grok-client-version", s.cfg.GrokOAuth.ClientVersion)
 	request.Header.Set("x-grok-client-surface", "ui")
-	response, err := client.Do(request)
+	response, err := doHTTP(client, request)
 	if err != nil {
 		return 0, grokOAuthErrorResponse{}, err
 	}

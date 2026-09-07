@@ -174,7 +174,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 500, "internal_error", "could not build upstream request")
 			return
 		}
-		response, err := client.Do(upstreamRequest)
+		response, err := doHTTP(client, upstreamRequest)
 		if err != nil {
 			apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider")
 			return
@@ -191,7 +191,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 				apiError(c, 500, "internal_error", "could not retry upstream request")
 				return
 			}
-			response, err = client.Do(upstreamRequest)
+			response, err = doHTTP(client, upstreamRequest)
 			if err != nil {
 				apiError(c, 502, "upstream_unavailable", "could not connect to upstream provider after refreshing credentials")
 				return

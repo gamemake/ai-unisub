@@ -131,7 +131,7 @@ func (s *Server) fetchGrokUser(ctx context.Context, account model.Account, crede
 	request.Header.Set("x-grok-client-version", s.cfg.GrokOAuth.ClientVersion)
 	request.Header.Set("x-grok-client-identifier", "grok-shell")
 	request.Header.Set("x-grok-client-mode", "interactive")
-	response, err := client.Do(request)
+	response, err := doHTTP(client, request)
 	if err != nil {
 		return grokUserProfile{}, errors.New("could not query the Grok user profile")
 	}
@@ -215,7 +215,7 @@ func (s *Server) fetchGrokBilling(ctx context.Context, account model.Account, cr
 	request.Header.Set("x-grok-client-identifier", "grok-shell")
 	request.Header.Set("x-grok-client-mode", "interactive")
 
-	response, err := client.Do(request)
+	response, err := doHTTP(client, request)
 	if err != nil {
 		return nil, 0, errors.New("could not contact the Grok billing endpoint")
 	}

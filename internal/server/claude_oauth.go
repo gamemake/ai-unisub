@@ -143,7 +143,7 @@ func (s *Server) doClaudeOAuthJSON(ctx context.Context, client *http.Client, pay
 }
 
 func readOAuthResponse(client *http.Client, request *http.Request, output any) (int, grokOAuthErrorResponse, error) {
-	response, err := client.Do(request)
+	response, err := doHTTP(client, request)
 	if err != nil {
 		return 0, grokOAuthErrorResponse{}, err
 	}

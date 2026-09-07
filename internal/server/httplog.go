@@ -2,9 +2,12 @@ package server
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
@@ -161,4 +164,69 @@ func sanitizeHeadersJSON(header http.Header) string {
 		return "{}"
 	}
 	return string(encoded)
+}
+
+// doHTTP performs an outbound HTTP request and logs method, sanitized URL, status, and duration.
+func doHTTP(client *http.Client, request *http.Request) (*http.Response, error) {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	started := time.Now()
+	response, err := client.Do(request)
+	logOutboundHTTP(request, response, err, time.Since(started))
+	return response, err
+}
+
+func logOutboundHTTP(request *http.Request, response *http.Response, err error, duration time.Duration) {
+	attrs := []any{
+		"method", request.Method,
+		"url", sanitizeOutboundURL(request.URL),
+		"duration_ms", duration.Milliseconds(),
+	}
+	if response != nil {
+		attrs = append(attrs, "status", response.StatusCode)
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+		slog.Warn("http_outbound", attrs...)
+		return
+	}
+	if response != nil && response.StatusCode >= 400 {
+		slog.Warn("http_outbound", attrs...)
+		return
+	}
+	slog.Info("http_outbound", attrs...)
+}
+
+func sanitizeOutboundURL(raw *url.URL) string {
+	if raw == nil {
+		return ""
+	}
+	cloned := *raw
+	if raw.User != nil {
+		cloned.User = url.User("[redacted]")
+	}
+	if cloned.RawQuery != "" {
+		query := cloned.Query()
+		changed := false
+		for key := range query {
+			if sensitiveQueryParam(key) {
+				query.Set(key, "[redacted]")
+				changed = true
+			}
+		}
+		if changed {
+			cloned.RawQuery = query.Encode()
+		}
+	}
+	return cloned.String()
+}
+
+func sensitiveQueryParam(key string) bool {
+	lower := strings.ToLower(strings.TrimSpace(key))
+	switch lower {
+	case "code", "client_secret", "access_token", "refresh_token", "id_token", "password", "secret", "token":
+		return true
+	}
+	return strings.HasSuffix(lower, "_token") || strings.HasSuffix(lower, "_secret") || strings.HasSuffix(lower, "_password")
 }
