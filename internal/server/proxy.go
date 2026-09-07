@@ -67,7 +67,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 				slog.Error("record request failed", "method", requestLog.Method, "path", requestLog.Path, "error", err)
 			}
 		}()
-		plaintextKey := bearer(c.GetHeader("Authorization"))
+		plaintextKey := downstreamAPIKey(c.Request.Header)
 		account, err := s.repo.ResolveAPIKey(c.Request.Context(), plaintextKey)
 		if err != nil {
 			if errors.Is(err, repository.ErrUnauthorized) {
@@ -256,6 +256,28 @@ func (s *Server) upstreamURL(provider model.Provider, kind routeKind, suffix str
 	return "", fmt.Errorf("endpoint is not supported by %s", provider)
 }
 
+// Codex outbound identity aligned with ChatGPT backend-api/codex expectations.
+// Upstream 404s version headers below 0.144.0 (see sub2api issue #3901).
+const (
+	codexOriginator         = "codex-tui"
+	codexClientVersion      = "0.146.0"
+	codexCLIUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
+)
+
+// Fallback Claude CLI UA used only when the client omitted User-Agent.
+// Real Claude Code traffic keeps its own UA (do not overwrite with a gateway brand string).
+const defaultClaudeCLIUserAgent = "claude-cli/2.1.220 (external, cli)"
+
+func codexCLIUserAgent() string {
+	return codexOriginator + "/" + codexClientVersion + codexCLIUserAgentSuffix
+}
+
+func applyCodexIdentityHeaders(header http.Header) {
+	header.Set("User-Agent", codexCLIUserAgent())
+	header.Set("originator", codexOriginator)
+	header.Set("version", codexClientVersion)
+}
+
 func injectProviderHeaders(header http.Header, provider model.Provider, authType string, credentials model.Credentials, upstreamURL, grokClientVersion string) {
 	header.Set("Content-Type", "application/json")
 	switch provider {
@@ -269,14 +291,17 @@ func injectProviderHeaders(header http.Header, provider model.Provider, authType
 			header.Set("anthropic-version", "2023-06-01")
 		}
 		header.Set("Accept", "application/json")
-		header.Set("User-Agent", "claude-cli/1.0 ai-unisub")
-		header.Set("x-app", "cli")
+		// Preserve real Claude Code / client UA; only fill a CLI-shaped fallback when missing.
+		if header.Get("User-Agent") == "" {
+			header.Set("User-Agent", defaultClaudeCLIUserAgent)
+		}
+		if header.Get("x-app") == "" {
+			header.Set("x-app", "cli")
+		}
 	case model.ProviderCodex:
 		header.Set("Authorization", "Bearer "+credentials.Bearer())
 		header.Set("Accept", "text/event-stream")
-		header.Set("User-Agent", "codex_cli_rs/ai-unisub")
-		header.Set("originator", "codex_cli_rs")
-		header.Set("version", "ai-unisub/0.1.0")
+		applyCodexIdentityHeaders(header)
 		header.Set("chatgpt-account-id", credentials.ChatGPTAccountID)
 	case model.ProviderGrok:
 		header.Set("Authorization", "Bearer "+credentials.Bearer())
@@ -290,6 +315,18 @@ func injectProviderHeaders(header http.Header, provider model.Provider, authType
 			header.Set("x-authenticateresponse", "authenticate-response")
 		}
 	}
+}
+
+// downstreamAPIKey resolves the gateway API key from Anthropic/OpenAI-compatible client headers.
+// Preference: Authorization Bearer, then x-api-key, then x-goog-api-key.
+func downstreamAPIKey(header http.Header) string {
+	if key := bearer(header.Get("Authorization")); key != "" {
+		return key
+	}
+	if key := strings.TrimSpace(header.Get("x-api-key")); key != "" {
+		return key
+	}
+	return strings.TrimSpace(header.Get("x-goog-api-key"))
 }
 
 var strippedRequestHeaders = map[string]bool{

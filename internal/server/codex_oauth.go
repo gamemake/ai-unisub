@@ -113,7 +113,8 @@ func (s *Server) doCodexOAuthForm(ctx context.Context, client *http.Client, valu
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "codex_cli_rs/ai-unisub")
+	request.Header.Set("User-Agent", codexCLIUserAgent())
+	request.Header.Set("originator", codexOriginator)
 	return readOAuthResponse(client, request, output)
 }
 

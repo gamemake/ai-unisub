@@ -71,9 +71,7 @@ func (s *Server) fetchCodexUsage(ctx context.Context, account model.Account, cre
 	}
 	request.Header.Set("Authorization", "Bearer "+credentials.Bearer())
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "codex_cli_rs/ai-unisub")
-	request.Header.Set("originator", "codex_cli_rs")
-	request.Header.Set("version", "ai-unisub/0.1.0")
+	applyCodexIdentityHeaders(request.Header)
 	if accountID := strings.TrimSpace(credentials.ChatGPTAccountID); accountID != "" {
 		request.Header.Set("ChatGPT-Account-Id", accountID)
 	}

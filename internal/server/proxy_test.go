@@ -30,6 +30,15 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 		if got := r.Header.Get("chatgpt-account-id"); got != "account-123" {
 			t.Errorf("account header = %q", got)
 		}
+		if got := r.Header.Get("originator"); got != codexOriginator {
+			t.Errorf("originator = %q", got)
+		}
+		if got := r.Header.Get("version"); got != codexClientVersion {
+			t.Errorf("version = %q", got)
+		}
+		if got := r.Header.Get("User-Agent"); got != codexCLIUserAgent() {
+			t.Errorf("user-agent = %q", got)
+		}
 		if got := r.Header.Get("Cookie"); got != "" {
 			t.Errorf("downstream cookie leaked: %q", got)
 		}
@@ -77,6 +86,98 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 	application.Handler().ServeHTTP(mismatchRecorder, mismatch)
 	if mismatchRecorder.Code != http.StatusForbidden {
 		t.Fatalf("provider mismatch status=%d", mismatchRecorder.Code)
+	}
+}
+
+func TestClaudePreservesClientUserAgent(t *testing.T) {
+	const clientUA = "claude-cli/2.1.220 (external, cli)"
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("User-Agent"); got != clientUA {
+			t.Errorf("user-agent = %q, want client UA preserved", got)
+		}
+		if got := r.Header.Get("anthropic-beta"); got != "claude-code-20250219,oauth-2025-04-20" {
+			t.Errorf("anthropic-beta = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer claude-access" {
+			t.Errorf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1"}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/messages")
+	application.cfg.Providers.ClaudeAPI = upstream.URL
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "claude-ua", Provider: model.ProviderClaude, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "claude-access"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("User-Agent", clientUA)
+	request.Header.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestProxyAcceptsXAPIKeyHeader(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/messages")
+	application.cfg.Providers.ClaudeAPI = upstream.URL
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "claude-x-api-key", Provider: model.ProviderClaude, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "claude-access"},
+	})
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("x-api-key", key)
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("x-api-key status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	goog := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
+	goog.Header.Set("x-goog-api-key", key)
+	googRecorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(googRecorder, goog)
+	if googRecorder.Code != http.StatusOK {
+		t.Fatalf("x-goog-api-key status=%d body=%s", googRecorder.Code, googRecorder.Body.String())
+	}
+}
+
+func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
+	codexHeader := make(http.Header)
+	injectProviderHeaders(codexHeader, model.ProviderCodex, "oauth", model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", "")
+	if got := codexHeader.Get("User-Agent"); got != codexCLIUserAgent() {
+		t.Fatalf("codex UA = %q", got)
+	}
+	if got := codexHeader.Get("originator"); got != codexOriginator {
+		t.Fatalf("codex originator = %q", got)
+	}
+	if got := codexHeader.Get("version"); got != codexClientVersion {
+		t.Fatalf("codex version = %q", got)
+	}
+
+	claudeHeader := make(http.Header)
+	claudeHeader.Set("User-Agent", "claude-cli/2.1.200 (external, cli)")
+	injectProviderHeaders(claudeHeader, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "")
+	if got := claudeHeader.Get("User-Agent"); got != "claude-cli/2.1.200 (external, cli)" {
+		t.Fatalf("claude UA overwritten = %q", got)
+	}
+
+	emptyClaude := make(http.Header)
+	injectProviderHeaders(emptyClaude, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "")
+	if got := emptyClaude.Get("User-Agent"); got != defaultClaudeCLIUserAgent {
+		t.Fatalf("claude fallback UA = %q", got)
 	}
 }
 

@@ -138,7 +138,7 @@ func (s *Server) doClaudeOAuthJSON(ctx context.Context, client *http.Client, pay
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "claude-cli/1.0 (external, cli)")
+	request.Header.Set("User-Agent", defaultClaudeCLIUserAgent)
 	return readOAuthResponse(client, request, output)
 }
 
