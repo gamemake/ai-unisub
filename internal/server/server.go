@@ -16,22 +16,22 @@ import (
 )
 
 type Server struct {
-	cfg               config.Config
-	repo              *repository.Repository
-	engine            *gin.Engine
-	accountClients    sync.Map
-	signer            tokenSigner
-	limiters          sync.Map
-	rateMu            sync.Mutex
-	rates             map[string]rateWindow
-	requestLogCancel  context.CancelFunc
-	requestLogWG      sync.WaitGroup
-	grokOAuthMu       sync.Mutex
-	grokOAuthFlows    map[string]*grokOAuthFlow
-	grokRefreshLocks  sync.Map
-	pkceOAuthMu       sync.Mutex
-	pkceOAuthFlows    map[string]*pkceOAuthFlow
-	oauthRefreshLocks sync.Map
+	cfg                 config.Config
+	repo                *repository.Repository
+	engine              *gin.Engine
+	subscriptionClients sync.Map
+	signer              tokenSigner
+	limiters            sync.Map
+	rateMu              sync.Mutex
+	rates               map[string]rateWindow
+	requestLogCancel    context.CancelFunc
+	requestLogWG        sync.WaitGroup
+	grokOAuthMu         sync.Mutex
+	grokOAuthFlows      map[string]*grokOAuthFlow
+	grokRefreshLocks    sync.Map
+	pkceOAuthMu         sync.Mutex
+	pkceOAuthFlows      map[string]*pkceOAuthFlow
+	oauthRefreshLocks   sync.Map
 }
 
 type rateWindow struct {
@@ -130,18 +130,20 @@ func (s *Server) routes() {
 	admin.PUT("/users/:id", s.updateUser)
 	admin.POST("/users/:id/password", s.resetUserPassword)
 	admin.DELETE("/users/:id", s.deleteUser)
-	admin.GET("/accounts", s.listAccounts)
-	admin.POST("/accounts", s.createAccount)
-	admin.GET("/accounts/:id", s.getAccount)
-	admin.PUT("/accounts/:id", s.updateAccount)
-	admin.DELETE("/accounts/:id", s.deleteAccount)
-	admin.POST("/accounts/:id/enable", s.enableAccount)
-	admin.POST("/accounts/:id/disable", s.disableAccount)
-	admin.PUT("/accounts/:id/proxy", s.updateAccountProxy)
-	admin.PUT("/accounts/:id/concurrency-queue", s.updateConcurrencyQueue)
-	admin.GET("/accounts/:id/usage", s.accountUsage)
-	admin.POST("/accounts/:id/usage/refresh", s.refreshAccountUsage)
+	admin.GET("/subscriptions", s.listSubscriptions)
+	admin.POST("/subscriptions", s.createSubscription)
+	admin.GET("/subscriptions/:id", s.getSubscription)
+	admin.PUT("/subscriptions/:id", s.updateSubscription)
+	admin.DELETE("/subscriptions/:id", s.deleteSubscription)
+	admin.POST("/subscriptions/:id/enable", s.enableSubscription)
+	admin.POST("/subscriptions/:id/disable", s.disableSubscription)
+	admin.PUT("/subscriptions/:id/proxy", s.updateSubscriptionProxy)
+	admin.PUT("/subscriptions/:id/concurrency-queue", s.updateConcurrencyQueue)
+	admin.GET("/subscriptions/:id/usage", s.subscriptionUsage)
+	admin.POST("/subscriptions/:id/usage/refresh", s.refreshSubscriptionUsage)
 	admin.GET("/usage/summary", s.usageSummary)
+	admin.GET("/usage/by-subscription", s.usageBySubscription)
+	admin.GET("/usage/by-user", s.usageByUser)
 	admin.GET("/api-keys", s.listAPIKeys)
 	admin.GET("/api-keys/:id", s.getAPIKey)
 	admin.POST("/api-keys", s.createAPIKey)
@@ -247,13 +249,13 @@ func (s *Server) limiterChannel(accountID int64, limit int) chan struct{} {
 	}
 }
 
-func (s *Server) resetAccountLimiter(accountID int64) {
+func (s *Server) resetSubscriptionLimiter(accountID int64) {
 	s.limiters.Delete(accountID)
 }
 
-func (s *Server) forgetAccountRuntime(accountID int64) {
-	s.closeAccountClient(accountID)
-	s.resetAccountLimiter(accountID)
+func (s *Server) forgetSubscriptionRuntime(accountID int64) {
+	s.closeSubscriptionClient(accountID)
+	s.resetSubscriptionLimiter(accountID)
 	s.grokRefreshLocks.Delete(accountID)
 	s.oauthRefreshLocks.Delete(accountID)
 }
@@ -312,7 +314,7 @@ func (s *Server) Shutdown(context.Context) error {
 		s.requestLogCancel()
 		s.requestLogWG.Wait()
 	}
-	s.accountClients.Range(func(_, value any) bool {
+	s.subscriptionClients.Range(func(_, value any) bool {
 		if transport, ok := value.(*http.Client).Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
 		}

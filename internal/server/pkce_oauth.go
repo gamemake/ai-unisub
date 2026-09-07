@@ -27,7 +27,7 @@ type pkceOAuthFlow struct {
 	State        string
 	CodeVerifier string
 	ExpiresAt    time.Time
-	Account      oauthAccountRequest
+	Account      oauthSubscriptionRequest
 	Client       *http.Client
 	Finalizing   bool
 }
@@ -55,7 +55,7 @@ func (s *Server) startPKCEOAuth(c *gin.Context, provider model.Provider) {
 		apiError(c, http.StatusTooManyRequests, "rate_limited", "too many "+providerDisplayName(provider)+" OAuth login attempts")
 		return
 	}
-	account, client, ok := s.bindOAuthAccountRequest(c)
+	account, client, ok := s.bindOAuthSubscriptionRequest(c)
 	if !ok {
 		return
 	}
@@ -173,15 +173,14 @@ func (s *Server) exchangePKCEOAuth(c *gin.Context, provider model.Provider) {
 		return
 	}
 
-	userID := userFromContext(c).ID
-	account, err := s.repo.CreateAccount(c.Request.Context(), createOAuthAccountParams(flow.Account, provider, credentials, expiresAt, userID))
+	account, err := s.repo.CreateSubscription(c.Request.Context(), createOAuthSubscriptionParams(flow.Account, provider, credentials, expiresAt))
 	if err != nil {
 		s.setPKCEFinalizing(flow.ID, false)
-		apiError(c, http.StatusInternalServerError, "internal_error", "authorization succeeded but the account could not be created; retry the code exchange")
+		apiError(c, http.StatusInternalServerError, "internal_error", "authorization succeeded but the subscription could not be created; retry the code exchange")
 		return
 	}
 	s.removePKCEOAuthFlow(flow.ID)
-	c.JSON(http.StatusCreated, gin.H{"status": "complete", "account": account})
+	c.JSON(http.StatusCreated, gin.H{"status": "complete", "subscription": account})
 }
 
 func (s *Server) pkceAuthorizationURL(provider model.Provider, state, challenge string) (string, error) {

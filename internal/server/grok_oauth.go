@@ -37,7 +37,7 @@ type grokOAuthFlow struct {
 	ExpiresAt        time.Time
 	NextPollAt       time.Time
 	PollInterval     time.Duration
-	Account          oauthAccountRequest
+	Account          oauthSubscriptionRequest
 	Client           *http.Client
 	Polling          bool
 	Finalizing       bool
@@ -75,7 +75,7 @@ func (s *Server) startGrokOAuthDevice(c *gin.Context) {
 		return
 	}
 
-	account, client, ok := s.bindOAuthAccountRequest(c)
+	account, client, ok := s.bindOAuthSubscriptionRequest(c)
 	if !ok {
 		return
 	}
@@ -274,12 +274,11 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 		TokenType: firstNonEmpty(token.TokenType, "Bearer"), ClientID: s.cfg.GrokOAuth.ClientID, Scope: token.Scope,
 	}
 	expiresAt := oauthTokenExpiry(token.ExpiresIn)
-	userID := userFromContext(c).ID
-	account, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
+	account, err := s.repo.CreateSubscription(c.Request.Context(), repository.CreateSubscriptionParams{
 		Name: accountRequest.Name, Provider: model.ProviderGrok, AuthType: "oauth", Credentials: credentials,
 		Metadata: accountRequest.Metadata, ConcurrencyLimit: accountRequest.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: accountRequest.ConcurrencyQueueTimeoutSeconds,
-		ProxyURL:                       accountRequest.ProxyURL, TokenExpiresAt: expiresAt, CreatedByUserID: &userID,
+		ProxyURL:                       accountRequest.ProxyURL, TokenExpiresAt: expiresAt,
 	})
 	if err != nil {
 		s.grokOAuthMu.Lock()
@@ -296,10 +295,10 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 		}
 	}
 	s.removeGrokOAuthFlow(flow.ID)
-	c.JSON(http.StatusCreated, gin.H{"status": "complete", "account": account})
+	c.JSON(http.StatusCreated, gin.H{"status": "complete", "subscription": account})
 }
 
-func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Account, credentials model.Credentials, force bool) (model.Credentials, error) {
+func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
 	if account.Provider != model.ProviderGrok || account.AuthType != "oauth" {
 		return credentials, nil
 	}
@@ -312,7 +311,7 @@ func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Ac
 	lock.Lock()
 	defer lock.Unlock()
 
-	latest, err := s.repo.GetAccount(ctx, account.ID)
+	latest, err := s.repo.GetSubscription(ctx, account.ID)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -329,7 +328,7 @@ func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Ac
 	if credentials.RefreshToken == "" {
 		return model.Credentials{}, errors.New("Grok OAuth token expired and no refresh token is available")
 	}
-	client, err := s.clientForAccount(latest)
+	client, err := s.clientForSubscription(latest)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -360,7 +359,7 @@ func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Ac
 		credentials.Scope = token.Scope
 	}
 	expiresAt := oauthTokenExpiry(token.ExpiresIn)
-	if err := s.repo.UpdateAccountCredentials(ctx, account.ID, credentials, expiresAt); err != nil {
+	if err := s.repo.UpdateSubscriptionCredentials(ctx, account.ID, credentials, expiresAt); err != nil {
 		return model.Credentials{}, err
 	}
 	return credentials, nil

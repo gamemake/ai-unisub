@@ -27,7 +27,7 @@ type Repository struct {
 	db *database.DB
 }
 
-type CreateAccountParams struct {
+type CreateSubscriptionParams struct {
 	Name                           string
 	Provider                       model.Provider
 	AuthType                       string
@@ -37,10 +37,9 @@ type CreateAccountParams struct {
 	ConcurrencyQueueTimeoutSeconds int
 	ProxyURL                       string
 	TokenExpiresAt                 *time.Time
-	CreatedByUserID                *int64
 }
 
-type UpdateAccountParams struct {
+type UpdateSubscriptionParams struct {
 	Name                           string
 	Enabled                        bool
 	ConcurrencyLimit               int
@@ -49,10 +48,11 @@ type UpdateAccountParams struct {
 }
 
 type CreateAPIKeyParams struct {
-	AccountID int64
-	Name      string
-	RPMLimit  *int
-	ExpiresAt *time.Time
+	SubscriptionID int64
+	UserID         *int64
+	Name           string
+	RPMLimit       *int
+	ExpiresAt      *time.Time
 }
 
 type UpdateAPIKeyParams struct {
@@ -244,10 +244,10 @@ func isUniqueViolation(err error) bool {
 	return database.IsUniqueViolation(err)
 }
 
-func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (model.Account, error) {
+func (r *Repository) CreateSubscription(ctx context.Context, p CreateSubscriptionParams) (model.Subscription, error) {
 	credentialJSON, err := json.Marshal(p.Credentials)
 	if err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
 	metadata := p.Metadata
 	if len(metadata) == 0 {
@@ -261,72 +261,72 @@ func (r *Repository) CreateAccount(ctx context.Context, p CreateAccountParams) (
 	if p.TokenExpiresAt != nil {
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	accountID, err := r.db.InsertID(ctx, `INSERT INTO accounts
-		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, created_by_user_id)
-		VALUES(?,?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires, nullableInt64(p.CreatedByUserID))
+	subscriptionID, err := r.db.InsertID(ctx, `INSERT INTO subscriptions
+		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
 	if err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
-	return r.GetAccount(ctx, accountID)
+	return r.GetSubscription(ctx, subscriptionID)
 }
 
-func (r *Repository) ListAccounts(ctx context.Context) ([]model.Account, error) {
-	rows, err := r.db.QueryContext(ctx, accountSelect+` ORDER BY a.id DESC`)
+func (r *Repository) ListSubscriptions(ctx context.Context) ([]model.Subscription, error) {
+	rows, err := r.db.QueryContext(ctx, subscriptionSelect+` ORDER BY a.id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var accounts []model.Account
+	var subscriptions []model.Subscription
 	for rows.Next() {
-		account, err := scanAccount(rows)
+		subscription, err := scanSubscription(rows)
 		if err != nil {
 			return nil, err
 		}
-		accounts = append(accounts, account)
+		subscriptions = append(subscriptions, subscription)
 	}
-	return accounts, rows.Err()
+	return subscriptions, rows.Err()
 }
 
-func (r *Repository) GetAccount(ctx context.Context, id int64) (model.Account, error) {
-	account, err := scanAccount(r.db.QueryRowContext(ctx, accountSelect+` WHERE a.id=?`, id))
+func (r *Repository) GetSubscription(ctx context.Context, id int64) (model.Subscription, error) {
+	subscription, err := scanSubscription(r.db.QueryRowContext(ctx, subscriptionSelect+` WHERE a.id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.Account{}, ErrNotFound
+		return model.Subscription{}, ErrNotFound
 	}
-	return account, err
+	return subscription, err
 }
 
-func (r *Repository) ResolveAPIKey(ctx context.Context, plaintext string) (model.ResolvedAccount, error) {
+func (r *Repository) ResolveAPIKey(ctx context.Context, plaintext string) (model.ResolvedSubscription, error) {
 	if !strings.HasPrefix(plaintext, "unisub_") || len(plaintext) < 32 {
-		return model.ResolvedAccount{}, ErrUnauthorized
+		return model.ResolvedSubscription{}, ErrUnauthorized
 	}
 	hash := sha256.Sum256([]byte(plaintext))
-	query := `SELECT ` + accountBaseColumns + `, k.id, k.rpm_limit
-		FROM api_keys k JOIN accounts a ON a.id=k.account_id
+	query := `SELECT ` + subscriptionBaseColumns + `, k.id, k.user_id, k.rpm_limit
+		FROM api_keys k JOIN subscriptions a ON a.id=k.subscription_id
 		WHERE k.key_hash=? AND k.enabled=1 AND a.enabled=1
 		AND (k.expires_at IS NULL OR k.expires_at > ?)`
 	row := r.db.QueryRowContext(ctx, query, hash[:], time.Now().UTC().Format(time.RFC3339Nano))
-	account, apiKeyID, rpmLimit, err := scanResolved(row)
+	subscription, apiKeyID, userID, rpmLimit, err := scanResolved(row)
 	if errors.Is(err, sql.ErrNoRows) {
-		return model.ResolvedAccount{}, ErrUnauthorized
+		return model.ResolvedSubscription{}, ErrUnauthorized
 	}
 	if err != nil {
-		return model.ResolvedAccount{}, err
+		return model.ResolvedSubscription{}, err
 	}
-	if account.Status != "active" {
-		return model.ResolvedAccount{}, ErrUnauthorized
+	if subscription.Status != "active" {
+		return model.ResolvedSubscription{}, ErrUnauthorized
 	}
-	return model.ResolvedAccount{Account: account, APIKeyID: apiKeyID, RPMLimit: rpmLimit}, nil
+	return model.ResolvedSubscription{Subscription: subscription, APIKeyID: apiKeyID, UserID: userID, RPMLimit: rpmLimit}, nil
 }
 
-func (r *Repository) Credentials(ctx context.Context, account model.Account) (model.Credentials, error) {
+func (r *Repository) Credentials(ctx context.Context, subscription model.Subscription) (model.Credentials, error) {
 	var credentials model.Credentials
-	if err := json.Unmarshal(account.CredentialsJSON, &credentials); err != nil {
+	if err := json.Unmarshal(subscription.CredentialsJSON, &credentials); err != nil {
 		return model.Credentials{}, errors.New("stored credentials are invalid")
 	}
 	return credentials, nil
 }
 
-func (r *Repository) UpdateAccountCredentials(ctx context.Context, id int64, credentials model.Credentials, expiresAt *time.Time) error {
+func (r *Repository) UpdateSubscriptionCredentials(ctx context.Context, id int64, credentials model.Credentials, expiresAt *time.Time) error {
 	credentialJSON, err := json.Marshal(credentials)
 	if err != nil {
 		return err
@@ -335,7 +335,7 @@ func (r *Repository) UpdateAccountCredentials(ctx context.Context, id int64, cre
 	if expiresAt != nil {
 		expires = expiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions
 		SET credentials_json=?, token_expires_at=?, status='active', last_error=NULL, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`, credentialJSON, expires, id)
 	if err != nil {
@@ -344,7 +344,7 @@ func (r *Repository) UpdateAccountCredentials(ctx context.Context, id int64, cre
 	return requireAffected(result)
 }
 
-func (r *Repository) UpdateAccountQuota(ctx context.Context, id int64, quota json.RawMessage, checkedAt time.Time, quotaErr *string) error {
+func (r *Repository) UpdateSubscriptionQuota(ctx context.Context, id int64, quota json.RawMessage, checkedAt time.Time, quotaErr *string) error {
 	var quotaValue any
 	if len(quota) > 0 {
 		if !json.Valid(quota) {
@@ -356,7 +356,7 @@ func (r *Repository) UpdateAccountQuota(ctx context.Context, id int64, quota jso
 	if quotaErr != nil && strings.TrimSpace(*quotaErr) != "" {
 		errorValue = strings.TrimSpace(*quotaErr)
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions
 		SET quota_json=?, quota_checked_at=?, quota_error=?, updated_at=CURRENT_TIMESTAMP
 		WHERE id=?`, quotaValue, checkedAt.UTC().Format(time.RFC3339Nano), errorValue, id)
 	if err != nil {
@@ -365,25 +365,25 @@ func (r *Repository) UpdateAccountQuota(ctx context.Context, id int64, quota jso
 	return requireAffected(result)
 }
 
-func (r *Repository) UpdateAccountQuotaError(ctx context.Context, id int64, quotaErr string) error {
+func (r *Repository) UpdateSubscriptionQuotaError(ctx context.Context, id int64, quotaErr string) error {
 	quotaErr = strings.TrimSpace(quotaErr)
 	var errorValue any
 	if quotaErr != "" {
 		errorValue = quotaErr
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET quota_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, errorValue, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions SET quota_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, errorValue, id)
 	if err != nil {
 		return err
 	}
 	return requireAffected(result)
 }
 
-func (r *Repository) ProxyURL(account model.Account) (string, error) {
-	return account.ProxyURL, nil
+func (r *Repository) ProxyURL(subscription model.Subscription) (string, error) {
+	return subscription.ProxyURL, nil
 }
 
-func (r *Repository) SetAccountProxy(ctx context.Context, id int64, proxyURL string) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET proxy_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, proxyURL, id)
+func (r *Repository) SetSubscriptionProxy(ctx context.Context, id int64, proxyURL string) error {
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions SET proxy_url=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, proxyURL, id)
 	if err != nil {
 		return err
 	}
@@ -391,14 +391,14 @@ func (r *Repository) SetAccountProxy(ctx context.Context, id int64, proxyURL str
 }
 
 func (r *Repository) SetConcurrencyQueueTimeout(ctx context.Context, id int64, timeoutSeconds int) error {
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET concurrency_queue_timeout_seconds=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, timeoutSeconds, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions SET concurrency_queue_timeout_seconds=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, timeoutSeconds, id)
 	if err != nil {
 		return err
 	}
 	return requireAffected(result)
 }
 
-func (r *Repository) UpdateAccount(ctx context.Context, id int64, p UpdateAccountParams) (model.Account, error) {
+func (r *Repository) UpdateSubscription(ctx context.Context, id int64, p UpdateSubscriptionParams) (model.Subscription, error) {
 	limit := p.ConcurrencyLimit
 	if limit <= 0 {
 		limit = 1
@@ -409,46 +409,46 @@ func (r *Repository) UpdateAccount(ctx context.Context, id int64, p UpdateAccoun
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
 	defer tx.Rollback()
 
 	var result sql.Result
 	if p.ProxyURL != nil {
-		result, err = tx.ExecContext(ctx, `UPDATE accounts
+		result, err = tx.ExecContext(ctx, `UPDATE subscriptions
 			SET name=?, enabled=?, concurrency_limit=?, concurrency_queue_timeout_seconds=?, proxy_url=?, updated_at=CURRENT_TIMESTAMP
 			WHERE id=?`, p.Name, enabled, limit, p.ConcurrencyQueueTimeoutSeconds, *p.ProxyURL, id)
 	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE accounts
+		result, err = tx.ExecContext(ctx, `UPDATE subscriptions
 			SET name=?, enabled=?, concurrency_limit=?, concurrency_queue_timeout_seconds=?, updated_at=CURRENT_TIMESTAMP
 			WHERE id=?`, p.Name, enabled, limit, p.ConcurrencyQueueTimeoutSeconds, id)
 	}
 	if err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
 	if err := requireAffected(result); err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
-	return r.GetAccount(ctx, id)
+	return r.GetSubscription(ctx, id)
 }
 
-func (r *Repository) SetAccountEnabled(ctx context.Context, id int64, enabled bool) error {
+func (r *Repository) SetSubscriptionEnabled(ctx context.Context, id int64, enabled bool) error {
 	value := 0
 	if enabled {
 		value = 1
 	}
-	result, err := r.db.ExecContext(ctx, `UPDATE accounts SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, value, id)
+	result, err := r.db.ExecContext(ctx, `UPDATE subscriptions SET enabled=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, value, id)
 	if err != nil {
 		return err
 	}
 	return requireAffected(result)
 }
 
-func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM accounts WHERE id=?`, id)
+func (r *Repository) DeleteSubscription(ctx context.Context, id int64) error {
+	result, err := r.db.ExecContext(ctx, `DELETE FROM subscriptions WHERE id=?`, id)
 	if err != nil {
 		return err
 	}
@@ -456,7 +456,7 @@ func (r *Repository) DeleteAccount(ctx context.Context, id int64) error {
 }
 
 func (r *Repository) CreateAPIKey(ctx context.Context, p CreateAPIKeyParams) (model.APIKey, string, error) {
-	if _, err := r.GetAccount(ctx, p.AccountID); err != nil {
+	if _, err := r.GetSubscription(ctx, p.SubscriptionID); err != nil {
 		return model.APIKey{}, "", err
 	}
 	name := strings.TrimSpace(p.Name)
@@ -475,8 +475,8 @@ func (r *Repository) CreateAPIKey(ctx context.Context, p CreateAPIKeyParams) (mo
 	if p.ExpiresAt != nil {
 		expires = p.ExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
-	id, err := r.db.InsertID(ctx, `INSERT INTO api_keys(account_id, name, key_hash, key_plaintext, key_prefix, rpm_limit, expires_at)
-		VALUES(?,?,?,?,?,?,?)`, p.AccountID, name, hash[:], plaintext, prefix, rpm, expires)
+	id, err := r.db.InsertID(ctx, `INSERT INTO api_keys(subscription_id, user_id, name, key_hash, key_plaintext, key_prefix, rpm_limit, expires_at)
+		VALUES(?,?,?,?,?,?,?,?)`, p.SubscriptionID, nullableInt64(p.UserID), name, hash[:], plaintext, prefix, rpm, expires)
 	if err != nil {
 		return model.APIKey{}, "", err
 	}
@@ -567,8 +567,12 @@ func (r *Repository) DeleteAPIKey(ctx context.Context, id int64) error {
 	return requireAffected(result)
 }
 
-func (r *Repository) UsageSummary(ctx context.Context, accountID int64) (model.UsageSummary, error) {
-	return r.usageSummaryFromRequestLogs(ctx, accountID, time.Now().UTC().Add(-24*time.Hour), time.Local)
+func (r *Repository) UsageSummary(ctx context.Context, subscriptionID int64) (model.UsageSummary, error) {
+	totals, err := r.usageTotalsFromRequestLogs(ctx, subscriptionID, time.Now().UTC().Add(-24*time.Hour), time.Now().UTC(), time.Local)
+	if err != nil {
+		return model.UsageSummary{}, err
+	}
+	return totals.As24HSummary(), nil
 }
 
 const userColumns = `id, username, password_hash, role, enabled, created_at, updated_at`
@@ -588,19 +592,19 @@ func scanUser(s scanner) (model.User, error) {
 	return user, nil
 }
 
-const accountBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
+const subscriptionBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
 	a.metadata_json, a.proxy_url, a.status, a.enabled, a.concurrency_limit, a.concurrency_queue_timeout_seconds, a.token_expires_at, a.quota_json,
-	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_by_user_id, a.created_at, a.updated_at`
+	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_at, a.updated_at`
 
-const accountSelect = `SELECT ` + accountBaseColumns + `, (SELECT COUNT(*) FROM api_keys keys WHERE keys.account_id=a.id) FROM accounts a`
+const subscriptionSelect = `SELECT ` + subscriptionBaseColumns + `, (SELECT COUNT(*) FROM api_keys keys WHERE keys.subscription_id=a.id) FROM subscriptions a`
 
-const apiKeySelect = `SELECT k.id, k.account_id, a.name, a.provider, k.name, k.key_prefix, k.enabled, k.rpm_limit, k.expires_at, k.created_at
-	FROM api_keys k JOIN accounts a ON a.id=k.account_id`
+const apiKeySelect = `SELECT k.id, k.subscription_id, k.user_id, COALESCE(u.username,''), a.name, a.provider, k.name, k.key_prefix, k.enabled, k.rpm_limit, k.expires_at, k.created_at
+	FROM api_keys k JOIN subscriptions a ON a.id=k.subscription_id LEFT JOIN users u ON u.id=k.user_id`
 
 type scanner interface{ Scan(...any) error }
 
-type accountScan struct {
-	account      model.Account
+type subscriptionScan struct {
+	subscription model.Subscription
 	provider     string
 	metadata     string
 	created      string
@@ -612,19 +616,18 @@ type accountScan struct {
 	quotaError   sql.NullString
 	lastUsed     sql.NullString
 	lastError    sql.NullString
-	createdBy    sql.NullInt64
 }
 
-func accountScanDest(row *accountScan) []any {
+func subscriptionScanDest(row *subscriptionScan) []any {
 	return []any{
-		&row.account.ID, &row.account.Name, &row.provider, &row.account.AuthType, &row.account.CredentialsJSON,
-		&row.metadata, &row.account.ProxyURL, &row.account.Status, &row.enabled, &row.account.ConcurrencyLimit, &row.account.ConcurrencyQueueTimeoutSeconds, &row.tokenExpires, &row.quota,
-		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.createdBy, &row.created, &row.updated,
+		&row.subscription.ID, &row.subscription.Name, &row.provider, &row.subscription.AuthType, &row.subscription.CredentialsJSON,
+		&row.metadata, &row.subscription.ProxyURL, &row.subscription.Status, &row.enabled, &row.subscription.ConcurrencyLimit, &row.subscription.ConcurrencyQueueTimeoutSeconds, &row.tokenExpires, &row.quota,
+		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.created, &row.updated,
 	}
 }
 
-func finishAccount(row accountScan) model.Account {
-	a := row.account
+func finishSubscription(row subscriptionScan) model.Subscription {
+	a := row.subscription
 	a.Provider = model.Provider(row.provider)
 	a.Metadata = json.RawMessage(row.metadata)
 	a.Enabled = row.enabled == 1
@@ -632,10 +635,6 @@ func finishAccount(row accountScan) model.Account {
 	a.TokenExpiresAt = parseTime(row.tokenExpires)
 	a.QuotaCheckedAt = parseTime(row.quotaChecked)
 	a.LastUsedAt = parseTime(row.lastUsed)
-	if row.createdBy.Valid {
-		value := row.createdBy.Int64
-		a.CreatedByUserID = &value
-	}
 	if row.quota.Valid {
 		a.Quota = json.RawMessage(row.quota.String)
 	}
@@ -650,40 +649,43 @@ func finishAccount(row accountScan) model.Account {
 	return a
 }
 
-func scanAccount(s scanner) (model.Account, error) {
-	var row accountScan
-	dest := append(accountScanDest(&row), &row.account.APIKeyCount)
+func scanSubscription(s scanner) (model.Subscription, error) {
+	var row subscriptionScan
+	dest := append(subscriptionScanDest(&row), &row.subscription.APIKeyCount)
 	if err := s.Scan(dest...); err != nil {
-		return model.Account{}, err
+		return model.Subscription{}, err
 	}
-	return finishAccount(row), nil
+	return finishSubscription(row), nil
 }
 
-func scanResolved(s scanner) (model.Account, int64, *int, error) {
-	var row accountScan
+func scanResolved(s scanner) (model.Subscription, int64, *int64, *int, error) {
+	var row subscriptionScan
 	var apiKeyID int64
+	var userID sql.NullInt64
 	var rpm sql.NullInt64
-	dest := append(accountScanDest(&row), &apiKeyID, &rpm)
+	dest := append(subscriptionScanDest(&row), &apiKeyID, &userID, &rpm)
 	if err := s.Scan(dest...); err != nil {
-		return model.Account{}, 0, nil, err
+		return model.Subscription{}, 0, nil, nil, err
 	}
 	var limit *int
 	if rpm.Valid {
 		value := int(rpm.Int64)
 		limit = &value
 	}
-	return finishAccount(row), apiKeyID, limit, nil
+	return finishSubscription(row), apiKeyID, nullInt64Ptr(userID), limit, nil
 }
 
 func scanAPIKey(s scanner) (model.APIKey, error) {
 	var key model.APIKey
+	var userID sql.NullInt64
 	var provider string
 	var enabled int
 	var rpm sql.NullInt64
 	var expires, created sql.NullString
-	if err := s.Scan(&key.ID, &key.AccountID, &key.AccountName, &provider, &key.Name, &key.KeyPrefix, &enabled, &rpm, &expires, &created); err != nil {
+	if err := s.Scan(&key.ID, &key.SubscriptionID, &userID, &key.Username, &key.SubscriptionName, &provider, &key.Name, &key.KeyPrefix, &enabled, &rpm, &expires, &created); err != nil {
 		return model.APIKey{}, err
 	}
+	key.UserID = nullInt64Ptr(userID)
 	key.Provider = model.Provider(provider)
 	key.Enabled = enabled == 1
 	if rpm.Valid {
@@ -697,26 +699,6 @@ func scanAPIKey(s scanner) (model.APIKey, error) {
 		}
 	}
 	return key, nil
-}
-
-func (r *Repository) ListAccountIDsByCreator(ctx context.Context, userID int64) ([]int64, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM accounts WHERE created_by_user_id=? ORDER BY id`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	if ids == nil {
-		ids = []int64{}
-	}
-	return ids, rows.Err()
 }
 
 func parseTime(value sql.NullString) *time.Time {

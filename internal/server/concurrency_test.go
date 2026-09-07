@@ -10,22 +10,22 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
-func TestQueueTimeoutUsesAccountThenEnvironmentThenBuiltInDefault(t *testing.T) {
+func TestQueueTimeoutUsesSubscriptionThenEnvironmentThenBuiltInDefault(t *testing.T) {
 	server := &Server{cfg: config.Config{ConcurrencyQueueTimeout: 45 * time.Second}}
-	if got := server.queueTimeout(model.Account{}); got != 45*time.Second {
+	if got := server.queueTimeout(model.Subscription{}); got != 45*time.Second {
 		t.Fatalf("inherited queue timeout = %s", got)
 	}
-	if got := server.queueTimeout(model.Account{ConcurrencyQueueTimeoutSeconds: 25}); got != 25*time.Second {
+	if got := server.queueTimeout(model.Subscription{ConcurrencyQueueTimeoutSeconds: 25}); got != 25*time.Second {
 		t.Fatalf("account queue timeout = %s", got)
 	}
 
 	application, _ := testServer(t, "https://example.invalid/responses")
-	if got := application.queueTimeout(model.Account{}); got != 3*time.Minute {
+	if got := application.queueTimeout(model.Subscription{}); got != 3*time.Minute {
 		t.Fatalf("built-in queue timeout = %s", got)
 	}
 }
 
-func TestAcquireWaitsForAccountSlot(t *testing.T) {
+func TestAcquireWaitsForSubscriptionSlot(t *testing.T) {
 	server := &Server{}
 	releaseFirst, err := server.acquire(context.Background(), 1, 1, 0)
 	if err != nil {
@@ -105,7 +105,7 @@ func TestAcquireRebuildsLimiterWhenConcurrencyLimitChanges(t *testing.T) {
 	releaseB()
 	releaseC()
 
-	server.resetAccountLimiter(9)
+	server.resetSubscriptionLimiter(9)
 	releaseD, err := server.acquire(context.Background(), 9, 1, 0)
 	if err != nil {
 		t.Fatal(err)

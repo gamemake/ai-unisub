@@ -17,7 +17,7 @@ func (p Provider) Valid() bool {
 	return p == ProviderClaude || p == ProviderCodex || p == ProviderGrok
 }
 
-type Account struct {
+type Subscription struct {
 	ID                             int64           `json:"id"`
 	Name                           string          `json:"name"`
 	Provider                       Provider        `json:"provider"`
@@ -35,7 +35,6 @@ type Account struct {
 	LastUsedAt                     *time.Time      `json:"last_used_at,omitempty"`
 	LastError                      *string         `json:"last_error,omitempty"`
 	APIKeyCount                    int             `json:"api_key_count"`
-	CreatedByUserID                *int64          `json:"created_by_user_id,omitempty"`
 	CreatedAt                      time.Time       `json:"created_at"`
 	UpdatedAt                      time.Time       `json:"updated_at"`
 	Credentials                    json.RawMessage `json:"credentials,omitempty"`
@@ -44,17 +43,19 @@ type Account struct {
 }
 
 type APIKey struct {
-	ID          int64      `json:"id"`
-	AccountID   int64      `json:"account_id"`
-	AccountName string     `json:"account_name"`
-	Provider    Provider   `json:"provider"`
-	Name        string     `json:"name"`
-	KeyPrefix   string     `json:"key_prefix"`
-	APIKey      string     `json:"api_key,omitempty"`
-	Enabled     bool       `json:"enabled"`
-	RPMLimit    *int       `json:"rpm_limit,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
+	ID               int64      `json:"id"`
+	SubscriptionID   int64      `json:"subscription_id"`
+	UserID           *int64     `json:"user_id,omitempty"`
+	Username         string     `json:"username,omitempty"`
+	SubscriptionName string     `json:"subscription_name"`
+	Provider         Provider   `json:"provider"`
+	Name             string     `json:"name"`
+	KeyPrefix        string     `json:"key_prefix"`
+	APIKey           string     `json:"api_key,omitempty"`
+	Enabled          bool       `json:"enabled"`
+	RPMLimit         *int       `json:"rpm_limit,omitempty"`
+	ExpiresAt        *time.Time `json:"expires_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type Credentials struct {
@@ -79,10 +80,20 @@ func (c Credentials) Bearer() string {
 	return c.APIKey
 }
 
-type ResolvedAccount struct {
-	Account
-	APIKeyID int64
-	RPMLimit *int `json:"-"`
+type ResolvedSubscription struct {
+	Subscription
+	APIKeyID int64  `json:"-"`
+	UserID   *int64 `json:"-"`
+	RPMLimit *int   `json:"-"`
+}
+
+type UsageTotals struct {
+	Requests            int64 `json:"requests"`
+	InputTokens         int64 `json:"input_tokens"`
+	OutputTokens        int64 `json:"output_tokens"`
+	CacheReadTokens     int64 `json:"cache_read_tokens"`
+	CacheCreationTokens int64 `json:"cache_creation_tokens"`
+	TotalTokens         int64 `json:"total_tokens"`
 }
 
 type UsageSummary struct {
@@ -92,6 +103,32 @@ type UsageSummary struct {
 	CacheReadTokens24H     int64 `json:"cache_read_tokens_24h"`
 	CacheCreationTokens24H int64 `json:"cache_creation_tokens_24h"`
 	TotalTokens24H         int64 `json:"total_tokens_24h"`
+}
+
+func (t UsageTotals) As24HSummary() UsageSummary {
+	return UsageSummary{
+		Requests24H:            t.Requests,
+		InputTokens24H:         t.InputTokens,
+		OutputTokens24H:        t.OutputTokens,
+		CacheReadTokens24H:     t.CacheReadTokens,
+		CacheCreationTokens24H: t.CacheCreationTokens,
+		TotalTokens24H:         t.TotalTokens,
+	}
+}
+
+type SubscriptionUsageRow struct {
+	SubscriptionID   int64       `json:"subscription_id"`
+	SubscriptionName string      `json:"subscription_name"`
+	Provider         Provider    `json:"provider"`
+	Usage            UsageTotals `json:"usage"`
+}
+
+type UserUsageRow struct {
+	UserID   *int64      `json:"user_id"`
+	Username string      `json:"username"`
+	Role     UserRole    `json:"role,omitempty"`
+	Enabled  bool        `json:"enabled"`
+	Usage    UsageTotals `json:"usage"`
 }
 
 type UserRole string

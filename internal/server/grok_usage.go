@@ -23,8 +23,8 @@ const (
 	grokBillingTimeout      = 20 * time.Second
 )
 
-func (s *Server) refreshAccountUsage(c *gin.Context) {
-	account, ok := s.accountByParam(c)
+func (s *Server) refreshSubscriptionUsage(c *gin.Context) {
+	account, ok := s.subscriptionByParam(c)
 	if !ok {
 		return
 	}
@@ -37,7 +37,7 @@ func (s *Server) refreshAccountUsage(c *gin.Context) {
 		return
 	}
 	var (
-		updated model.Account
+		updated model.Subscription
 		err     error
 	)
 	switch account.Provider {
@@ -53,10 +53,10 @@ func (s *Server) refreshAccountUsage(c *gin.Context) {
 		return
 	}
 	usage, _ := s.repo.UsageSummary(c.Request.Context(), account.ID)
-	c.JSON(http.StatusOK, accountUsageResponse(updated, usage))
+	c.JSON(http.StatusOK, subscriptionUsageResponse(updated, usage))
 }
 
-func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (model.Account, error) {
+func (s *Server) refreshGrokQuota(ctx context.Context, account model.Subscription) (model.Subscription, error) {
 	if account.Provider != model.ProviderGrok || account.AuthType != "oauth" {
 		return account, errors.New("account is not a Grok OAuth account")
 	}
@@ -81,7 +81,7 @@ func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (m
 			credentials.UserID = profile.UserID
 			credentials.Email = profile.Email
 			profileTier = profile.SubscriptionTier
-			if err := s.repo.UpdateAccountCredentials(requestContext, account.ID, credentials, account.TokenExpiresAt); err != nil {
+			if err := s.repo.UpdateSubscriptionCredentials(requestContext, account.ID, credentials, account.TokenExpiresAt); err != nil {
 				return account, s.storeQuotaError(ctx, account, err)
 			}
 		} else if fallback := grokUserID(credentials); fallback != "" {
@@ -111,10 +111,10 @@ func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (m
 	if profileTier != "" {
 		quota = quotaWithGrokTier(quota, profileTier)
 	}
-	if err := s.repo.UpdateAccountQuota(ctx, account.ID, quota, checkedAt, nil); err != nil {
+	if err := s.repo.UpdateSubscriptionQuota(ctx, account.ID, quota, checkedAt, nil); err != nil {
 		return account, err
 	}
-	return s.repo.GetAccount(ctx, account.ID)
+	return s.repo.GetSubscription(ctx, account.ID)
 }
 
 type grokUserProfile struct {
@@ -123,12 +123,12 @@ type grokUserProfile struct {
 	SubscriptionTier string `json:"subscriptionTier"`
 }
 
-func (s *Server) fetchGrokUser(ctx context.Context, account model.Account, credentials model.Credentials) (grokUserProfile, error) {
+func (s *Server) fetchGrokUser(ctx context.Context, account model.Subscription, credentials model.Credentials) (grokUserProfile, error) {
 	endpoint, err := grokUserEndpoint(s.cfg.Providers.GrokBilling)
 	if err != nil {
 		return grokUserProfile{}, err
 	}
-	client, err := s.clientForAccount(account)
+	client, err := s.clientForSubscription(account)
 	if err != nil {
 		return grokUserProfile{}, err
 	}
@@ -196,17 +196,17 @@ func quotaWithGrokTier(quota json.RawMessage, tier string) json.RawMessage {
 	return encoded
 }
 
-func (s *Server) storeQuotaError(ctx context.Context, account model.Account, cause error) error {
+func (s *Server) storeQuotaError(ctx context.Context, account model.Subscription, cause error) error {
 	message := strings.TrimSpace(cause.Error())
 	if len(message) > 240 {
 		message = message[:240]
 	}
-	_ = s.repo.UpdateAccountQuotaError(ctx, account.ID, message)
+	_ = s.repo.UpdateSubscriptionQuotaError(ctx, account.ID, message)
 	return errors.New(message)
 }
 
-func (s *Server) fetchGrokBilling(ctx context.Context, account model.Account, credentials model.Credentials) ([]byte, int, error) {
-	client, err := s.clientForAccount(account)
+func (s *Server) fetchGrokBilling(ctx context.Context, account model.Subscription, credentials model.Credentials) ([]byte, int, error) {
+	client, err := s.clientForSubscription(account)
 	if err != nil {
 		return nil, 0, err
 	}

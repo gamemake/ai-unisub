@@ -61,7 +61,7 @@ func (s *Server) changePassword(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-type createAccountRequest struct {
+type createSubscriptionRequest struct {
 	Name                           string            `json:"name"`
 	Provider                       model.Provider    `json:"provider"`
 	AuthType                       string            `json:"auth_type"`
@@ -73,8 +73,8 @@ type createAccountRequest struct {
 	TokenExpiresAt                 *time.Time        `json:"token_expires_at"`
 }
 
-func (s *Server) createAccount(c *gin.Context) {
-	var request createAccountRequest
+func (s *Server) createSubscription(c *gin.Context) {
+	var request createSubscriptionRequest
 	if c.ShouldBindJSON(&request) != nil || strings.TrimSpace(request.Name) == "" || !request.Provider.Valid() {
 		apiError(c, 400, "invalid_request", "name and a valid provider are required")
 		return
@@ -107,56 +107,55 @@ func (s *Server) createAccount(c *gin.Context) {
 		apiError(c, 400, "invalid_request", err.Error())
 		return
 	}
-	userID := userFromContext(c).ID
-	account, err := s.repo.CreateAccount(c.Request.Context(), repository.CreateAccountParams{
+	account, err := s.repo.CreateSubscription(c.Request.Context(), repository.CreateSubscriptionParams{
 		Name: strings.TrimSpace(request.Name), Provider: request.Provider, AuthType: request.AuthType,
 		Credentials: request.Credentials, Metadata: request.Metadata, ConcurrencyLimit: request.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
-		TokenExpiresAt: request.TokenExpiresAt, CreatedByUserID: &userID,
+		TokenExpiresAt: request.TokenExpiresAt,
 	})
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not create account")
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"account": account})
+	c.JSON(http.StatusCreated, gin.H{"subscription": account})
 }
 
-func (s *Server) listAccounts(c *gin.Context) {
-	accounts, err := s.repo.ListAccounts(c.Request.Context())
+func (s *Server) listSubscriptions(c *gin.Context) {
+	accounts, err := s.repo.ListSubscriptions(c.Request.Context())
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not list accounts")
 		return
 	}
 	if accounts == nil {
-		accounts = []model.Account{}
+		accounts = []model.Subscription{}
 	}
 	c.JSON(200, gin.H{"data": accounts})
 }
 
-func (s *Server) getAccount(c *gin.Context) {
-	account, ok := s.accountByParam(c)
+func (s *Server) getSubscription(c *gin.Context) {
+	account, ok := s.subscriptionByParam(c)
 	if !ok {
 		return
 	}
 	usage, _ := s.repo.UsageSummary(c.Request.Context(), account.ID)
-	c.JSON(200, gin.H{"account": accountWithCredentials(account), "local_usage": usage})
+	c.JSON(200, gin.H{"subscription": subscriptionWithCredentials(account), "local_usage": usage})
 }
 
-type updateAccountRequest struct {
-	Name                           string  `json:"name"`
-	Enabled                        bool    `json:"enabled"`
-	ConcurrencyLimit               int     `json:"concurrency_limit"`
+type updateSubscriptionRequest struct {
+	Name                           string             `json:"name"`
+	Enabled                        bool               `json:"enabled"`
+	ConcurrencyLimit               int                `json:"concurrency_limit"`
 	ConcurrencyQueueTimeoutSeconds int                `json:"concurrency_queue_timeout_seconds"`
 	ProxyURL                       *string            `json:"proxy_url"`
 	Credentials                    *model.Credentials `json:"credentials"`
 }
 
-func (s *Server) updateAccount(c *gin.Context) {
+func (s *Server) updateSubscription(c *gin.Context) {
 	id, ok := idParam(c)
 	if !ok {
 		return
 	}
-	var request updateAccountRequest
+	var request updateSubscriptionRequest
 	if c.ShouldBindJSON(&request) != nil || strings.TrimSpace(request.Name) == "" {
 		apiError(c, 400, "invalid_request", "name is required")
 		return
@@ -178,7 +177,7 @@ func (s *Server) updateAccount(c *gin.Context) {
 		}
 		proxyURL = &normalized
 	}
-	account, err := s.repo.UpdateAccount(c.Request.Context(), id, repository.UpdateAccountParams{
+	account, err := s.repo.UpdateSubscription(c.Request.Context(), id, repository.UpdateSubscriptionParams{
 		Name: strings.TrimSpace(request.Name), Enabled: request.Enabled, ConcurrencyLimit: request.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
 	})
@@ -195,38 +194,38 @@ func (s *Server) updateAccount(c *gin.Context) {
 			apiError(c, 400, "invalid_request", "Codex OAuth credentials require chatgpt_account_id")
 			return
 		}
-		if err := s.repo.UpdateAccountCredentials(c.Request.Context(), id, *request.Credentials, account.TokenExpiresAt); err != nil {
+		if err := s.repo.UpdateSubscriptionCredentials(c.Request.Context(), id, *request.Credentials, account.TokenExpiresAt); err != nil {
 			handleRepoError(c, err)
 			return
 		}
-		account, err = s.repo.GetAccount(c.Request.Context(), id)
+		account, err = s.repo.GetSubscription(c.Request.Context(), id)
 		if err != nil {
 			handleRepoError(c, err)
 			return
 		}
 	}
 	if proxyURL != nil {
-		s.closeAccountClient(id)
+		s.closeSubscriptionClient(id)
 	}
 	// Concurrency capacity is sticky on the in-memory channel; rebuild on every settings update.
-	s.resetAccountLimiter(id)
-	c.JSON(http.StatusOK, gin.H{"account": accountWithCredentials(account)})
+	s.resetSubscriptionLimiter(id)
+	c.JSON(http.StatusOK, gin.H{"subscription": subscriptionWithCredentials(account)})
 }
 
-func (s *Server) deleteAccount(c *gin.Context) {
+func (s *Server) deleteSubscription(c *gin.Context) {
 	id, ok := idParam(c)
 	if !ok {
 		return
 	}
-	if err := s.repo.DeleteAccount(c.Request.Context(), id); err != nil {
+	if err := s.repo.DeleteSubscription(c.Request.Context(), id); err != nil {
 		handleRepoError(c, err)
 		return
 	}
-	s.forgetAccountRuntime(id)
+	s.forgetSubscriptionRuntime(id)
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) updateAccountProxy(c *gin.Context) {
+func (s *Server) updateSubscriptionProxy(c *gin.Context) {
 	id, ok := idParam(c)
 	if !ok {
 		return
@@ -243,11 +242,11 @@ func (s *Server) updateAccountProxy(c *gin.Context) {
 		apiError(c, 400, "invalid_request", err.Error())
 		return
 	}
-	if err := s.repo.SetAccountProxy(c.Request.Context(), id, proxyURL); err != nil {
+	if err := s.repo.SetSubscriptionProxy(c.Request.Context(), id, proxyURL); err != nil {
 		handleRepoError(c, err)
 		return
 	}
-	s.closeAccountClient(id)
+	s.closeSubscriptionClient(id)
 	c.Status(http.StatusNoContent)
 }
 
@@ -288,23 +287,23 @@ func validateConcurrencyLimit(limit int) error {
 	return nil
 }
 
-func (s *Server) enableAccount(c *gin.Context)  { s.setEnabled(c, true) }
-func (s *Server) disableAccount(c *gin.Context) { s.setEnabled(c, false) }
+func (s *Server) enableSubscription(c *gin.Context)  { s.setEnabled(c, true) }
+func (s *Server) disableSubscription(c *gin.Context) { s.setEnabled(c, false) }
 
 func (s *Server) setEnabled(c *gin.Context, enabled bool) {
 	id, ok := idParam(c)
 	if !ok {
 		return
 	}
-	if err := s.repo.SetAccountEnabled(c.Request.Context(), id, enabled); err != nil {
+	if err := s.repo.SetSubscriptionEnabled(c.Request.Context(), id, enabled); err != nil {
 		handleRepoError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
 }
 
-func (s *Server) accountUsage(c *gin.Context) {
-	account, ok := s.accountByParam(c)
+func (s *Server) subscriptionUsage(c *gin.Context) {
+	account, ok := s.subscriptionByParam(c)
 	if !ok {
 		return
 	}
@@ -313,12 +312,12 @@ func (s *Server) accountUsage(c *gin.Context) {
 		apiError(c, 500, "internal_error", "could not query usage")
 		return
 	}
-	c.JSON(200, accountUsageResponse(account, usage))
+	c.JSON(200, subscriptionUsageResponse(account, usage))
 }
 
-func accountUsageResponse(account model.Account, usage model.UsageSummary) gin.H {
+func subscriptionUsageResponse(account model.Subscription, usage model.UsageSummary) gin.H {
 	response := gin.H{
-		"account_id": account.ID, "provider": account.Provider, "status": "unknown",
+		"subscription_id": account.ID, "provider": account.Provider, "status": "unknown",
 		"subscription_tier": "", "windows": []any{}, "request_quota": nil, "token_quota": nil, "credit_balance": nil,
 		"local_usage": usage, "source": "unavailable", "checked_at": account.QuotaCheckedAt,
 		"stale": true, "error": account.QuotaError,
@@ -355,7 +354,7 @@ func accountUsageResponse(account model.Account, usage model.UsageSummary) gin.H
 }
 
 func (s *Server) usageSummary(c *gin.Context) {
-	accounts, err := s.repo.ListAccounts(c.Request.Context())
+	accounts, err := s.repo.ListSubscriptions(c.Request.Context())
 	if err != nil {
 		apiError(c, 500, "internal_error", "could not query usage")
 		return
@@ -363,20 +362,75 @@ func (s *Server) usageSummary(c *gin.Context) {
 	data := make([]gin.H, 0, len(accounts))
 	for _, account := range accounts {
 		usage, _ := s.repo.UsageSummary(c.Request.Context(), account.ID)
-		data = append(data, gin.H{"account_id": account.ID, "provider": account.Provider, "name": account.Name, "local_usage": usage})
+		data = append(data, gin.H{"subscription_id": account.ID, "provider": account.Provider, "name": account.Name, "local_usage": usage})
 	}
 	c.JSON(200, gin.H{"data": data})
 }
 
-func (s *Server) accountByParam(c *gin.Context) (model.Account, bool) {
+func (s *Server) usageBySubscription(c *gin.Context) {
+	if !requireRole(c, model.RoleAdmin) {
+		return
+	}
+	since, until, err := repository.ResolveUsageRange(time.Now(), time.Local, c.Query("range"), c.Query("from"), c.Query("to"))
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	rows, totals, truncated, err := s.repo.UsageBySubscription(c.Request.Context(), since, until, time.Local)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "internal_error", "could not query usage")
+		return
+	}
+	if rows == nil {
+		rows = []model.SubscriptionUsageRow{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"from": since.UTC(), "to": until.UTC(), "truncated": truncated,
+		"totals": totals, "data": rows,
+	})
+}
+
+func (s *Server) usageByUser(c *gin.Context) {
+	if !requireRole(c, model.RoleAdmin) {
+		return
+	}
+	since, until, err := repository.ResolveUsageRange(time.Now(), time.Local, c.Query("range"), c.Query("from"), c.Query("to"))
+	if err != nil {
+		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	var subscriptionID *int64
+	if raw := strings.TrimSpace(c.Query("subscription_id")); raw != "" {
+		id, parseErr := strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil || id <= 0 {
+			apiError(c, http.StatusBadRequest, "invalid_request", "invalid subscription_id")
+			return
+		}
+		subscriptionID = &id
+	}
+	rows, totals, truncated, err := s.repo.UsageByUser(c.Request.Context(), since, until, time.Local, subscriptionID)
+	if err != nil {
+		apiError(c, http.StatusInternalServerError, "internal_error", "could not query usage")
+		return
+	}
+	if rows == nil {
+		rows = []model.UserUsageRow{}
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"from": since.UTC(), "to": until.UTC(), "truncated": truncated,
+		"totals": totals, "data": rows,
+	})
+}
+
+func (s *Server) subscriptionByParam(c *gin.Context) (model.Subscription, bool) {
 	id, ok := idParam(c)
 	if !ok {
-		return model.Account{}, false
+		return model.Subscription{}, false
 	}
-	account, err := s.repo.GetAccount(c.Request.Context(), id)
+	account, err := s.repo.GetSubscription(c.Request.Context(), id)
 	if err != nil {
 		handleRepoError(c, err)
-		return model.Account{}, false
+		return model.Subscription{}, false
 	}
 	return account, true
 }
@@ -390,7 +444,7 @@ func idParam(c *gin.Context) (int64, bool) {
 	return id, true
 }
 
-func accountWithCredentials(account model.Account) model.Account {
+func subscriptionWithCredentials(account model.Subscription) model.Subscription {
 	if len(account.CredentialsJSON) > 0 && json.Valid(account.CredentialsJSON) {
 		account.Credentials = json.RawMessage(account.CredentialsJSON)
 	}

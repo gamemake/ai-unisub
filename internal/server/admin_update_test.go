@@ -14,9 +14,9 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 )
 
-func TestUpdateAccountAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
+func TestUpdateSubscriptionAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "grok-edit", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
@@ -30,7 +30,7 @@ func TestUpdateAccountAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 	}
 
 	body := `{"name":"grok-edited","enabled":false,"concurrency_limit":3,"concurrency_queue_timeout_seconds":12,"proxy_url":"http://127.0.0.1:9090"}`
-	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/subscriptions/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -39,22 +39,22 @@ func TestUpdateAccountAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var response struct {
-		Account model.Account `json:"account"`
+		Subscription model.Subscription `json:"subscription"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Account.Name != "grok-edited" || response.Account.Enabled || response.Account.ConcurrencyLimit != 3 {
-		t.Fatalf("account = %+v", response.Account)
+	if response.Subscription.Name != "grok-edited" || response.Subscription.Enabled || response.Subscription.ConcurrencyLimit != 3 {
+		t.Fatalf("account = %+v", response.Subscription)
 	}
-	if response.Account.ConcurrencyQueueTimeoutSeconds != 12 {
-		t.Fatalf("limits = %+v", response.Account)
+	if response.Subscription.ConcurrencyQueueTimeoutSeconds != 12 {
+		t.Fatalf("limits = %+v", response.Subscription)
 	}
-	if !response.Account.ProxyConfigured || stringsContainsProxySecret(recorder.Body.Bytes()) {
+	if !response.Subscription.ProxyConfigured || stringsContainsProxySecret(recorder.Body.Bytes()) {
 		t.Fatalf("proxy response = %s", recorder.Body.String())
 	}
 
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,9 +63,9 @@ func TestUpdateAccountAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 	}
 }
 
-func TestUpdateAccountAPIKeepsProxyWhenOmitted(t *testing.T) {
+func TestUpdateSubscriptionAPIKeepsProxyWhenOmitted(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "keep-proxy", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 		ProxyURL:    "socks5://127.0.0.1:1080",
@@ -78,7 +78,7 @@ func TestUpdateAccountAPIKeepsProxyWhenOmitted(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"keep-proxy","enabled":true,"concurrency_limit":1,"concurrency_queue_timeout_seconds":0}`
-	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/subscriptions/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -86,7 +86,7 @@ func TestUpdateAccountAPIKeepsProxyWhenOmitted(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil || stored.ProxyURL != "socks5://127.0.0.1:1080" {
 		t.Fatalf("stored proxy = %+v err=%v", stored, err)
 	}
@@ -96,9 +96,9 @@ func stringsContainsProxySecret(body []byte) bool {
 	return bytes.Contains(body, []byte("127.0.0.1:9090")) || bytes.Contains(body, []byte("proxy_url"))
 }
 
-func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
+func TestGetSubscriptionReturnsCredentialsJSON(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "show-creds", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "secret-access", RefreshToken: "secret-refresh"},
 	})
@@ -110,7 +110,7 @@ func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	list := httptest.NewRequest(http.MethodGet, "/api/accounts", nil)
+	list := httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil)
 	list.Header.Set("Authorization", "Bearer "+adminToken)
 	listRecorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(listRecorder, list)
@@ -118,7 +118,7 @@ func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
 		t.Fatalf("list leaked credentials: status=%d body=%s", listRecorder.Code, listRecorder.Body.String())
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/accounts/"+strconv.FormatInt(account.ID, 10), nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/subscriptions/"+strconv.FormatInt(account.ID, 10), nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -126,21 +126,21 @@ func TestGetAccountReturnsCredentialsJSON(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 	var response struct {
-		Account struct {
+		Subscription struct {
 			Credentials map[string]string `json:"credentials"`
-		} `json:"account"`
+		} `json:"subscription"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Account.Credentials["access_token"] != "secret-access" || response.Account.Credentials["refresh_token"] != "secret-refresh" {
-		t.Fatalf("credentials = %+v", response.Account.Credentials)
+	if response.Subscription.Credentials["access_token"] != "secret-access" || response.Subscription.Credentials["refresh_token"] != "secret-refresh" {
+		t.Fatalf("credentials = %+v", response.Subscription.Credentials)
 	}
 }
 
-func TestUpdateAccountReplacesCredentialsJSON(t *testing.T) {
+func TestUpdateSubscriptionReplacesCredentialsJSON(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "edit-creds", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "old-token"},
 	})
@@ -152,7 +152,7 @@ func TestUpdateAccountReplacesCredentialsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := `{"name":"edit-creds","enabled":true,"concurrency_limit":1,"concurrency_queue_timeout_seconds":0,"credentials":{"access_token":"new-token","refresh_token":"new-refresh"}}`
-	request := httptest.NewRequest(http.MethodPut, "/api/accounts/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
+	request := httptest.NewRequest(http.MethodPut, "/api/subscriptions/"+strconv.FormatInt(account.ID, 10), bytes.NewBufferString(body))
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	request.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
@@ -160,7 +160,7 @@ func TestUpdateAccountReplacesCredentialsJSON(t *testing.T) {
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

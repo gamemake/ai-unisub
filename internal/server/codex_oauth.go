@@ -35,7 +35,7 @@ func (s *Server) exchangeCodexCode(ctx context.Context, flow *pkceOAuthFlow, cod
 	return credentials, tokenExpiryFromResponse(token.ExpiresIn, token.AccessToken), grokOAuthErrorResponse{}, nil
 }
 
-func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.Account, credentials model.Credentials, force bool) (model.Credentials, error) {
+func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
 	if account.Provider != model.ProviderCodex || account.AuthType != "oauth" {
 		return credentials, nil
 	}
@@ -48,7 +48,7 @@ func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.A
 	lock.Lock()
 	defer lock.Unlock()
 
-	latest, err := s.repo.GetAccount(ctx, account.ID)
+	latest, err := s.repo.GetSubscription(ctx, account.ID)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -65,7 +65,7 @@ func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.A
 	if credentials.RefreshToken == "" {
 		return model.Credentials{}, errors.New("Codex OAuth token expired and no refresh token is available")
 	}
-	client, err := s.clientForAccount(latest)
+	client, err := s.clientForSubscription(latest)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -100,7 +100,7 @@ func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.A
 		refreshed.Email = credentials.Email
 	}
 	expiresAt := tokenExpiryFromResponse(token.ExpiresIn, token.AccessToken)
-	if err := s.repo.UpdateAccountCredentials(ctx, account.ID, refreshed, expiresAt); err != nil {
+	if err := s.repo.UpdateSubscriptionCredentials(ctx, account.ID, refreshed, expiresAt); err != nil {
 		return model.Credentials{}, err
 	}
 	return refreshed, nil

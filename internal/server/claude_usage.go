@@ -19,7 +19,7 @@ const (
 	claudeUsageTimeout      = 20 * time.Second
 )
 
-func (s *Server) refreshClaudeQuota(ctx context.Context, account model.Account) (model.Account, error) {
+func (s *Server) refreshClaudeQuota(ctx context.Context, account model.Subscription) (model.Subscription, error) {
 	if account.Provider != model.ProviderClaude || account.AuthType != "oauth" {
 		return account, errors.New("account is not a Claude OAuth account")
 	}
@@ -55,14 +55,14 @@ func (s *Server) refreshClaudeQuota(ctx context.Context, account model.Account) 
 	if err != nil {
 		return account, s.storeQuotaError(ctx, account, err)
 	}
-	if err := s.repo.UpdateAccountQuota(ctx, account.ID, quota, checkedAt, nil); err != nil {
+	if err := s.repo.UpdateSubscriptionQuota(ctx, account.ID, quota, checkedAt, nil); err != nil {
 		return account, err
 	}
-	return s.repo.GetAccount(ctx, account.ID)
+	return s.repo.GetSubscription(ctx, account.ID)
 }
 
-func (s *Server) fetchClaudeUsage(ctx context.Context, account model.Account, credentials model.Credentials) ([]byte, int, error) {
-	client, err := s.clientForAccount(account)
+func (s *Server) fetchClaudeUsage(ctx context.Context, account model.Subscription, credentials model.Credentials) ([]byte, int, error) {
+	client, err := s.clientForSubscription(account)
 	if err != nil {
 		return nil, 0, err
 	}

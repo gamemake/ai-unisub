@@ -22,7 +22,7 @@ func testRepository(t *testing.T) *Repository {
 	return repo
 }
 
-func TestAccountAPIKeyLifecycle(t *testing.T) {
+func TestSubscriptionAPIKeyLifecycle(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
 	created, err := repo.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
@@ -33,7 +33,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "codex-one", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-secret", ChatGPTAccountID: "acct-1"},
 		ProxyURL:    "socks5://proxy-user:proxy-pass@127.0.0.1:1080", ConcurrencyQueueTimeoutSeconds: 15,
@@ -41,14 +41,14 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	createdKey, key, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "codex-one"})
+	createdKey, key, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: account.ID, Name: "codex-one"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key == "" || createdKey.KeyPrefix == "" || createdKey.AccountID != account.ID || createdKey.APIKey != key {
+	if key == "" || createdKey.KeyPrefix == "" || createdKey.SubscriptionID != account.ID || createdKey.APIKey != key {
 		t.Fatal("account key was not returned")
 	}
-	account, err = repo.GetAccount(ctx, account.ID)
+	account, err = repo.GetSubscription(ctx, account.ID)
 	if err != nil || account.APIKeyCount != 1 {
 		t.Fatalf("key count = %+v err=%v", account, err)
 	}
@@ -57,7 +57,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	}
 	var storedCredentials []byte
 	var storedProxy string
-	if err := repo.db.QueryRowContext(ctx, `SELECT credentials_json, proxy_url FROM accounts WHERE id=?`, account.ID).Scan(&storedCredentials, &storedProxy); err != nil {
+	if err := repo.db.QueryRowContext(ctx, `SELECT credentials_json, proxy_url FROM subscriptions WHERE id=?`, account.ID).Scan(&storedCredentials, &storedProxy); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(storedCredentials, []byte("upstream-secret")) || storedProxy != "socks5://proxy-user:proxy-pass@127.0.0.1:1080" {
@@ -70,18 +70,18 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if err != nil || resolved.ID != account.ID {
 		t.Fatalf("resolve: account=%+v err=%v", resolved, err)
 	}
-	credentials, err := repo.Credentials(ctx, resolved.Account)
+	credentials, err := repo.Credentials(ctx, resolved.Subscription)
 	if err != nil || credentials.AccessToken != "upstream-secret" {
 		t.Fatalf("credentials: %+v err=%v", credentials, err)
 	}
-	proxyURL, err := repo.ProxyURL(resolved.Account)
+	proxyURL, err := repo.ProxyURL(resolved.Subscription)
 	if err != nil || proxyURL != "socks5://proxy-user:proxy-pass@127.0.0.1:1080" {
 		t.Fatalf("proxy URL: %q err=%v", proxyURL, err)
 	}
-	if err := repo.SetAccountProxy(ctx, account.ID, "http://127.0.0.1:3128"); err != nil {
+	if err := repo.SetSubscriptionProxy(ctx, account.ID, "http://127.0.0.1:3128"); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := repo.GetAccount(ctx, account.ID)
+	updated, err := repo.GetSubscription(ctx, account.ID)
 	if err != nil || !updated.ProxyConfigured {
 		t.Fatalf("updated proxy state: %+v err=%v", updated, err)
 	}
@@ -89,17 +89,17 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if err != nil || proxyURL != "http://127.0.0.1:3128" {
 		t.Fatalf("updated proxy URL: %q err=%v", proxyURL, err)
 	}
-	if err := repo.SetAccountProxy(ctx, account.ID, ""); err != nil {
+	if err := repo.SetSubscriptionProxy(ctx, account.ID, ""); err != nil {
 		t.Fatal(err)
 	}
-	updated, err = repo.GetAccount(ctx, account.ID)
+	updated, err = repo.GetSubscription(ctx, account.ID)
 	if err != nil || updated.ProxyConfigured {
 		t.Fatalf("cleared proxy state: %+v err=%v", updated, err)
 	}
 	if err := repo.SetConcurrencyQueueTimeout(ctx, account.ID, 25); err != nil {
 		t.Fatal(err)
 	}
-	updated, err = repo.GetAccount(ctx, account.ID)
+	updated, err = repo.GetSubscription(ctx, account.ID)
 	if err != nil || updated.ConcurrencyQueueTimeoutSeconds != 25 {
 		t.Fatalf("updated queue timeout: %+v err=%v", updated, err)
 	}
@@ -114,7 +114,7 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	if _, err := repo.ResolveAPIKey(ctx, newKey); err != nil {
 		t.Fatalf("new key invalid: %v", err)
 	}
-	if err := repo.SetAccountEnabled(ctx, account.ID, false); err != nil {
+	if err := repo.SetSubscriptionEnabled(ctx, account.ID, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.ResolveAPIKey(ctx, newKey); !errors.Is(err, ErrUnauthorized) {
@@ -122,10 +122,10 @@ func TestAccountAPIKeyLifecycle(t *testing.T) {
 	}
 }
 
-func TestUpdateAccountSettings(t *testing.T) {
+func TestUpdateSubscriptionSettings(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "edit-me", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials:      model.Credentials{AccessToken: "token"},
 		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
@@ -134,7 +134,7 @@ func TestUpdateAccountSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	cleared := ""
-	updated, err := repo.UpdateAccount(ctx, account.ID, UpdateAccountParams{
+	updated, err := repo.UpdateSubscription(ctx, account.ID, UpdateSubscriptionParams{
 		Name: "edited", Enabled: false, ConcurrencyLimit: 4,
 		ConcurrencyQueueTimeoutSeconds: 20, ProxyURL: &cleared,
 	})
@@ -147,7 +147,7 @@ func TestUpdateAccountSettings(t *testing.T) {
 	if updated.ProxyConfigured {
 		t.Fatalf("proxy was not cleared: %+v", updated)
 	}
-	kept, err := repo.UpdateAccount(ctx, account.ID, UpdateAccountParams{
+	kept, err := repo.UpdateSubscription(ctx, account.ID, UpdateSubscriptionParams{
 		Name: "edited-again", Enabled: true, ConcurrencyLimit: 2, ConcurrencyQueueTimeoutSeconds: 5,
 	})
 	if err != nil {
@@ -161,21 +161,21 @@ func TestUpdateAccountSettings(t *testing.T) {
 	}
 }
 
-func TestMultipleAPIKeysCanBindToOneAccount(t *testing.T) {
+func TestMultipleAPIKeysCanBindToOneSubscription(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "shared", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, firstPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "first"})
+	first, firstPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: account.ID, Name: "first"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, secondPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "second"})
+	second, secondPlain, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: account.ID, Name: "second"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestMultipleAPIKeysCanBindToOneAccount(t *testing.T) {
 	if err != nil || len(listed) != 2 {
 		t.Fatalf("list keys = %+v err=%v", listed, err)
 	}
-	account, err = repo.GetAccount(ctx, account.ID)
+	account, err = repo.GetSubscription(ctx, account.ID)
 	if err != nil || account.APIKeyCount != 2 {
 		t.Fatalf("key count = %+v err=%v", account, err)
 	}

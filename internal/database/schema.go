@@ -11,7 +11,7 @@ func currentSchema(d Dialect) []string {
 	big := d.BigIntType()
 	return []string{
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`,
-		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS accounts (
+		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS subscriptions (
 			id %s,
 			name TEXT NOT NULL,
 			provider TEXT NOT NULL CHECK (provider IN ('claude','codex','grok')),
@@ -30,13 +30,13 @@ func currentSchema(d Dialect) []string {
 			quota_error TEXT,
 			last_used_at TEXT,
 			last_error TEXT,
-			created_by_user_id %s,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-		)`, pk, blob, big),
+		)`, pk, blob),
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS api_keys (
 			id %s,
-			account_id %s NOT NULL,
+			subscription_id %s NOT NULL,
+			user_id %s,
 			name TEXT NOT NULL,
 			key_hash %s NOT NULL UNIQUE,
 			key_plaintext TEXT,
@@ -46,9 +46,8 @@ func currentSchema(d Dialect) []string {
 			concurrency INTEGER,
 			expires_at TEXT,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
-		)`, pk, big, blob),
-		`CREATE INDEX IF NOT EXISTS idx_api_keys_account ON api_keys(account_id)`,
+			FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
+		)`, pk, big, big, blob),
 		`CREATE TABLE IF NOT EXISTS admin (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			username TEXT NOT NULL UNIQUE,
@@ -76,8 +75,9 @@ func RequestLogTableSQL(d Dialect, table string) (string, error) {
 	big := d.BigIntType()
 	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (
 		id %s,
-		account_id %s,
+		subscription_id %s,
 		api_key_id %s,
+		user_id %s,
 		provider TEXT,
 		method TEXT NOT NULL,
 		path TEXT NOT NULL,
@@ -101,12 +101,13 @@ func RequestLogTableSQL(d Dialect, table string) (string, error) {
 		response_body TEXT,
 		request_truncated INTEGER NOT NULL DEFAULT 0,
 		response_truncated INTEGER NOT NULL DEFAULT 0
-	)`, table, d.SerialPrimaryKey(), big, big, big, big, big, big, big, big), nil
+	)`, table, d.SerialPrimaryKey(), big, big, big, big, big, big, big, big, big), nil
 }
 
 func RequestLogColumnDefs(d Dialect) []struct{ Name, Definition string } {
 	big := d.BigIntType()
 	return []struct{ Name, Definition string }{
+		{"user_id", big},
 		{"query", "TEXT"},
 		{"client_ip", "TEXT"},
 		{"model", "TEXT"},

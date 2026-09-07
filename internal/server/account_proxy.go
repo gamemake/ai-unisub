@@ -46,8 +46,8 @@ func normalizeProxyURL(raw string) (string, error) {
 	return parsed.String(), nil
 }
 
-func (s *Server) clientForAccount(account model.Account) (*http.Client, error) {
-	if value, ok := s.accountClients.Load(account.ID); ok {
+func (s *Server) clientForSubscription(account model.Subscription) (*http.Client, error) {
+	if value, ok := s.subscriptionClients.Load(account.ID); ok {
 		return value.(*http.Client), nil
 	}
 	proxyURL := ""
@@ -62,7 +62,7 @@ func (s *Server) clientForAccount(account model.Account) (*http.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	value, loaded := s.accountClients.LoadOrStore(account.ID, client)
+	value, loaded := s.subscriptionClients.LoadOrStore(account.ID, client)
 	if loaded {
 		if transport, ok := client.Transport.(*http.Transport); ok {
 			transport.CloseIdleConnections()
@@ -107,8 +107,8 @@ func newClientForProxy(raw string) (*http.Client, error) {
 	}, nil
 }
 
-func (s *Server) closeAccountClient(accountID int64) {
-	value, ok := s.accountClients.LoadAndDelete(accountID)
+func (s *Server) closeSubscriptionClient(accountID int64) {
+	value, ok := s.subscriptionClients.LoadAndDelete(accountID)
 	if !ok {
 		return
 	}

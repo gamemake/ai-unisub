@@ -17,7 +17,7 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 )
 
-func TestGrokDeviceOAuthCreatesBoundAccount(t *testing.T) {
+func TestGrokDeviceOAuthCreatesBoundSubscription(t *testing.T) {
 	var tokenPolls atomic.Int32
 	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
@@ -99,20 +99,20 @@ func TestGrokDeviceOAuthCreatesBoundAccount(t *testing.T) {
 	}
 	var completed struct {
 		Status  string `json:"status"`
-		Account struct {
+		Subscription struct {
 			ID int64 `json:"id"`
-		} `json:"account"`
+		} `json:"subscription"`
 	}
 	if err := json.Unmarshal(complete.Body.Bytes(), &completed); err != nil {
 		t.Fatal(err)
 	}
-	if completed.Status != "complete" || completed.Account.ID == 0 {
+	if completed.Status != "complete" || completed.Subscription.ID == 0 {
 		t.Fatalf("complete body = %s", complete.Body.String())
 	}
 	if strings.Contains(complete.Body.String(), `"api_key"`) {
 		t.Fatal("account creation still minted an API key")
 	}
-	accounts, err := repo.ListAccounts(context.Background())
+	accounts, err := repo.ListSubscriptions(context.Background())
 	if err != nil || len(accounts) != 1 {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
@@ -161,7 +161,7 @@ func TestExpiredGrokOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	application.cfg.GrokOAuth.Issuer = oauth.URL
 	application.cfg.GrokOAuth.ClientID = "test-grok-client"
 	expired := time.Now().Add(-time.Minute)
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "expired-grok", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials:    model.Credentials{AccessToken: "old-access", RefreshToken: "old-refresh", ClientID: "test-grok-client"},
 		TokenExpiresAt: &expired,
@@ -177,7 +177,7 @@ func TestExpiredGrokOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	if !refreshed.Load() {
 		t.Fatal("refresh endpoint was not called")
 	}
-	accounts, err := repo.ListAccounts(context.Background())
+	accounts, err := repo.ListSubscriptions(context.Background())
 	if err != nil || len(accounts) != 1 {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
@@ -233,7 +233,7 @@ func TestGrokOAuthRetriesOnceAfterUpstreamUnauthorized(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.GrokOAuth.Issuer = oauth.URL
 	application.cfg.GrokOAuth.ClientID = "test-grok-client"
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "grok-without-expiry", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "stale-access", RefreshToken: "refresh-token", ClientID: "test-grok-client"},
 	})

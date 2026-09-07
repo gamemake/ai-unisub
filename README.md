@@ -62,7 +62,7 @@ Content-Type: application/json
 创建 Codex 账号并手动导入 Token：
 
 ```http
-POST /api/accounts
+POST /api/subscriptions
 Authorization: Bearer <admin-jwt>
 Content-Type: application/json
 
@@ -156,11 +156,11 @@ GET /api/request-logs
 GET /api/request-logs/:day/:id
 ```
 
-列表支持 `account_id`、`api_key_id`、`provider`、`status`、`q`、`limit`、`offset`。详情接口返回完整 HTTP 文本。控制台「调用记录」页面对应这组接口。
+仅管理员可访问。列表支持 `subscription_id`、`api_key_id`、`provider`、`status`、`q`、`limit`、`offset`。详情接口返回完整 HTTP 文本。控制台「调用记录」页面对应这组接口。
 
-已有账号可通过 `PUT /api/accounts/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
+已有账号可通过 `PUT /api/subscriptions/:id/concurrency-queue` 修改，请求体为 `{"concurrency_queue_timeout_seconds":5}`。
 
-已有账号可通过 `PUT /api/accounts/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
+已有账号可通过 `PUT /api/subscriptions/:id/proxy` 修改代理，请求体为 `{"proxy_url":"http://127.0.0.1:8080"}`；传入空字符串可清除代理。
 
 下游 API Key 与订阅账号是多对一：一个账号可以签发多把 Key，每把 Key 只绑定一个账号。请求鉴权仍使用哈希；明文会保存在数据库中，供管理详情和 CC Switch 导入使用。列表接口不回显明文。管理入口：
 
@@ -183,15 +183,16 @@ POST   /api/users
 PUT    /api/users/:id
 POST   /api/users/:id/password
 DELETE /api/users/:id
-GET    /api/accounts
-GET    /api/accounts/:id
-PUT    /api/accounts/:id
-DELETE /api/accounts/:id
-POST   /api/accounts/:id/enable
-POST   /api/accounts/:id/disable
-GET    /api/accounts/:id/usage
-POST   /api/accounts/:id/usage/refresh
+GET    /api/subscriptions
+GET    /api/subscriptions/:id
+PUT    /api/subscriptions/:id
+DELETE /api/subscriptions/:id
+POST   /api/subscriptions/:id/enable
+POST   /api/subscriptions/:id/disable
+GET    /api/subscriptions/:id/usage
+POST   /api/subscriptions/:id/usage/refresh
 GET    /api/usage/summary
+GET    /api/usage/by-subscription
 POST   /api/providers/grok/oauth/device/start
 POST   /api/providers/grok/oauth/device/poll
 POST   /api/providers/claude/oauth/start

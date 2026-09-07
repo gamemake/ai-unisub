@@ -13,14 +13,14 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
-func TestPostgresAccountAndRequestLogLifecycle(t *testing.T) {
+func TestPostgresSubscriptionAndRequestLogLifecycle(t *testing.T) {
 	repo := testPostgresRepository(t)
 	ctx := context.Background()
 	created, err := repo.BootstrapAdmin(ctx, "admin", "correct horse battery staple")
 	if err != nil || !created {
 		t.Fatalf("bootstrap: created=%v err=%v", created, err)
 	}
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "pg-codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-secret"},
 		ProxyURL:    "socks5://127.0.0.1:1080",
@@ -28,8 +28,8 @@ func TestPostgresAccountAndRequestLogLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, plaintext, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "default"})
-	if err != nil || plaintext == "" || key.AccountID != account.ID {
+	key, plaintext, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: account.ID, Name: "default"})
+	if err != nil || plaintext == "" || key.SubscriptionID != account.ID {
 		t.Fatalf("api key = %+v plaintext=%q err=%v", key, plaintext, err)
 	}
 	resolved, err := repo.ResolveAPIKey(ctx, plaintext)
@@ -38,14 +38,14 @@ func TestPostgresAccountAndRequestLogLifecycle(t *testing.T) {
 	}
 	started := time.Date(2026, 8, 19, 8, 0, 0, 0, time.UTC)
 	if err := repo.RecordRequest(time.UTC, RequestLog{
-		AccountID: &account.ID, APIKeyID: &key.ID, Provider: "codex",
+		SubscriptionID: &account.ID, APIKeyID: &key.ID, Provider: "codex",
 		Method: "POST", Path: "/v1/responses", StatusCode: 200,
 		StartedAt: started, FinishedAt: started.Add(12 * time.Millisecond),
 		Model: "gpt-5",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{AccountID: &account.ID, Limit: 10})
+	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{SubscriptionID: &account.ID, Limit: 10})
 	if err != nil || total != 1 || len(logs) != 1 || logs[0].Path != "/v1/responses" {
 		t.Fatalf("logs=%+v total=%d err=%v", logs, total, err)
 	}

@@ -16,11 +16,15 @@ func TestOpenSQLiteAppliesCurrentSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, table := range []string{"accounts", "api_keys", "users", "admin", "schema_migrations"} {
+	for _, table := range []string{"subscriptions", "api_keys", "users", "admin", "schema_migrations"} {
 		exists, err := db.TableExists(context.Background(), table)
 		if err != nil || !exists {
 			t.Fatalf("table %s exists=%v err=%v", table, exists, err)
 		}
+	}
+	columns, err := db.ColumnNames(context.Background(), "api_keys")
+	if err != nil || !columns["user_id"] {
+		t.Fatalf("api_keys user_id exists=%v err=%v", columns["user_id"], err)
 	}
 	id, err := db.InsertID(context.Background(), `INSERT INTO users(username, password_hash, role) VALUES(?,?,?)`, "alice", "hash", "admin")
 	if err != nil || id == 0 {
@@ -31,7 +35,7 @@ func TestOpenSQLiteAppliesCurrentSchema(t *testing.T) {
 func TestPostgresFreshSchema(t *testing.T) {
 	db := openIsolatedPostgres(t)
 	ctx := context.Background()
-	for _, table := range []string{"accounts", "api_keys", "users", "admin", "schema_migrations"} {
+	for _, table := range []string{"subscriptions", "api_keys", "users", "admin", "schema_migrations"} {
 		exists, err := db.TableExists(ctx, table)
 		if err != nil || !exists {
 			t.Fatalf("table %s exists=%v err=%v", table, exists, err)
@@ -49,7 +53,7 @@ func TestPostgresFreshSchema(t *testing.T) {
 		t.Fatalf("duplicate username error = %v", err)
 	}
 	var versions int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 8 {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations`).Scan(&versions); err != nil || versions != 10 {
 		t.Fatalf("schema versions=%d err=%v", versions, err)
 	}
 }

@@ -55,7 +55,7 @@ func TestRefreshGrokUsageFetchesAndNormalizesCredits(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.GrokBilling = upstream.URL + "/v1/billing?format=credits"
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "grok-usage", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "grok-access-token", RefreshToken: "refresh-token"},
 	})
@@ -66,7 +66,7 @@ func TestRefreshGrokUsageFetchesAndNormalizesCredits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/accounts/"+strconv.FormatInt(account.ID, 10)+"/usage/refresh", nil)
+	request := httptest.NewRequest(http.MethodPost, "/api/subscriptions/"+strconv.FormatInt(account.ID, 10)+"/usage/refresh", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -101,7 +101,7 @@ func TestRefreshGrokUsageFetchesAndNormalizesCredits(t *testing.T) {
 		t.Fatalf("normalized credit balance = %+v", response.CreditBalance)
 	}
 
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestRefreshGrokUsagePreservesLastGoodQuotaOnFailure(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.GrokBilling = upstream.URL + "/v1/billing?format=credits"
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "grok-usage-error", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "grok-access-token"},
 	})
@@ -151,14 +151,14 @@ func TestRefreshGrokUsagePreservesLastGoodQuotaOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	lastGood := json.RawMessage(`{"subscription_tier":"SuperGrok","windows":[{"name":"weekly","remaining_percent":50}]}`)
-	if err := repo.UpdateAccountQuota(context.Background(), account.ID, lastGood, time.Now().Add(-time.Hour), nil); err != nil {
+	if err := repo.UpdateSubscriptionQuota(context.Background(), account.ID, lastGood, time.Now().Add(-time.Hour), nil); err != nil {
 		t.Fatal(err)
 	}
-	account, _ = repo.GetAccount(context.Background(), account.ID)
+	account, _ = repo.GetSubscription(context.Background(), account.ID)
 	if _, err := application.refreshGrokQuota(context.Background(), account); err == nil {
 		t.Fatal("billing failure was accepted")
 	}
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -107,7 +107,7 @@ func TestClaudePKCEOAuthCreatesBoundAccount(t *testing.T) {
 	if !sawJSON.Load() {
 		t.Fatal("Claude token endpoint was not called")
 	}
-	accounts, err := repo.ListAccounts(context.Background())
+	accounts, err := repo.ListSubscriptions(context.Background())
 	if err != nil || len(accounts) != 1 {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
@@ -123,7 +123,7 @@ func TestClaudePKCEOAuthCreatesBoundAccount(t *testing.T) {
 	}
 }
 
-func TestCodexPKCEOAuthExtractsAccountIDFromCallbackURL(t *testing.T) {
+func TestCodexPKCEOAuthExtractsSubscriptionIDFromCallbackURL(t *testing.T) {
 	oauth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
 			t.Fatal(err)
@@ -168,7 +168,7 @@ func TestCodexPKCEOAuthExtractsAccountIDFromCallbackURL(t *testing.T) {
 	if complete.Code != http.StatusCreated {
 		t.Fatalf("exchange status=%d body=%s", complete.Code, complete.Body.String())
 	}
-	accounts, err := repo.ListAccounts(context.Background())
+	accounts, err := repo.ListSubscriptions(context.Background())
 	if err != nil || len(accounts) != 1 {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
@@ -224,7 +224,7 @@ func TestExpiredClaudeOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	application.cfg.ClaudeOAuth.TokenURL = oauth.URL
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	expired := time.Now().Add(-time.Minute)
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "expired-claude", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials:    model.Credentials{AccessToken: "old-access", RefreshToken: "old-refresh", ClientID: "test-claude-client"},
 		TokenExpiresAt: &expired,
@@ -239,7 +239,7 @@ func TestExpiredClaudeOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	if !refreshed.Load() {
 		t.Fatal("Claude refresh endpoint was not called")
 	}
-	accounts, err := repo.ListAccounts(context.Background())
+	accounts, err := repo.ListSubscriptions(context.Background())
 	if err != nil || len(accounts) != 1 {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
@@ -279,7 +279,7 @@ func TestCodexOAuthRetriesOnceAfterUpstreamUnauthorized(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.CodexOAuth.TokenURL = oauth.URL
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "codex-without-expiry", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "stale-codex", RefreshToken: "refresh-token", ChatGPTAccountID: "acct_1"},
 	})

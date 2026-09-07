@@ -56,11 +56,11 @@ docker compose -f docker-compose.yml -f docker-compose.postgres.yml up --build -
 
 ```mermaid
 erDiagram
-    ACCOUNTS ||--o{ API_KEYS : "签发"
-    ACCOUNTS ||--o{ REQUEST_LOGS_DAILY : "产生"
+    SUBSCRIPTIONS ||--o{ API_KEYS : "签发"
+    SUBSCRIPTIONS ||--o{ REQUEST_LOGS_DAILY : "产生"
     API_KEYS ||--o{ REQUEST_LOGS_DAILY : "鉴权"
 
-    ACCOUNTS {
+    SUBSCRIPTIONS {
         integer id PK
         text provider
         blob credentials_json
@@ -69,7 +69,7 @@ erDiagram
     }
     API_KEYS {
         integer id PK
-        integer account_id FK
+        integer subscription_id FK
         blob key_hash UK
         text key_plaintext
         text key_prefix
@@ -84,7 +84,7 @@ erDiagram
 
 核心关系如下：
 
-- 一个账号可以签发多把 API Key，每把 API Key 只属于一个账号。
+- 一个账号可以签发多把 API Key，每把 API Key 只属于一个账号，并记录签发该 Key 的控制台用户。
 - 删除账号时，其 `api_keys` 会通过外键级联删除。
 - 每日请求日志表不声明外键，以便按天独立创建和整表清理；账号或 Key 删除后，历史日志仍可保留。
 - `admin` 是历史兼容表；当前登录用户保存在 `users` 表。
@@ -100,7 +100,7 @@ erDiagram
 | `version` | INTEGER | 主键，迁移版本号 |
 | `applied_at` | TEXT | UTC RFC3339Nano 格式的执行时间 |
 
-### 3.2 `accounts`
+### 3.2 `subscriptions`
 
 保存 Claude、Codex 和 Grok 上游账号及其运行状态。
 
@@ -119,7 +119,6 @@ erDiagram
 | `rate_limit_reset_at` | 上游限流重置时间 |
 | `quota_json`、`quota_checked_at`、`quota_error` | 最近一次额度数据、检查时间和错误信息 |
 | `last_used_at`、`last_error` | 最近使用时间和错误 |
-| `created_by_user_id` | 创建该账号的管理端用户 ID；可空，历史账号为空 |
 | `created_at`、`updated_at` | 创建和更新时间 |
 
 ### 3.3 `api_keys`
@@ -128,7 +127,8 @@ erDiagram
 
 | 字段 | 说明 |
 | --- | --- |
-| `id`、`account_id` | Key ID 和所属账号 ID |
+| `id`、`subscription_id` | Key ID 和所属账号 ID |
+| `user_id` | 签发该 Key 的控制台用户 ID；历史 Key 可为空 |
 | `name` | 展示名称 |
 | `key_hash` | 完整 Key 的 SHA-256，唯一 |
 | `key_plaintext` | 完整明文 Key，供详情查看和 CC Switch 导入 |
@@ -139,7 +139,7 @@ erDiagram
 | `expires_at` | 可选失效时间 |
 | `created_at` | 创建或最近重置时间 |
 
-`account_id` 上有普通索引，但没有唯一约束，因此同一账号可以拥有多把 Key。
+`subscription_id` 上有普通索引，但没有唯一约束，因此同一账号可以拥有多把 Key。
 
 ### 3.4 `users`
 
@@ -170,8 +170,9 @@ request_logs_YYYYMMDD
 | 字段 | SQLite 类型 | PostgreSQL 类型 | 约束/默认值 | 说明 |
 | --- | --- | --- | --- |
 | `id` | INTEGER | BIGSERIAL | 主键，自增 | 当天分表内的日志 ID，不保证跨天唯一 |
-| `account_id` | INTEGER | BIGINT | 可空 | 上游账号 ID；未声明外键 |
+| `subscription_id` | INTEGER | BIGINT | 可空 | 上游账号 ID；未声明外键 |
 | `api_key_id` | INTEGER | BIGINT | 可空 | 下游 API Key ID；未声明外键 |
+| `user_id` | INTEGER | BIGINT | 可空 | API Key 签发用户 ID；调用发生时固化，未声明外键 |
 | `provider` | TEXT | TEXT | 可空 | Provider，例如 `claude`、`codex` 或 `grok` |
 | `method` | TEXT | TEXT | 非空 | HTTP 请求方法 |
 | `path` | TEXT | TEXT | 非空 | 请求路径 |
@@ -196,7 +197,7 @@ request_logs_YYYYMMDD
 | `request_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 请求正文是否被截断：`0` 否，`1` 是 |
 | `response_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 响应正文是否被截断：`0` 否，`1` 是 |
 
-每张分表创建索引 `idx_request_logs_YYYYMMDD_account_started`，索引字段为 `(account_id, started_at DESC)`。
+每张分表创建索引 `idx_request_logs_YYYYMMDD_subscription_started` 和 `idx_request_logs_YYYYMMDD_user_started`，索引字段分别为 `(subscription_id, started_at DESC)` 和 `(user_id, started_at DESC)`。
 
 分表创建前会使用正则 `^request_logs_[0-9]{8}$` 校验表名，避免动态 SQL 表名注入。日志清理按保留天数删除整张过期分表，不逐行删除。
 
@@ -210,19 +211,20 @@ request_logs_YYYYMMDD
 | 2 | 建立后续基础结构的版本标记 |
 | 3 | 将 `concurrency_queue_timeout_ms` 迁移为 `concurrency_queue_timeout_seconds`；毫秒值向上取整，例如 2500 ms 变为 3 秒 |
 | 4 | 将账号凭据、代理地址和 TOTP 字段从旧的“加密字段命名”迁移为当前明文字段命名，并删除 `credential_key_id` |
-| 5 | 重建 `api_keys`，移除 `account_id` 的唯一约束，支持一个账号签发多把 Key |
+| 5 | 重建 `api_keys`，移除订阅外键列上的唯一约束，支持一个订阅签发多把 Key |
 | 6 | 当 `users` 为空时，将旧 `admin` 记录迁移为启用的管理员用户 |
 | 7 | 删除已经由每日请求日志分表取代的旧 `usage_logs` 表 |
-| 9 | 为 `accounts.created_by_user_id` 建立索引；非管理员只能查看自己创建账号下的调用记录 |
+| 9 | 历史版本标记（曾添加创建者字段）；现已由版本 10 取代 |
+| 10 | 将 `accounts` 重命名为 `subscriptions`，`account_id` 重命名为 `subscription_id`，并删除 `created_by_user_id`；调用记录仅管理员可访问 |
+| 11 | 为 `api_keys` 增加可空的 `user_id` 和索引，用于按 API Key 签发用户统计用量 |
 
 此外，启动时还会以幂等方式补齐：
 
-- `accounts.concurrency_queue_timeout_seconds`；
-- `accounts.credentials_json`；
-- `accounts.proxy_url`；
-- `accounts.created_by_user_id`；
+- `subscriptions.concurrency_queue_timeout_seconds`；
+- `subscriptions.credentials_json`；
+- `subscriptions.proxy_url`；
 - `api_keys.key_plaintext`；
-- 每日请求日志后来新增的列（含 `client_ip`）。
+- 每日请求日志后来新增的列（含 `client_ip`、`user_id`）。
 
 注意：`api_keys.key_plaintext` 当前通过列存在性检查补齐，没有独立的 `schema_migrations` 版本记录。
 
@@ -241,8 +243,8 @@ request_logs_YYYYMMDD
 
 以下内容以明文保存在数据库中：
 
-- `accounts.credentials_json`；
-- `accounts.proxy_url`；
+- `subscriptions.credentials_json`；
+- `subscriptions.proxy_url`；
 - `api_keys.key_plaintext`。
 
 因此必须限制数据库文件、宿主机和备份文件的访问权限。管理端密码仅保存 bcrypt 哈希；API Key 鉴权仍使用哈希比对，但数据库中的明文副本同样需要按凭据保护。

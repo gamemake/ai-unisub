@@ -38,7 +38,7 @@ func TestNormalizeProxyURL(t *testing.T) {
 	}
 }
 
-func TestDirectAccountClientIgnoresEnvironmentProxy(t *testing.T) {
+func TestDirectSubscriptionClientIgnoresEnvironmentProxy(t *testing.T) {
 	t.Setenv("HTTP_PROXY", "http://127.0.0.1:9")
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:9")
 	t.Setenv("http_proxy", "http://127.0.0.1:9")
@@ -60,20 +60,20 @@ func TestDirectAccountClientIgnoresEnvironmentProxy(t *testing.T) {
 	}
 }
 
-func TestHTTPClientsAreIsolatedByAccount(t *testing.T) {
+func TestHTTPClientsAreIsolatedBySubscription(t *testing.T) {
 	application, _ := testServer(t, "https://example.invalid/responses")
-	first := model.Account{ID: 101, Provider: model.ProviderCodex}
-	second := model.Account{ID: 202, Provider: model.ProviderCodex}
+	first := model.Subscription{ID: 101, Provider: model.ProviderCodex}
+	second := model.Subscription{ID: 202, Provider: model.ProviderCodex}
 
-	firstClient, err := application.clientForAccount(first)
+	firstClient, err := application.clientForSubscription(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	firstAgain, err := application.clientForAccount(first)
+	firstAgain, err := application.clientForSubscription(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondClient, err := application.clientForAccount(second)
+	secondClient, err := application.clientForSubscription(second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestHTTPClientsAreIsolatedByAccount(t *testing.T) {
 	}
 }
 
-func TestAccountHTTPProxy(t *testing.T) {
+func TestSubscriptionHTTPProxy(t *testing.T) {
 	requestBody := []byte(`{"model":"gpt-test","input":"hello"}`)
 	proxyReached := false
 	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func TestAccountHTTPProxy(t *testing.T) {
 	defer proxyServer.Close()
 
 	application, repo := testServer(t, "http://upstream.example/responses")
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "proxied-codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 		ProxyURL:    proxyServer.URL,

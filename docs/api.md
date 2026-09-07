@@ -18,7 +18,7 @@
 3. [管理 API 鉴权](#3-管理-api-鉴权)
 4. [认证与当前用户](#4-认证与当前用户)
 5. [用户管理](#5-用户管理)
-6. [账号管理](#6-账号管理)
+6. [订阅管理](#6-订阅管理)
 7. [API Key 管理](#7-api-key-管理)
 8. [用量与额度](#8-用量与额度)
 9. [Grok OAuth](#9-grok-oauth)
@@ -316,14 +316,14 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ---
 
-## 6. 账号管理
+## 6. 订阅管理
 
 账号表示一个上游订阅身份（Claude / Codex / Grok）。凭据与代理 URL 以明文存库；列表接口**不**回显 `credentials` 与代理 URL，详情会回显凭据 JSON，仅返回 `proxy_configured` 布尔值。
 
 `provider` 取值：`claude` | `codex` | `grok`  
 `auth_type` 取值：`oauth` | `api_key`（创建时缺省 `oauth`）
 
-### `GET /api/accounts`
+### `GET /api/subscriptions`
 
 **响应 `200`**
 
@@ -343,7 +343,6 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
       "proxy_configured": false,
       "token_expires_at": "2026-08-20T12:00:00Z",
       "api_key_count": 2,
-      "created_by_user_id": 1,
       "created_at": "...",
       "updated_at": "..."
     }
@@ -351,7 +350,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 }
 ```
 
-### `POST /api/accounts`
+### `POST /api/subscriptions`
 
 手动导入上游 Token / API Key 并创建账号。OAuth 推荐走 [Grok OAuth](#9-grok-oauth) 或 [Claude / Codex OAuth](#10-claude--codex-oauth)。
 
@@ -391,18 +390,18 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 **响应 `201`**
 
 ```json
-{ "account": { "...": "..." } }
+{ "subscription": { "...": "..." } }
 ```
 
 创建后不会自动签发下游 API Key；请调用 [`POST /api/api-keys`](#post-apiapi-keys)。
 
-### `GET /api/accounts/:id`
+### `GET /api/subscriptions/:id`
 
 **响应 `200`**
 
 ```json
 {
-  "account": {
+  "subscription": {
     "id": 1,
     "credentials": {
       "access_token": "...",
@@ -421,7 +420,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 }
 ```
 
-### `PUT /api/accounts/:id`
+### `PUT /api/subscriptions/:id`
 
 **请求**
 
@@ -448,23 +447,23 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 | `proxy_url` | 可选；省略则不改代理；传字符串会规范化后更新 |
 | `credentials` | 可选；提供时覆盖凭据 |
 
-**响应 `200`**：`{ "account": ... }`（含凭据回显）
+**响应 `200`**：`{ "subscription": ... }`（含凭据回显）
 
 修改代理会关闭该账号的 HTTP 客户端连接池，下次请求重建。
 
-### `DELETE /api/accounts/:id`
+### `DELETE /api/subscriptions/:id`
 
 **响应** `204 No Content`
 
 级联删除该账号下的 API Key；关闭账号客户端并清理 Grok 刷新锁。
 
-### `POST /api/accounts/:id/enable`
+### `POST /api/subscriptions/:id/enable`
 
-### `POST /api/accounts/:id/disable`
+### `POST /api/subscriptions/:id/disable`
 
 无请求体。**响应** `204 No Content`
 
-### `PUT /api/accounts/:id/proxy`
+### `PUT /api/subscriptions/:id/proxy`
 
 **请求**
 
@@ -474,7 +473,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 传空字符串清除代理。**响应** `204 No Content`
 
-### `PUT /api/accounts/:id/concurrency-queue`
+### `PUT /api/subscriptions/:id/concurrency-queue`
 
 **请求**
 
@@ -499,8 +498,8 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
   "data": [
     {
       "id": 1,
-      "account_id": 1,
-      "account_name": "codex-plus-1",
+      "subscription_id": 1,
+      "subscription_name": "codex-plus-1",
       "provider": "codex",
       "name": "bot",
       "key_prefix": "unisub_xxxx",
@@ -532,7 +531,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ```json
 {
-  "account_id": 1,
+  "subscription_id": 1,
   "name": "bot",
   "rpm_limit": 30,
   "expires_at": null
@@ -541,7 +540,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 | 字段 | 说明 |
 | --- | --- |
-| `account_id` | 必填，`>0` |
+| `subscription_id` | 必填，`>0` |
 | `name` | 可选展示名 |
 | `rpm_limit` | 可选；若设置必须 `>0`，表示该 Key 每分钟请求上限 |
 | `expires_at` | 可选过期时间 |
@@ -602,13 +601,13 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 本地用量来自近 24 小时请求日志汇总。上游额度目前主要支持 **Grok OAuth** 主动刷新；Claude/Codex 权威上游额度适配器尚未实现。
 
-### `GET /api/accounts/:id/usage`
+### `GET /api/subscriptions/:id/usage`
 
 **响应 `200`（示例）**
 
 ```json
 {
-  "account_id": 1,
+  "subscription_id": 1,
   "provider": "grok",
   "status": "available",
   "subscription_tier": "...",
@@ -633,7 +632,7 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 无缓存额度时：`status` 为 `unknown`，`source` 为 `unavailable`，`stale` 为 `true`。若上次检查超过 15 分钟，`stale` 为 `true`。
 
-### `POST /api/accounts/:id/usage/refresh`
+### `POST /api/subscriptions/:id/usage/refresh`
 
 Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次。
 
@@ -649,6 +648,88 @@ Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次
 | `rate_limited` | 429 | 刷新过频 |
 | `usage_refresh_failed` | 502 | 上游查询失败 |
 
+### `GET /api/usage/by-subscription`
+
+仅管理员。按时间范围汇总每个订阅的本地用量。
+
+查询参数二选一：
+
+- `range=1d|1w|1m`：相对当前时间分别回溯 24 小时、7 天、30 天
+- `from=YYYY-MM-DD&to=YYYY-MM-DD`：本地日历日闭区间（`to` 当天包含至次日 00:00）
+
+**响应 `200`**
+
+```json
+{
+  "from": "2026-09-06T09:00:00Z",
+  "to": "2026-09-07T09:00:00Z",
+  "truncated": false,
+  "totals": {
+    "requests": 12,
+    "input_tokens": 1000,
+    "output_tokens": 200,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "total_tokens": 1200
+  },
+  "data": [
+    {
+      "subscription_id": 1,
+      "subscription_name": "codex-plus-1",
+      "provider": "codex",
+      "usage": {
+        "requests": 12,
+        "input_tokens": 1000,
+        "output_tokens": 200,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "total_tokens": 1200
+      }
+    }
+  ]
+}
+```
+
+### `GET /api/usage/by-user`
+
+仅管理员。按 API Key 的签发用户汇总本地用量，时间范围参数与 `by-subscription` 相同。可选查询参数 `subscription_id` 用于只统计指定订阅账号；省略时统计所有账号。结果仅包含所选条件下产生过请求或 Token 用量的用户。
+
+新请求会把签发用户 ID 固化到请求日志。旧日志没有用户 ID 时，会尝试通过仍然存在的 API Key 识别签发者；无法识别的历史调用汇总为“未归属”。
+
+**响应 `200`**
+
+```json
+{
+  "from": "2026-09-06T09:00:00Z",
+  "to": "2026-09-07T09:00:00Z",
+  "truncated": false,
+  "totals": {
+    "requests": 12,
+    "input_tokens": 1000,
+    "output_tokens": 200,
+    "cache_read_tokens": 0,
+    "cache_creation_tokens": 0,
+    "total_tokens": 1200
+  },
+  "data": [
+    {
+      "user_id": 2,
+      "username": "operator",
+      "role": "user",
+      "enabled": true,
+      "usage": {
+        "requests": 12,
+        "input_tokens": 1000,
+        "output_tokens": 200,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
+        "total_tokens": 1200
+      }
+    }
+  ]
+}
+```
+
 ### `GET /api/usage/summary`
 
 全部账号的本地 24h 用量摘要。
@@ -659,7 +740,7 @@ Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次
 {
   "data": [
     {
-      "account_id": 1,
+      "subscription_id": 1,
       "provider": "claude",
       "name": "claude-1",
       "local_usage": { "...": "..." }
@@ -731,7 +812,7 @@ Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次
 ```json
 {
   "status": "complete",
-  "account": { "...": "..." }
+  "subscription": { "...": "..." }
 }
 ```
 
@@ -806,7 +887,7 @@ Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次
 ```json
 {
   "status": "complete",
-  "account": { "...": "..." }
+  "subscription": { "...": "..." }
 }
 ```
 
@@ -834,7 +915,7 @@ Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/
 
 | 参数 | 说明 |
 | --- | --- |
-| `account_id` | 账号 ID |
+| `subscription_id` | 账号 ID |
 | `api_key_id` | API Key ID |
 | `provider` | `claude` / `codex` / `grok` |
 | `status` | HTTP 状态码 100–599 |
@@ -850,8 +931,8 @@ Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/
     {
       "id": 12,
       "day": "20260827",
-      "account_id": 1,
-      "account_name": "grok-main",
+      "subscription_id": 1,
+      "subscription_name": "grok-main",
       "api_key_id": 3,
       "api_key_name": "bot",
       "api_key_prefix": "unisub_xxxx",

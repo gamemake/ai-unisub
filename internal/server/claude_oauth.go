@@ -66,7 +66,7 @@ func (s *Server) exchangeClaudeCode(ctx context.Context, flow *pkceOAuthFlow, co
 	return credentials, tokenExpiryFromResponse(token.ExpiresIn, token.AccessToken), grokOAuthErrorResponse{}, nil
 }
 
-func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.Account, credentials model.Credentials, force bool) (model.Credentials, error) {
+func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
 	if account.Provider != model.ProviderClaude || account.AuthType != "oauth" {
 		return credentials, nil
 	}
@@ -79,7 +79,7 @@ func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.
 	lock.Lock()
 	defer lock.Unlock()
 
-	latest, err := s.repo.GetAccount(ctx, account.ID)
+	latest, err := s.repo.GetSubscription(ctx, account.ID)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -96,7 +96,7 @@ func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.
 	if credentials.RefreshToken == "" {
 		return model.Credentials{}, errors.New("Claude OAuth token expired and no refresh token is available")
 	}
-	client, err := s.clientForAccount(latest)
+	client, err := s.clientForSubscription(latest)
 	if err != nil {
 		return model.Credentials{}, err
 	}
@@ -121,7 +121,7 @@ func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.
 		credentials.Scope = token.Scope
 	}
 	expiresAt := tokenExpiryFromResponse(token.ExpiresIn, token.AccessToken)
-	if err := s.repo.UpdateAccountCredentials(ctx, account.ID, credentials, expiresAt); err != nil {
+	if err := s.repo.UpdateSubscriptionCredentials(ctx, account.ID, credentials, expiresAt); err != nil {
 		return model.Credentials{}, err
 	}
 	return credentials, nil
@@ -185,12 +185,12 @@ func parseOAuthErrorBody(body []byte) grokOAuthErrorResponse {
 	return oauthErr
 }
 
-func createOAuthAccountParams(account oauthAccountRequest, provider model.Provider, credentials model.Credentials, expiresAt *time.Time, userID int64) repository.CreateAccountParams {
-	return repository.CreateAccountParams{
+func createOAuthSubscriptionParams(account oauthSubscriptionRequest, provider model.Provider, credentials model.Credentials, expiresAt *time.Time) repository.CreateSubscriptionParams {
+	return repository.CreateSubscriptionParams{
 		Name: account.Name, Provider: provider, AuthType: "oauth", Credentials: credentials,
 		Metadata: account.Metadata, ConcurrencyLimit: account.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: account.ConcurrencyQueueTimeoutSeconds,
-		ProxyURL:                       account.ProxyURL, TokenExpiresAt: expiresAt, CreatedByUserID: &userID,
+		ProxyURL:                       account.ProxyURL, TokenExpiresAt: expiresAt,
 	}
 }
 

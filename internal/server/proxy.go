@@ -77,8 +77,9 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 500, "internal_error", "could not resolve API key")
 			return
 		}
-		requestLog.AccountID = &account.ID
+		requestLog.SubscriptionID = &account.ID
 		requestLog.APIKeyID = &account.APIKeyID
+		requestLog.UserID = account.UserID
 		requestLog.Provider = string(account.Provider)
 		if expectedProvider != "" && string(account.Provider) != expectedProvider {
 			apiError(c, 403, "provider_mismatch", "API key is bound to a different provider")
@@ -94,12 +95,12 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 403, "provider_mismatch", "Responses endpoints require a Codex or Grok account key")
 			return
 		}
-		credentials, err := s.repo.Credentials(c.Request.Context(), account.Account)
+		credentials, err := s.repo.Credentials(c.Request.Context(), account.Subscription)
 		if err != nil || credentials.Bearer() == "" {
 			apiError(c, 502, "credential_error", "account credentials are unavailable")
 			return
 		}
-		credentials, err = s.credentialsForRequest(c.Request.Context(), account.Account, credentials, false)
+		credentials, err = s.credentialsForRequest(c.Request.Context(), account.Subscription, credentials, false)
 		if err != nil {
 			apiError(c, 401, "reauth_required", err.Error())
 			return
@@ -148,7 +149,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			upstreamURL = ensureQueryParam(upstreamURL, "beta", "true")
 		}
 
-		release, err := s.acquire(c.Request.Context(), account.ID, account.ConcurrencyLimit, s.queueTimeout(account.Account))
+		release, err := s.acquire(c.Request.Context(), account.ID, account.ConcurrencyLimit, s.queueTimeout(account.Subscription))
 		if err != nil {
 			if errors.Is(err, errConcurrencyQueueTimeout) {
 				apiError(c, http.StatusTooManyRequests, "concurrency_limited", "account concurrency queue wait timed out")
@@ -156,7 +157,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			return
 		}
 		defer release()
-		client, err := s.clientForAccount(account.Account)
+		client, err := s.clientForSubscription(account.Subscription)
 		if err != nil {
 			apiError(c, 502, "proxy_error", err.Error())
 			return
@@ -182,7 +183,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		}
 		if response.StatusCode == http.StatusUnauthorized && account.AuthType == "oauth" && credentials.RefreshToken != "" {
 			response.Body.Close()
-			credentials, err = s.credentialsForRequest(c.Request.Context(), account.Account, credentials, true)
+			credentials, err = s.credentialsForRequest(c.Request.Context(), account.Subscription, credentials, true)
 			if err != nil {
 				apiError(c, http.StatusUnauthorized, "reauth_required", err.Error())
 				return
@@ -201,8 +202,8 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		defer response.Body.Close()
 		quotaCheckedAt := time.Now()
 		if quota, ok := quotaFromResponseHeaders(account.Quota, response.Header, quotaCheckedAt); ok {
-			if err := s.repo.UpdateAccountQuota(c.Request.Context(), account.ID, quota, quotaCheckedAt, nil); err != nil {
-				slog.Warn("update account quota failed", "account_id", account.ID, "error", err)
+			if err := s.repo.UpdateSubscriptionQuota(c.Request.Context(), account.ID, quota, quotaCheckedAt, nil); err != nil {
+				slog.Warn("update account quota failed", "subscription_id", account.ID, "error", err)
 			}
 		}
 		contentType := strings.ToLower(response.Header.Get("Content-Type"))
@@ -221,7 +222,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 	}
 }
 
-func (s *Server) queueTimeout(account model.Account) time.Duration {
+func (s *Server) queueTimeout(account model.Subscription) time.Duration {
 	if account.ConcurrencyQueueTimeoutSeconds > 0 {
 		return time.Duration(account.ConcurrencyQueueTimeoutSeconds) * time.Second
 	}
@@ -334,7 +335,7 @@ var strippedRequestHeaders = map[string]bool{
 	"chatgpt-account-id": true, "host": true, "content-length": true, "connection": true,
 	"proxy-connection": true, "keep-alive": true, "transfer-encoding": true, "upgrade": true,
 	// Outbound compression is disabled; do not advertise Accept-Encoding or local usage parsing sees gzip bytes.
-	"accept-encoding": true,
+	"accept-encoding":  true,
 	"x-xai-token-auth": true, "x-authenticateresponse": true, "x-grok-client-version": true,
 	"x-grok-client-identifier": true, "x-grok-client-mode": true,
 }

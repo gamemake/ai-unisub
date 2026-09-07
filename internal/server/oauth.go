@@ -11,7 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type oauthAccountRequest struct {
+type oauthSubscriptionRequest struct {
 	Name                           string          `json:"name"`
 	Metadata                       json.RawMessage `json:"metadata"`
 	ConcurrencyLimit               int             `json:"concurrency_limit"`
@@ -19,31 +19,31 @@ type oauthAccountRequest struct {
 	ProxyURL                       string          `json:"proxy_url"`
 }
 
-func (s *Server) bindOAuthAccountRequest(c *gin.Context) (oauthAccountRequest, *http.Client, bool) {
-	var account oauthAccountRequest
+func (s *Server) bindOAuthSubscriptionRequest(c *gin.Context) (oauthSubscriptionRequest, *http.Client, bool) {
+	var account oauthSubscriptionRequest
 	if c.ShouldBindJSON(&account) != nil || strings.TrimSpace(account.Name) == "" {
 		apiError(c, http.StatusBadRequest, "invalid_request", "account name is required")
-		return oauthAccountRequest{}, nil, false
+		return oauthSubscriptionRequest{}, nil, false
 	}
 	account.Name = strings.TrimSpace(account.Name)
 	if len(account.Metadata) > 0 && !json.Valid(account.Metadata) {
 		apiError(c, http.StatusBadRequest, "invalid_request", "metadata must be valid JSON")
-		return oauthAccountRequest{}, nil, false
+		return oauthSubscriptionRequest{}, nil, false
 	}
 	if err := validateConcurrencyQueueTimeout(account.ConcurrencyQueueTimeoutSeconds); err != nil {
 		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return oauthAccountRequest{}, nil, false
+		return oauthSubscriptionRequest{}, nil, false
 	}
 	proxyURL, err := normalizeProxyURL(account.ProxyURL)
 	if err != nil {
 		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return oauthAccountRequest{}, nil, false
+		return oauthSubscriptionRequest{}, nil, false
 	}
 	account.ProxyURL = proxyURL
 	client, err := newClientForProxy(proxyURL)
 	if err != nil {
 		apiError(c, http.StatusBadRequest, "invalid_request", err.Error())
-		return oauthAccountRequest{}, nil, false
+		return oauthSubscriptionRequest{}, nil, false
 	}
 	return account, client, true
 }
@@ -57,7 +57,7 @@ func oauthRefreshSkew(provider model.Provider) time.Duration {
 	}
 }
 
-func (s *Server) credentialsForRequest(ctx context.Context, account model.Account, credentials model.Credentials, force bool) (model.Credentials, error) {
+func (s *Server) credentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
 	if account.AuthType != "oauth" {
 		return credentials, nil
 	}

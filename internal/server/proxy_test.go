@@ -57,7 +57,7 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 	defer upstream.Close()
 
 	application, repo := testServer(t, upstream.URL+"/responses")
-	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 	})
@@ -103,7 +103,7 @@ func TestProxyStripsProxyAuthorizationAndAcceptEncoding(t *testing.T) {
 	defer upstream.Close()
 
 	application, repo := testServer(t, upstream.URL+"/responses")
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "strip-headers", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
@@ -144,7 +144,7 @@ func TestClaudePreservesClientUserAgent(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "claude-ua", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
@@ -168,7 +168,7 @@ func TestProxyAcceptsXAPIKeyHeader(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "claude-x-api-key", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
@@ -248,7 +248,7 @@ func TestClaudeMimicPathForNonCLIClient(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "claude-mimic", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
@@ -275,7 +275,7 @@ func TestProxyStoresAnthropicUnifiedQuotaWindows(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
-	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "claude-unified-quota", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
@@ -287,7 +287,7 @@ func TestProxyStoresAnthropicUnifiedQuotaWindows(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestProxyStoresUpstreamRateLimitQuota(t *testing.T) {
 	defer upstream.Close()
 
 	application, repo := testServer(t, upstream.URL+"/responses")
-	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "quota-codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
@@ -350,7 +350,7 @@ func TestProxyStoresUpstreamRateLimitQuota(t *testing.T) {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	stored, err := repo.GetAccount(context.Background(), account.ID)
+	stored, err := repo.GetSubscription(context.Background(), account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("unsafe path reached upstream") }))
 	defer upstream.Close()
 	application, repo := testServer(t, upstream.URL+"/responses")
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "grok", Provider: model.ProviderGrok, AuthType: "oauth", Credentials: model.Credentials{AccessToken: "token"},
 	})
 	for _, path := range []string{"/v1/responses/../home", "/v1/responses/a%252fb", "/v1/responses/a//b"} {
@@ -408,7 +408,7 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 	defer upstream.Close()
 
 	application, repo := testServer(t, upstream.URL+"/responses")
-	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "log-codex", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
@@ -432,7 +432,7 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 		t.Fatalf("logs total=%d len=%d", total, len(logs))
 	}
 	summary := logs[0]
-	if summary.AccountID == nil || *summary.AccountID != account.ID || summary.Path != "/v1/responses" || summary.Query != "stream=0" || summary.ClientIP != "198.51.100.20" {
+	if summary.SubscriptionID == nil || *summary.SubscriptionID != account.ID || summary.Path != "/v1/responses" || summary.Query != "stream=0" || summary.ClientIP != "198.51.100.20" {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.InputTokens == nil || *summary.InputTokens != 15 || summary.OutputTokens == nil || *summary.OutputTokens != 8 {
@@ -481,7 +481,7 @@ func TestProxyRecordsSSETokens(t *testing.T) {
 	}))
 	defer upstream.Close()
 	application, repo := testServer(t, upstream.URL+"/responses")
-	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
 		Name: "sse-log", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
@@ -501,13 +501,13 @@ func TestProxyRecordsSSETokens(t *testing.T) {
 	}
 }
 
-func createAccountWithKey(t *testing.T, repo *repository.Repository, p repository.CreateAccountParams) (model.Account, string) {
+func createSubscriptionWithKey(t *testing.T, repo *repository.Repository, p repository.CreateSubscriptionParams) (model.Subscription, string) {
 	t.Helper()
-	account, err := repo.CreateAccount(context.Background(), p)
+	account, err := repo.CreateSubscription(context.Background(), p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, key, err := repo.CreateAPIKey(context.Background(), repository.CreateAPIKeyParams{AccountID: account.ID, Name: account.Name})
+	_, key, err := repo.CreateAPIKey(context.Background(), repository.CreateAPIKeyParams{SubscriptionID: account.ID, Name: account.Name})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,9 +13,9 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 )
 
-func TestAccountUsageReturnsStoredQuotaForOverview(t *testing.T) {
+func TestSubscriptionUsageReturnsStoredQuotaForOverview(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "quota-account", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
@@ -28,14 +28,14 @@ func TestAccountUsageReturnsStoredQuotaForOverview(t *testing.T) {
 		"request_quota":{"remaining":80,"limit":100},
 		"token_quota":{"remaining":9000,"limit":10000}
 	}`)
-	if err := repo.UpdateAccountQuota(context.Background(), account.ID, quota, time.Now(), nil); err != nil {
+	if err := repo.UpdateSubscriptionQuota(context.Background(), account.ID, quota, time.Now(), nil); err != nil {
 		t.Fatal(err)
 	}
 	adminToken, err := application.signer.issue("admin", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/api/accounts/1/usage", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/subscriptions/1/usage", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)
@@ -68,9 +68,9 @@ func TestAccountUsageReturnsStoredQuotaForOverview(t *testing.T) {
 	}
 }
 
-func TestAccountUsageKeepsUnknownWhenQuotaUnavailable(t *testing.T) {
+func TestSubscriptionUsageKeepsUnknownWhenQuotaUnavailable(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "unknown-quota", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
@@ -78,11 +78,11 @@ func TestAccountUsageKeepsUnknownWhenQuotaUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	message := "upstream usage endpoint is unavailable"
-	if err := repo.UpdateAccountQuota(context.Background(), account.ID, nil, time.Now(), &message); err != nil {
+	if err := repo.UpdateSubscriptionQuota(context.Background(), account.ID, nil, time.Now(), &message); err != nil {
 		t.Fatal(err)
 	}
 	adminToken, _ := application.signer.issue("admin", time.Hour)
-	request := httptest.NewRequest(http.MethodGet, "/api/accounts/1/usage", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/subscriptions/1/usage", nil)
 	request.Header.Set("Authorization", "Bearer "+adminToken)
 	recorder := httptest.NewRecorder()
 	application.Handler().ServeHTTP(recorder, request)

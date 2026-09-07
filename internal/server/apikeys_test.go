@@ -14,9 +14,9 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/repository"
 )
 
-func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
+func TestAPIKeyCRUDAllowsMultipleKeysPerSubscription(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
-	account, err := repo.CreateAccount(context.Background(), repository.CreateAccountParams{
+	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
 		Name: "multi-key", Provider: model.ProviderGrok, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
@@ -27,12 +27,16 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	users, err := repo.ListUsers(context.Background())
+	if err != nil || len(users) != 1 {
+		t.Fatalf("users=%+v err=%v", users, err)
+	}
 
-	first := postJSON(t, application, adminToken, "/api/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-a","rpm_limit":20}`)
+	first := postJSON(t, application, adminToken, "/api/api-keys", `{"subscription_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-a","rpm_limit":20}`)
 	if first.Code != http.StatusCreated {
 		t.Fatalf("create first status=%d body=%s", first.Code, first.Body.String())
 	}
-	second := postJSON(t, application, adminToken, "/api/api-keys", `{"account_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-b"}`)
+	second := postJSON(t, application, adminToken, "/api/api-keys", `{"subscription_id":`+strconv.FormatInt(account.ID, 10)+`,"name":"team-b"}`)
 	if second.Code != http.StatusCreated {
 		t.Fatalf("create second status=%d body=%s", second.Code, second.Body.String())
 	}
@@ -40,14 +44,15 @@ func TestAPIKeyCRUDAllowsMultipleKeysPerAccount(t *testing.T) {
 	var created struct {
 		APIKey string `json:"api_key"`
 		Key    struct {
-			ID        int64 `json:"id"`
-			AccountID int64 `json:"account_id"`
+			ID             int64  `json:"id"`
+			SubscriptionID int64  `json:"subscription_id"`
+			UserID         *int64 `json:"user_id"`
 		} `json:"key"`
 	}
 	if err := json.Unmarshal(first.Body.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created.Key.AccountID != account.ID || created.APIKey == "" {
+	if created.Key.SubscriptionID != account.ID || created.Key.UserID == nil || *created.Key.UserID != users[0].ID || created.APIKey == "" {
 		t.Fatalf("created key = %+v", created)
 	}
 

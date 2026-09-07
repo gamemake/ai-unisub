@@ -11,10 +11,10 @@ import (
 )
 
 type createAPIKeyRequest struct {
-	AccountID int64      `json:"account_id"`
-	Name      string     `json:"name"`
-	RPMLimit  *int       `json:"rpm_limit"`
-	ExpiresAt *time.Time `json:"expires_at"`
+	SubscriptionID int64      `json:"subscription_id"`
+	Name           string     `json:"name"`
+	RPMLimit       *int       `json:"rpm_limit"`
+	ExpiresAt      *time.Time `json:"expires_at"`
 }
 
 type updateAPIKeyRequest struct {
@@ -51,16 +51,22 @@ func (s *Server) getAPIKey(c *gin.Context) {
 
 func (s *Server) createAPIKey(c *gin.Context) {
 	var request createAPIKeyRequest
-	if c.ShouldBindJSON(&request) != nil || request.AccountID <= 0 {
-		apiError(c, http.StatusBadRequest, "invalid_request", "account_id is required")
+	if c.ShouldBindJSON(&request) != nil || request.SubscriptionID <= 0 {
+		apiError(c, http.StatusBadRequest, "invalid_request", "subscription_id is required")
 		return
 	}
 	if request.RPMLimit != nil && *request.RPMLimit <= 0 {
 		apiError(c, http.StatusBadRequest, "invalid_request", "rpm_limit must be greater than zero")
 		return
 	}
+	var userID *int64
+	if value, ok := c.Get("user_id"); ok {
+		if id, valid := value.(int64); valid && id > 0 {
+			userID = &id
+		}
+	}
 	key, plaintext, err := s.repo.CreateAPIKey(c.Request.Context(), repository.CreateAPIKeyParams{
-		AccountID: request.AccountID, Name: strings.TrimSpace(request.Name), RPMLimit: request.RPMLimit, ExpiresAt: request.ExpiresAt,
+		SubscriptionID: request.SubscriptionID, UserID: userID, Name: strings.TrimSpace(request.Name), RPMLimit: request.RPMLimit, ExpiresAt: request.ExpiresAt,
 	})
 	if err != nil {
 		handleRepoError(c, err)

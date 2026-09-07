@@ -8,36 +8,28 @@ import (
 	"github.com/ai-unisub/ai-unisub/internal/model"
 )
 
-func TestListRequestLogsFiltersByAccountIDs(t *testing.T) {
+func TestListRequestLogsFiltersBySubscriptionID(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
-	ownerA, err := repo.CreateUser(ctx, "owner-a", "owner-a-pass-ok", model.RoleUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ownerB, err := repo.CreateUser(ctx, "owner-b", "owner-b-pass-ok", model.RoleUser)
-	if err != nil {
-		t.Fatal(err)
-	}
-	accountA, err := repo.CreateAccount(ctx, CreateAccountParams{
+	accountA, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "account-a", Provider: model.ProviderCodex, AuthType: "oauth",
-		Credentials: model.Credentials{AccessToken: "token-a"}, CreatedByUserID: &ownerA.ID,
+		Credentials: model.Credentials{AccessToken: "token-a"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	accountB, err := repo.CreateAccount(ctx, CreateAccountParams{
+	accountB, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "account-b", Provider: model.ProviderCodex, AuthType: "oauth",
-		Credentials: model.Credentials{AccessToken: "token-b"}, CreatedByUserID: &ownerB.ID,
+		Credentials: model.Credentials{AccessToken: "token-b"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyA, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: accountA.ID, Name: "a"})
+	keyA, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: accountA.ID, Name: "a"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyB, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: accountB.ID, Name: "b"})
+	keyB, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: accountB.ID, Name: "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,26 +40,22 @@ func TestListRequestLogsFiltersByAccountIDs(t *testing.T) {
 	}{{accountA.ID, keyA.ID}, {accountB.ID, keyB.ID}} {
 		accountID, apiKeyID := item.accountID, item.keyID
 		if err := repo.RecordRequest(time.UTC, RequestLog{
-			AccountID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+			SubscriptionID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
 			StatusCode: 200, StartedAt: started.Add(time.Duration(i) * time.Second), FinishedAt: started.Add(time.Duration(i)*time.Second + time.Millisecond),
 			Model: "gpt-test",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	owned, err := repo.ListAccountIDsByCreator(ctx, ownerA.ID)
+	filterID := accountA.ID
+	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{SubscriptionID: &filterID, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
-	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{AccountIDs: owned, Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if total != 1 || len(logs) != 1 || logs[0].AccountID == nil || *logs[0].AccountID != accountA.ID {
-		t.Fatalf("owner-a logs = total:%d data:%+v", total, logs)
+	if total != 1 || len(logs) != 1 || logs[0].SubscriptionID == nil || *logs[0].SubscriptionID != accountA.ID {
+		t.Fatalf("filtered logs = total:%d data:%+v", total, logs)
 	}
 }
-
 func TestRecordRequestUsesConfiguredTimezoneDailyTable(t *testing.T) {
 	repo := testRepository(t)
 	location, err := time.LoadLocation("Asia/Taipei")
@@ -77,7 +65,7 @@ func TestRecordRequestUsesConfiguredTimezoneDailyTable(t *testing.T) {
 	accountID, apiKeyID := int64(11), int64(22)
 	started := time.Date(2026, 8, 18, 16, 30, 0, 0, time.UTC) // 2026-08-19 in Taipei.
 	err = repo.RecordRequest(location, RequestLog{
-		AccountID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+		SubscriptionID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
 		StatusCode: 429, StartedAt: started, FinishedAt: started.Add(1500 * time.Millisecond), ErrorType: "concurrency_limited",
 	})
 	if err != nil {
@@ -96,14 +84,14 @@ func TestRecordRequestUsesConfiguredTimezoneDailyTable(t *testing.T) {
 func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "codex-main", Provider: model.ProviderCodex, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{AccountID: account.ID, Name: "bot"})
+	key, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: account.ID, Name: "bot"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +99,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	input, output, total := int64(12), int64(34), int64(46)
 	started := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
 	err = repo.RecordRequest(time.UTC, RequestLog{
-		AccountID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+		SubscriptionID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
 		Query: "beta=1", ClientIP: "203.0.113.10", StatusCode: 200, StartedAt: started, FinishedAt: started.Add(40 * time.Millisecond),
 		RequestID: "req_1", Model: "gpt-test", InputTokens: &input, OutputTokens: &output, TotalTokens: &total,
 		RequestHeaders:  `{"Content-Type":["application/json"],"Authorization":["[redacted]"]}`,
@@ -130,7 +118,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 		t.Fatalf("list count=%d len=%d", totalCount, len(logs))
 	}
 	summary := logs[0]
-	if summary.AccountName != "codex-main" || summary.APIKeyName != "bot" || summary.Model != "gpt-test" || summary.ClientIP != "203.0.113.10" {
+	if summary.SubscriptionName != "codex-main" || summary.APIKeyName != "bot" || summary.Model != "gpt-test" || summary.ClientIP != "203.0.113.10" {
 		t.Fatalf("summary = %+v", summary)
 	}
 	if summary.InputTokens == nil || *summary.InputTokens != 12 || summary.RequestBody != "" {
@@ -152,7 +140,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	if detail.TotalTokens == nil || *detail.TotalTokens != 46 {
 		t.Fatalf("detail tokens = %+v", detail)
 	}
-	updatedAccount, err := repo.GetAccount(ctx, account.ID)
+	updatedAccount, err := repo.GetSubscription(ctx, account.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +152,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
-	account, err := repo.CreateAccount(ctx, CreateAccountParams{
+	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
 		Name: "usage-account", Provider: model.ProviderClaude, AuthType: "oauth",
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
@@ -176,14 +164,14 @@ func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
 	olderInput, olderOutput := int64(100), int64(50)
 	now := time.Now().UTC()
 	if err := repo.RecordRequest(time.Local, RequestLog{
-		AccountID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
+		SubscriptionID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
 		StatusCode: 200, StartedAt: now.Add(-time.Hour), FinishedAt: now.Add(-time.Hour + time.Second),
 		InputTokens: &input, OutputTokens: &output, CacheReadTokens: &cacheRead, CacheCreationTokens: &cacheCreate, TotalTokens: &total,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.RecordRequest(time.Local, RequestLog{
-		AccountID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
+		SubscriptionID: &accountID, Provider: "claude", Method: "POST", Path: "/v1/messages",
 		StatusCode: 200, StartedAt: now.Add(-30 * time.Hour), FinishedAt: now.Add(-30*time.Hour + time.Second),
 		InputTokens: &olderInput, OutputTokens: &olderOutput,
 	}); err != nil {
@@ -198,6 +186,75 @@ func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
 	}
 	if summary.CacheReadTokens24H != 3 || summary.CacheCreationTokens24H != 2 || summary.TotalTokens24H != 14 {
 		t.Fatalf("usage summary tokens = %+v", summary)
+	}
+}
+
+func TestUsageByUserAttributesRequestsToAPIKeyIssuer(t *testing.T) {
+	repo := testRepository(t)
+	ctx := context.Background()
+	alice, err := repo.CreateUser(ctx, "alice", "alice-password-ok", model.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := repo.CreateUser(ctx, "bob", "bob-password-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	charlie, err := repo.CreateUser(ctx, "charlie", "charlie-password-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
+		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceKey, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: subscription.ID, UserID: &alice.ID, Name: "alice-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobKey, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: subscription.ID, UserID: &bob.ID, Name: "bob-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	input10, output4 := int64(10), int64(4)
+	input7, output3 := int64(7), int64(3)
+	for _, entry := range []RequestLog{
+		{SubscriptionID: &subscription.ID, APIKeyID: &aliceKey.ID, UserID: &alice.ID, Provider: "codex", Method: "POST", Path: "/v1/responses", StatusCode: 200, StartedAt: started, FinishedAt: started.Add(time.Second), InputTokens: &input10, OutputTokens: &output4},
+		// A legacy row without user_id falls back to the API key issuer.
+		{SubscriptionID: &subscription.ID, APIKeyID: &bobKey.ID, Provider: "codex", Method: "POST", Path: "/v1/responses", StatusCode: 200, StartedAt: started.Add(time.Minute), FinishedAt: started.Add(time.Minute + time.Second), InputTokens: &input7, OutputTokens: &output3},
+		{SubscriptionID: &subscription.ID, Provider: "codex", Method: "POST", Path: "/v1/responses", StatusCode: 401, StartedAt: started.Add(2 * time.Minute), FinishedAt: started.Add(2*time.Minute + time.Second)},
+	} {
+		if err := repo.RecordRequest(time.UTC, entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows, totals, _, err := repo.UsageByUser(ctx, started.Add(-time.Hour), started.Add(time.Hour), time.UTC, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("user usage rows = %+v", rows)
+	}
+	for _, row := range rows {
+		if row.UserID != nil && *row.UserID == charlie.ID {
+			t.Fatalf("zero-usage user should be excluded: %+v", row)
+		}
+	}
+	if rows[0].UserID == nil || *rows[0].UserID != alice.ID || rows[0].Usage.Requests != 1 || rows[0].Usage.TotalTokens != 14 {
+		t.Fatalf("alice usage = %+v", rows[0])
+	}
+	if rows[1].UserID == nil || *rows[1].UserID != bob.ID || rows[1].Usage.Requests != 1 || rows[1].Usage.TotalTokens != 10 {
+		t.Fatalf("bob usage = %+v", rows[1])
+	}
+	if rows[2].UserID != nil || rows[2].Username != "未归属" || rows[2].Usage.Requests != 1 {
+		t.Fatalf("unassigned usage = %+v", rows[2])
+	}
+	if totals.Requests != 3 || totals.InputTokens != 17 || totals.OutputTokens != 7 || totals.TotalTokens != 24 {
+		t.Fatalf("usage totals = %+v", totals)
 	}
 }
 
