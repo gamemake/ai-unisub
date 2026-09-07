@@ -61,6 +61,15 @@ func New(cfg config.Config, repo *repository.Repository) *Server {
 	if cfg.GrokOAuth.ClientVersion == "" {
 		cfg.GrokOAuth.ClientVersion = config.DefaultGrokOAuthClientVersion
 	}
+	if cfg.Providers.ClaudeUsage == "" {
+		cfg.Providers.ClaudeUsage = config.DefaultClaudeUsageURL
+	}
+	if cfg.Providers.CodexUsage == "" {
+		cfg.Providers.CodexUsage = config.DefaultCodexUsageURL
+	}
+	if cfg.Providers.GrokBilling == "" {
+		cfg.Providers.GrokBilling = config.DefaultGrokBillingURL
+	}
 	if cfg.ClaudeOAuth.AuthorizeURL == "" {
 		cfg.ClaudeOAuth.AuthorizeURL = config.DefaultClaudeOAuthAuthorizeURL
 	}

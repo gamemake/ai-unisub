@@ -635,13 +635,17 @@ Token 默认 TTL 为 8 小时（`UNISUB_ADMIN_TOKEN_TTL`）。管理页把 JWT �
 
 ### `POST /api/accounts/:id/usage/refresh`
 
-仅 Grok OAuth 账号可用。同一账号每分钟最多 6 次。
+Claude / Codex / Grok 的 OAuth 账号可用。同一账号每分钟最多 6 次。
+
+- Claude：`GET` 配置的 `UNISUB_CLAUDE_USAGE_URL`（默认 `https://api.anthropic.com/api/oauth/usage`）
+- Codex：`GET` 配置的 `UNISUB_CODEX_USAGE_URL`（默认 `https://chatgpt.com/backend-api/wham/usage`）
+- Grok：`GET` 配置的 `UNISUB_GROK_BILLING_URL`（及派生的 `/user`）
 
 **响应 `200`**：结构同 `GET .../usage`。
 
 | 错误 type | HTTP | 说明 |
 | --- | --- | --- |
-| `usage_refresh_unsupported` | 422 | 非 Grok OAuth |
+| `usage_refresh_unsupported` | 422 | 非 Claude/Codex/Grok OAuth |
 | `rate_limited` | 429 | 刷新过频 |
 | `usage_refresh_failed` | 502 | 上游查询失败 |
 

@@ -105,6 +105,8 @@ UNISUB_GROK_OAUTH_CLIENT_ID=b1a00492-073a-47ea-816f-4c329264a828
 UNISUB_GROK_CLIENT_VERSION=1.0.6
 UNISUB_GROK_OAUTH_SCOPES="openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write"
 UNISUB_GROK_BILLING_URL=https://cli-chat-proxy.grok.com/v1/billing?format=credits
+UNISUB_CLAUDE_USAGE_URL=https://api.anthropic.com/api/oauth/usage
+UNISUB_CODEX_USAGE_URL=https://chatgpt.com/backend-api/wham/usage
 ```
 
 生产模式会拒绝非 `https://auth.x.ai` 的 OAuth issuer。OAuth 登录与后续 Token 刷新都会使用该账号配置的 HTTP/SOCKS5 代理。Access Token 在到期前一分钟自动使用 refresh token 续期；刷新失败时请求返回 `401 reauth_required`，需要重新绑定账号。

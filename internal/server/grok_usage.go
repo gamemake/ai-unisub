@@ -28,15 +28,26 @@ func (s *Server) refreshAccountUsage(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if account.Provider != model.ProviderGrok || account.AuthType != "oauth" {
-		apiError(c, http.StatusUnprocessableEntity, "usage_refresh_unsupported", "active usage refresh is currently available only for Grok OAuth accounts")
+	if account.AuthType != "oauth" || (account.Provider != model.ProviderGrok && account.Provider != model.ProviderClaude && account.Provider != model.ProviderCodex) {
+		apiError(c, http.StatusUnprocessableEntity, "usage_refresh_unsupported", "active usage refresh is available only for Claude, Codex, and Grok OAuth accounts")
 		return
 	}
 	if !s.allowRate(fmt.Sprintf("usage-refresh:%d", account.ID), 6, time.Minute) {
 		apiError(c, http.StatusTooManyRequests, "rate_limited", "account usage was refreshed too frequently")
 		return
 	}
-	updated, err := s.refreshGrokQuota(c.Request.Context(), account)
+	var (
+		updated model.Account
+		err     error
+	)
+	switch account.Provider {
+	case model.ProviderClaude:
+		updated, err = s.refreshClaudeQuota(c.Request.Context(), account)
+	case model.ProviderCodex:
+		updated, err = s.refreshCodexQuota(c.Request.Context(), account)
+	default:
+		updated, err = s.refreshGrokQuota(c.Request.Context(), account)
+	}
 	if err != nil {
 		apiError(c, http.StatusBadGateway, "usage_refresh_failed", err.Error())
 		return
@@ -61,7 +72,7 @@ func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (m
 		credentials, err = s.grokCredentialsForRequest(requestContext, account, credentials, false)
 	}
 	if err != nil {
-		return account, s.storeGrokQuotaError(ctx, account, err)
+		return account, s.storeQuotaError(ctx, account, err)
 	}
 	profileTier := ""
 	if credentials.UserID == "" {
@@ -71,12 +82,12 @@ func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (m
 			credentials.Email = profile.Email
 			profileTier = profile.SubscriptionTier
 			if err := s.repo.UpdateAccountCredentials(requestContext, account.ID, credentials, account.TokenExpiresAt); err != nil {
-				return account, s.storeGrokQuotaError(ctx, account, err)
+				return account, s.storeQuotaError(ctx, account, err)
 			}
 		} else if fallback := grokUserID(credentials); fallback != "" {
 			credentials.UserID = fallback
 		} else {
-			return account, s.storeGrokQuotaError(ctx, account, profileErr)
+			return account, s.storeQuotaError(ctx, account, profileErr)
 		}
 	}
 
@@ -88,14 +99,14 @@ func (s *Server) refreshGrokQuota(ctx context.Context, account model.Account) (m
 		}
 	}
 	if err != nil {
-		return account, s.storeGrokQuotaError(ctx, account, err)
+		return account, s.storeQuotaError(ctx, account, err)
 	}
 	if status < 200 || status >= 300 {
-		return account, s.storeGrokQuotaError(ctx, account, fmt.Errorf("Grok billing endpoint returned HTTP %d", status))
+		return account, s.storeQuotaError(ctx, account, fmt.Errorf("Grok billing endpoint returned HTTP %d", status))
 	}
 	quota, err := normalizeGrokBilling(account.Quota, body)
 	if err != nil {
-		return account, s.storeGrokQuotaError(ctx, account, err)
+		return account, s.storeQuotaError(ctx, account, err)
 	}
 	if profileTier != "" {
 		quota = quotaWithGrokTier(quota, profileTier)
@@ -186,7 +197,7 @@ func quotaWithGrokTier(quota json.RawMessage, tier string) json.RawMessage {
 	return encoded
 }
 
-func (s *Server) storeGrokQuotaError(ctx context.Context, account model.Account, cause error) error {
+func (s *Server) storeQuotaError(ctx context.Context, account model.Account, cause error) error {
 	message := strings.TrimSpace(cause.Error())
 	if len(message) > 240 {
 		message = message[:240]

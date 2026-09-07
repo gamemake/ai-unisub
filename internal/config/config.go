@@ -13,8 +13,10 @@ import (
 type ProviderURLs struct {
 	ClaudeAPI    string
 	ClaudeModels string
+	ClaudeUsage  string
 	CodexAPI     string
 	CodexModels  string
+	CodexUsage   string
 	GrokAPI      string
 	GrokModels   string
 	GrokBilling  string
@@ -48,6 +50,8 @@ const (
 	DefaultGrokOAuthClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
 	DefaultGrokOAuthClientVersion = "1.0.6"
 	DefaultGrokBillingURL         = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+	DefaultClaudeUsageURL         = "https://api.anthropic.com/api/oauth/usage"
+	DefaultCodexUsageURL          = "https://chatgpt.com/backend-api/wham/usage"
 
 	// Claude Code public OAuth client (v2.1.81+ uses platform.claude.com).
 	DefaultClaudeOAuthAuthorizeURL = "https://claude.com/cai/oauth/authorize"
@@ -137,8 +141,10 @@ func Load() (Config, error) {
 		Providers: ProviderURLs{
 			ClaudeAPI:    env("UNISUB_CLAUDE_API_URL", "https://api.anthropic.com/v1"),
 			ClaudeModels: env("UNISUB_CLAUDE_MODELS_URL", "https://api.anthropic.com/v1/models"),
+			ClaudeUsage:  env("UNISUB_CLAUDE_USAGE_URL", DefaultClaudeUsageURL),
 			CodexAPI:     env("UNISUB_CODEX_API_URL", "https://chatgpt.com/backend-api/codex/responses"),
 			CodexModels:  env("UNISUB_CODEX_MODELS_URL", "https://chatgpt.com/backend-api/codex/models"),
+			CodexUsage:   env("UNISUB_CODEX_USAGE_URL", DefaultCodexUsageURL),
 			GrokAPI:      env("UNISUB_GROK_API_URL", "https://cli-chat-proxy.grok.com/v1/responses"),
 			GrokModels:   env("UNISUB_GROK_MODELS_URL", "https://cli-chat-proxy.grok.com/v1/models"),
 			GrokBilling:  env("UNISUB_GROK_BILLING_URL", DefaultGrokBillingURL),
@@ -243,15 +249,17 @@ func (c Config) validateUpstreams() error {
 	allowed := map[string][]string{
 		"ClaudeAPI":    {"https://api.anthropic.com/"},
 		"ClaudeModels": {"https://api.anthropic.com/"},
+		"ClaudeUsage":  {"https://api.anthropic.com/"},
 		"CodexAPI":     {"https://chatgpt.com/"},
 		"CodexModels":  {"https://chatgpt.com/"},
+		"CodexUsage":   {"https://chatgpt.com/"},
 		"GrokAPI":      {"https://cli-chat-proxy.grok.com/", "https://api.x.ai/"},
 		"GrokModels":   {"https://cli-chat-proxy.grok.com/", "https://api.x.ai/"},
 		"GrokBilling":  {"https://cli-chat-proxy.grok.com/"},
 	}
 	values := map[string]string{
-		"ClaudeAPI": c.Providers.ClaudeAPI, "ClaudeModels": c.Providers.ClaudeModels,
-		"CodexAPI": c.Providers.CodexAPI, "CodexModels": c.Providers.CodexModels,
+		"ClaudeAPI": c.Providers.ClaudeAPI, "ClaudeModels": c.Providers.ClaudeModels, "ClaudeUsage": c.Providers.ClaudeUsage,
+		"CodexAPI": c.Providers.CodexAPI, "CodexModels": c.Providers.CodexModels, "CodexUsage": c.Providers.CodexUsage,
 		"GrokAPI": c.Providers.GrokAPI, "GrokModels": c.Providers.GrokModels, "GrokBilling": c.Providers.GrokBilling,
 	}
 	for name, value := range values {

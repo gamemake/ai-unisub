@@ -12,6 +12,8 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	t.Setenv("UNISUB_GROK_OAUTH_SCOPES", "")
 	t.Setenv("UNISUB_GROK_CLIENT_VERSION", "")
 	t.Setenv("UNISUB_GROK_BILLING_URL", "")
+	t.Setenv("UNISUB_CLAUDE_USAGE_URL", "")
+	t.Setenv("UNISUB_CODEX_USAGE_URL", "")
 	t.Setenv("UNISUB_DB_DRIVER", "")
 	t.Setenv("UNISUB_DB_DSN", "")
 	t.Setenv("UNISUB_DB_PATH", "")
@@ -52,6 +54,12 @@ func TestLoadUsesDefaultAdminCredentials(t *testing.T) {
 	}
 	if cfg.Providers.GrokBilling != DefaultGrokBillingURL {
 		t.Fatalf("Grok billing URL = %q", cfg.Providers.GrokBilling)
+	}
+	if cfg.Providers.ClaudeUsage != DefaultClaudeUsageURL {
+		t.Fatalf("Claude usage URL = %q", cfg.Providers.ClaudeUsage)
+	}
+	if cfg.Providers.CodexUsage != DefaultCodexUsageURL {
+		t.Fatalf("Codex usage URL = %q", cfg.Providers.CodexUsage)
 	}
 	if cfg.DatabaseDriver != "sqlite" || cfg.DatabaseDSN != "./data/unisub.db" || cfg.DatabasePath != "./data/unisub.db" {
 		t.Fatalf("database defaults = %s %s %s", cfg.DatabaseDriver, cfg.DatabaseDSN, cfg.DatabasePath)
