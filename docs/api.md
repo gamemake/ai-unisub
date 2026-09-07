@@ -60,7 +60,7 @@
 | 场景 | 头 | 说明 |
 | --- | --- | --- |
 | 管理 API（`/api/*`，除登录） | `Authorization: Bearer <admin-jwt>` | 登录后签发的短期 HMAC-SHA256 JWT |
-| 下游转发（`/v1/*`、`/{provider}/v1/*`） | `Authorization: Bearer unisub_...` | 账号绑定的下游 API Key |
+| 下游转发（`/v1/*`、`/{provider}/v1/*`） | `Authorization: Bearer unisub_...`，或 `x-api-key` / `x-goog-api-key` | 账号绑定的下游 API Key（优先 Bearer） |
 
 ### 1.4 角色
 

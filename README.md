@@ -102,7 +102,7 @@ Grok OAuth 默认使用 xAI 官方 issuer、Grok CLI 公共客户端和官方 sc
 ```env
 UNISUB_GROK_OAUTH_ISSUER=https://auth.x.ai
 UNISUB_GROK_OAUTH_CLIENT_ID=b1a00492-073a-47ea-816f-4c329264a828
-UNISUB_GROK_CLIENT_VERSION=1.0.6
+UNISUB_GROK_CLIENT_VERSION=0.2.114
 UNISUB_GROK_OAUTH_SCOPES="openid profile email offline_access grok-cli:access api:access conversations:read conversations:write workspaces:read workspaces:write"
 UNISUB_GROK_BILLING_URL=https://cli-chat-proxy.grok.com/v1/billing?format=credits
 UNISUB_CLAUDE_USAGE_URL=https://api.anthropic.com/api/oauth/usage

@@ -138,10 +138,9 @@ func (s *Server) fetchGrokUser(ctx context.Context, account model.Account, crede
 	}
 	request.Header.Set("Authorization", "Bearer "+credentials.Bearer())
 	request.Header.Set("Accept", "application/json")
+	applyGrokCLIIdentityHeaders(request.Header, s.cfg.GrokOAuth.ClientVersion, request.URL.String())
+	// Billing/user probes always use the CLI token-auth surface, including test URLs.
 	request.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
-	request.Header.Set("x-grok-client-version", s.cfg.GrokOAuth.ClientVersion)
-	request.Header.Set("x-grok-client-identifier", "grok-shell")
-	request.Header.Set("x-grok-client-mode", "interactive")
 	response, err := doHTTP(client, request)
 	if err != nil {
 		return grokUserProfile{}, errors.New("could not query the Grok user profile")
@@ -217,14 +216,12 @@ func (s *Server) fetchGrokBilling(ctx context.Context, account model.Account, cr
 	}
 	request.Header.Set("Authorization", "Bearer "+credentials.Bearer())
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "grok-shell/"+s.cfg.GrokOAuth.ClientVersion+" ai-unisub")
+	applyGrokCLIIdentityHeaders(request.Header, s.cfg.GrokOAuth.ClientVersion, request.URL.String())
+	// Billing/user probes always use the CLI token-auth surface, including test URLs.
 	request.Header.Set("X-XAI-Token-Auth", "xai-grok-cli")
 	if userID := grokUserID(credentials); userID != "" {
 		request.Header.Set("x-userid", userID)
 	}
-	request.Header.Set("x-grok-client-version", s.cfg.GrokOAuth.ClientVersion)
-	request.Header.Set("x-grok-client-identifier", "grok-shell")
-	request.Header.Set("x-grok-client-mode", "interactive")
 
 	response, err := doHTTP(client, request)
 	if err != nil {

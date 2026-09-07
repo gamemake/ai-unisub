@@ -192,16 +192,22 @@ func TestExpiredGrokOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 
 func TestGrokCLIProxyHeadersMatchOAuthClientContract(t *testing.T) {
 	header := http.Header{}
-	injectProviderHeaders(header, model.ProviderGrok, "oauth", model.Credentials{AccessToken: "token"}, "https://cli-chat-proxy.grok.com/v1/responses", "1.0.6")
+	injectProviderHeaders(header, model.ProviderGrok, "oauth", model.Credentials{AccessToken: "token"}, "https://cli-chat-proxy.grok.com/v1/responses", "0.2.114", routeResponses)
 	want := map[string]string{
-		"Authorization": "Bearer token", "X-Grok-Client-Version": "1.0.6",
-		"x-grok-client-identifier": "grok-shell", "X-Grok-Client-Mode": "interactive",
-		"X-XAI-Token-Auth": "xai-grok-cli", "x-authenticateresponse": "authenticate-response",
+		"Authorization":           "Bearer token",
+		"User-Agent":              "xai-grok-workspace/0.2.114",
+		"X-Grok-Client-Version":   "0.2.114",
+		"x-grok-client-identifier": "grok-shell",
+		"X-Grok-Client-Mode":      "interactive",
+		"X-XAI-Token-Auth":        "xai-grok-cli",
 	}
 	for name, value := range want {
 		if got := header.Get(name); got != value {
 			t.Errorf("%s = %q, want %q", name, got, value)
 		}
+	}
+	if got := header.Get("x-authenticateresponse"); got != "" {
+		t.Errorf("unexpected x-authenticateresponse = %q", got)
 	}
 }
 

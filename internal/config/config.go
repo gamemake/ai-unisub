@@ -48,7 +48,8 @@ type CodexOAuthConfig struct {
 const (
 	DefaultGrokOAuthIssuer        = "https://auth.x.ai"
 	DefaultGrokOAuthClientID      = "b1a00492-073a-47ea-816f-4c329264a828"
-	DefaultGrokOAuthClientVersion = "1.0.6"
+	// Pinned Grok CLI / cli-chat-proxy client version (aligned with sub2api xai.CLIClientVersion).
+	DefaultGrokOAuthClientVersion = "0.2.114"
 	DefaultGrokBillingURL         = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 	DefaultClaudeUsageURL         = "https://api.anthropic.com/api/oauth/usage"
 	DefaultCodexUsageURL          = "https://chatgpt.com/backend-api/wham/usage"

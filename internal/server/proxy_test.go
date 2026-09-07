@@ -156,7 +156,7 @@ func TestProxyAcceptsXAPIKeyHeader(t *testing.T) {
 
 func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
 	codexHeader := make(http.Header)
-	injectProviderHeaders(codexHeader, model.ProviderCodex, "oauth", model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", "")
+	injectProviderHeaders(codexHeader, model.ProviderCodex, "oauth", model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", "", routeResponses)
 	if got := codexHeader.Get("User-Agent"); got != codexCLIUserAgent() {
 		t.Fatalf("codex UA = %q", got)
 	}
@@ -169,15 +169,121 @@ func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
 
 	claudeHeader := make(http.Header)
 	claudeHeader.Set("User-Agent", "claude-cli/2.1.200 (external, cli)")
-	injectProviderHeaders(claudeHeader, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "")
+	claudeHeader.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
+	injectProviderHeaders(claudeHeader, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "", routeMessages)
 	if got := claudeHeader.Get("User-Agent"); got != "claude-cli/2.1.200 (external, cli)" {
 		t.Fatalf("claude UA overwritten = %q", got)
 	}
+	if got := claudeHeader.Get("anthropic-beta"); got != "claude-code-20250219,oauth-2025-04-20" {
+		t.Fatalf("claude beta overwritten = %q", got)
+	}
 
 	emptyClaude := make(http.Header)
-	injectProviderHeaders(emptyClaude, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "")
+	injectProviderHeaders(emptyClaude, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "", routeMessages)
 	if got := emptyClaude.Get("User-Agent"); got != defaultClaudeCLIUserAgent {
-		t.Fatalf("claude fallback UA = %q", got)
+		t.Fatalf("claude mimic UA = %q", got)
+	}
+	if got := emptyClaude.Get("anthropic-beta"); !strings.Contains(got, "oauth-2025-04-20") || !strings.Contains(got, "claude-code-20250219") {
+		t.Fatalf("claude mimic beta = %q", got)
+	}
+	if got := emptyClaude.Get("X-Stainless-Lang"); got != "js" {
+		t.Fatalf("missing stainless mimic header: %q", got)
+	}
+}
+
+func TestClaudeMimicPathForNonCLIClient(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("beta") != "true" {
+			t.Errorf("beta query = %q", r.URL.RawQuery)
+		}
+		if got := r.Header.Get("User-Agent"); got != defaultClaudeCLIUserAgent {
+			t.Errorf("user-agent = %q", got)
+		}
+		beta := r.Header.Get("anthropic-beta")
+		for _, token := range []string{"claude-code-20250219", "oauth-2025-04-20", "interleaved-thinking-2025-05-14"} {
+			if !strings.Contains(beta, token) {
+				t.Errorf("anthropic-beta missing %s: %q", token, beta)
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"msg_1"}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/messages")
+	application.cfg.Providers.ClaudeAPI = upstream.URL
+	_, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "claude-mimic", Provider: model.ProviderClaude, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "claude-access"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("User-Agent", "curl/8.0.0")
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestProxyStoresAnthropicUnifiedQuotaWindows(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("anthropic-ratelimit-unified-5h-utilization", "0.42")
+		w.Header().Set("anthropic-ratelimit-unified-5h-reset", "1789000000")
+		w.Header().Set("anthropic-ratelimit-unified-7d-utilization", "0.18")
+		w.Header().Set("anthropic-ratelimit-unified-7d-reset", "1789600000")
+		_, _ = io.WriteString(w, `{"id":"msg_1"}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/messages")
+	application.cfg.Providers.ClaudeAPI = upstream.URL
+	account, key := createAccountWithKey(t, repo, repository.CreateAccountParams{
+		Name: "claude-unified-quota", Provider: model.ProviderClaude, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "claude-access"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
+	request.Header.Set("Authorization", "Bearer "+key)
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	stored, err := repo.GetAccount(context.Background(), account.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var quota struct {
+		Windows []struct {
+			Name             string  `json:"name"`
+			UsedPercent      float64 `json:"used_percent"`
+			RemainingPercent float64 `json:"remaining_percent"`
+			ResetAt          string  `json:"reset_at"`
+		} `json:"windows"`
+	}
+	if err := json.Unmarshal(stored.Quota, &quota); err != nil {
+		t.Fatal(err)
+	}
+	if len(quota.Windows) != 2 {
+		t.Fatalf("windows = %+v", quota.Windows)
+	}
+	byName := map[string]struct {
+		Used    float64
+		ResetAt string
+	}{}
+	for _, window := range quota.Windows {
+		byName[window.Name] = struct {
+			Used    float64
+			ResetAt string
+		}{Used: window.UsedPercent, ResetAt: window.ResetAt}
+	}
+	if byName["five_hour"].Used != 42 || byName["five_hour"].ResetAt == "" {
+		t.Fatalf("five_hour = %+v", byName["five_hour"])
+	}
+	if byName["seven_day"].Used != 18 || byName["seven_day"].ResetAt == "" {
+		t.Fatalf("seven_day = %+v", byName["seven_day"])
 	}
 }
 

@@ -143,8 +143,9 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			apiError(c, 501, "unsupported_endpoint", err.Error())
 			return
 		}
-		if c.Request.URL.RawQuery != "" {
-			upstreamURL += "?" + c.Request.URL.RawQuery
+		upstreamURL = appendRawQuery(upstreamURL, c.Request.URL.RawQuery)
+		if account.Provider == model.ProviderClaude && (kind == routeMessages || kind == routeCountTokens) {
+			upstreamURL = ensureQueryParam(upstreamURL, "beta", "true")
 		}
 
 		release, err := s.acquire(c.Request.Context(), account.ID, account.ConcurrencyLimit, s.queueTimeout(account.Account))
@@ -166,7 +167,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 				return nil, buildErr
 			}
 			copyDownstreamHeaders(request.Header, c.Request.Header)
-			injectProviderHeaders(request.Header, account.Provider, account.AuthType, currentCredentials, upstreamURL, s.cfg.GrokOAuth.ClientVersion)
+			injectProviderHeaders(request.Header, account.Provider, account.AuthType, currentCredentials, upstreamURL, s.cfg.GrokOAuth.ClientVersion, kind)
 			return request, nil
 		}
 		upstreamRequest, err := buildUpstreamRequest(credentials)
@@ -264,10 +265,6 @@ const (
 	codexCLIUserAgentSuffix = " (Ubuntu 22.4.0; x86_64) xterm-256color"
 )
 
-// Fallback Claude CLI UA used only when the client omitted User-Agent.
-// Real Claude Code traffic keeps its own UA (do not overwrite with a gateway brand string).
-const defaultClaudeCLIUserAgent = "claude-cli/2.1.220 (external, cli)"
-
 func codexCLIUserAgent() string {
 	return codexOriginator + "/" + codexClientVersion + codexCLIUserAgentSuffix
 }
@@ -278,7 +275,27 @@ func applyCodexIdentityHeaders(header http.Header) {
 	header.Set("version", codexClientVersion)
 }
 
-func injectProviderHeaders(header http.Header, provider model.Provider, authType string, credentials model.Credentials, upstreamURL, grokClientVersion string) {
+func grokCLIUserAgent(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		version = "0.2.114"
+	}
+	return "xai-grok-workspace/" + version
+}
+
+func applyGrokCLIIdentityHeaders(header http.Header, version, upstreamURL string) {
+	version = strings.TrimSpace(version)
+	header.Set("User-Agent", grokCLIUserAgent(version))
+	header.Set("X-Grok-Client-Version", version)
+	header.Set("x-grok-client-version", version)
+	header.Set("x-grok-client-identifier", "grok-shell")
+	header.Set("X-Grok-Client-Mode", "interactive")
+	if parsed, err := url.Parse(upstreamURL); err == nil && strings.EqualFold(parsed.Hostname(), "cli-chat-proxy.grok.com") {
+		header.Set("X-XAI-Token-Auth", "xai-grok-cli")
+	}
+}
+
+func injectProviderHeaders(header http.Header, provider model.Provider, authType string, credentials model.Credentials, upstreamURL, grokClientVersion string, kind routeKind) {
 	header.Set("Content-Type", "application/json")
 	switch provider {
 	case model.ProviderClaude:
@@ -287,17 +304,7 @@ func injectProviderHeaders(header http.Header, provider model.Provider, authType
 		} else {
 			header.Set("Authorization", "Bearer "+credentials.Bearer())
 		}
-		if header.Get("anthropic-version") == "" {
-			header.Set("anthropic-version", "2023-06-01")
-		}
-		header.Set("Accept", "application/json")
-		// Preserve real Claude Code / client UA; only fill a CLI-shaped fallback when missing.
-		if header.Get("User-Agent") == "" {
-			header.Set("User-Agent", defaultClaudeCLIUserAgent)
-		}
-		if header.Get("x-app") == "" {
-			header.Set("x-app", "cli")
-		}
+		applyClaudeOutboundHeaders(header, authType, kind)
 	case model.ProviderCodex:
 		header.Set("Authorization", "Bearer "+credentials.Bearer())
 		header.Set("Accept", "text/event-stream")
@@ -306,14 +313,7 @@ func injectProviderHeaders(header http.Header, provider model.Provider, authType
 	case model.ProviderGrok:
 		header.Set("Authorization", "Bearer "+credentials.Bearer())
 		header.Set("Accept", "application/json, text/event-stream")
-		header.Set("User-Agent", "grok-shell/"+grokClientVersion+" ai-unisub")
-		header.Set("X-Grok-Client-Version", grokClientVersion)
-		header.Set("x-grok-client-identifier", "grok-shell")
-		header.Set("X-Grok-Client-Mode", "interactive")
-		if parsed, err := url.Parse(upstreamURL); err == nil && strings.EqualFold(parsed.Hostname(), "cli-chat-proxy.grok.com") {
-			header.Set("X-XAI-Token-Auth", "xai-grok-cli")
-			header.Set("x-authenticateresponse", "authenticate-response")
-		}
+		applyGrokCLIIdentityHeaders(header, grokClientVersion, upstreamURL)
 	}
 }
 

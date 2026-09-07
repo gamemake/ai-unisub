@@ -282,10 +282,10 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 
 | ID | 行动项 | 状态 | 涉及文件 | 验收标准 |
 |---|---|---|---|---|
-| A4 | **Claude OAuth 非 CLI（mimic）路径**：客户端不像 Claude Code 时，补齐官方特征——`anthropic-beta`（至少含 `claude-code-20250219`、`oauth-2025-04-20` 等已知集合）、UA 使用当前 pin（如 `claude-cli/<pin> (external, cli)`）、messages/count_tokens URL 加 `?beta=true` | todo | `proxy.go`，`config.go` | 非 CLI 客户端用 Claude OAuth 时不被轻易判第三方；真 CLI 仍走 A2 透传 |
-| A5 | **说明并落地 Claude UA 策略**：文档/代码注释写明——`2.x (external, cli)` 是 mimic 版本钉，不是协议硬性要求；须与 beta（及若后续做 billing fingerprint）保持一致 | todo | `proxy.go` 或 `docs/` | 后续改版本时有单一 pin 来源，避免 UA/beta/cc_version 漂移 |
-| A6 | **Grok CLI 身份对齐**：版本 pin 与 UA 对齐 sub2api 当前已知可用值（如 `xai-grok-workspace/0.2.114`）；复核是否仍需要 `x-authenticateresponse` | todo | `proxy.go`，`config.go`，`grok_usage.go` | CLI proxy 出站身份与已知可用路径一致；billing/Responses 均可用 |
-| A7 | **Claude 被动额度头**：解析 `anthropic-ratelimit-unified-*`（保留现有 `x-ratelimit-*` 给 Codex/Grok） | todo | `quota_headers.go`，相关测试 | Claude OAuth 转发响应能更新账号 `quota_json`；主动 `/api/oauth/usage` 行为不变 |
+| A4 | **Claude OAuth 非 CLI（mimic）路径**：客户端不像 Claude Code 时，补齐官方特征——`anthropic-beta`（至少含 `claude-code-20250219`、`oauth-2025-04-20` 等已知集合）、UA 使用当前 pin（如 `claude-cli/<pin> (external, cli)`）、messages/count_tokens URL 加 `?beta=true` | done | `claude_identity.go`，`proxy.go` | 非 CLI 客户端用 Claude OAuth 时不被轻易判第三方；真 CLI 仍走 A2 透传 |
+| A5 | **说明并落地 Claude UA 策略**：文档/代码注释写明——`2.x (external, cli)` 是 mimic 版本钉，不是协议硬性要求；须与 beta（及若后续做 billing fingerprint）保持一致 | done | `claude_identity.go`，本文档 | 后续改版本时有单一 pin 来源，避免 UA/beta/cc_version 漂移 |
+| A6 | **Grok CLI 身份对齐**：版本 pin 与 UA 对齐 sub2api 当前已知可用值（如 `xai-grok-workspace/0.2.114`）；复核是否仍需要 `x-authenticateresponse` | done | `proxy.go`，`config.go`，`grok_usage.go`，`grok_oauth.go` | CLI proxy 出站身份与已知可用路径一致；billing/Responses 均可用；已去掉不必要的 `x-authenticateresponse` |
+| A7 | **Claude 被动额度头**：解析 `anthropic-ratelimit-unified-*`（保留现有 `x-ratelimit-*` 给 Codex/Grok） | done | `quota_headers.go`，相关测试 | Claude OAuth 转发响应能更新账号 `quota_json`；主动 `/api/oauth/usage` 行为不变 |
 
 ### P2 — 隔离、限流与统计正确性
 
@@ -310,7 +310,7 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 ### 建议实施顺序
 
 1. ~~**A1**（Codex 404 风险）→ **A2**（停止破坏真 Claude Code）→ **A3**（SDK 鉴权）~~ **已完成**
-2. **A4 / A5**（Claude 非 CLI OAuth）→ **A6**（Grok 身份）→ **A7**（Claude 被动额度）
+2. ~~**A4 / A5**（Claude 非 CLI OAuth）→ **A6**（Grok 身份）→ **A7**（Claude 被动额度）~~ **已完成**
 3. **A8 → A9 → A10 → A11 → A12**（并发与出口隔离、统计）
 4. **A13–A17** 按需
 
@@ -320,6 +320,15 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 - Claude Code OAuth 凭据面向 Claude Code 流量；上游用 UA + `anthropic-beta`（+ billing 指纹）判断是否第三方。
 - **真 Claude Code**：透传客户端身份（A2）。
 - **非 Claude Code 用 OAuth**：才注入当前 CLI 版本钉做 mimic（A4）；版本钉须与 beta 等特征一起维护（A5）。
+
+### P1 落地摘要（2026-09-07）
+
+| 项 | 实现要点 |
+|---|---|
+| A4 | `claude_identity.go`：UA 匹配 `claude-cli/X.Y.Z` 则透传；否则 OAuth mimic 注入完整 beta + Stainless 头；messages/count_tokens 自动补 `beta=true` |
+| A5 | pin 集中在 `claudeCLIVersionPin` / `defaultClaudeCLIUserAgent`；文件头注释说明与 beta 同步维护 |
+| A6 | 默认 `UNISUB_GROK_CLIENT_VERSION=0.2.114`；UA=`xai-grok-workspace/<ver>`；去掉 `x-authenticateresponse`；CLI host 仍带 `X-XAI-Token-Auth` |
+| A7 | `quota_headers.go` 解析 `anthropic-ratelimit-unified-{5h,7d,7d_oi}-*` 写入 `windows[]`；保留 `x-ratelimit-*` |
 
 ---
 

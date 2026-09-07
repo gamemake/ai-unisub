@@ -73,8 +73,8 @@ func (s *Server) fetchClaudeUsage(ctx context.Context, account model.Account, cr
 	request.Header.Set("Authorization", "Bearer "+credentials.Bearer())
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("anthropic-version", "2023-06-01")
-	request.Header.Set("anthropic-beta", "oauth-2025-04-20")
-	request.Header.Set("User-Agent", "claude-cli/1.0 ai-unisub")
+	request.Header.Set("anthropic-beta", claudeBetaOAuth)
+	request.Header.Set("User-Agent", defaultClaudeCLIUserAgent)
 	request.Header.Set("x-app", "cli")
 
 	response, err := doHTTP(client, request)
