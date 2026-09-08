@@ -22,6 +22,7 @@ type RequestLog struct {
 	SubscriptionName    string    `json:"subscription_name,omitempty"`
 	APIKeyID            *int64    `json:"api_key_id,omitempty"`
 	UserID              *int64    `json:"user_id,omitempty"`
+	Username            string    `json:"username,omitempty"`
 	APIKeyName          string    `json:"api_key_name,omitempty"`
 	APIKeyPrefix        string    `json:"api_key_prefix,omitempty"`
 	Provider            string    `json:"provider,omitempty"`
@@ -52,6 +53,7 @@ type RequestLog struct {
 type RequestLogFilter struct {
 	SubscriptionID *int64
 	APIKeyID       *int64
+	UserID         *int64
 	Provider       string
 	StatusCode     *int
 	Query          string
@@ -131,12 +133,14 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 	for _, table := range tables {
 		day := strings.TrimPrefix(table, "request_logs_")
 		unions = append(unions, fmt.Sprintf(`SELECT '%s' AS day, l.id, l.subscription_id, a.name AS subscription_name, l.api_key_id, k.name AS api_key_name, k.key_prefix,
+			COALESCE(l.user_id, k.user_id) AS user_id, COALESCE(u.username, '') AS username,
 			l.provider, l.method, l.path, l.query, l.client_ip, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
 			l.model, l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens, l.total_tokens,
 			l.request_truncated, l.response_truncated
 			FROM %s l
 			LEFT JOIN subscriptions a ON a.id=l.subscription_id
-			LEFT JOIN api_keys k ON k.id=l.api_key_id`, day, table))
+			LEFT JOIN api_keys k ON k.id=l.api_key_id
+			LEFT JOIN users u ON u.id=COALESCE(l.user_id, k.user_id)`, day, table))
 	}
 	from := "(" + strings.Join(unions, " UNION ALL ") + ")"
 	where, args := requestLogWhere(r.db.Dialect, filter)
@@ -145,7 +149,7 @@ func (r *Repository) ListRequestLogs(ctx context.Context, location *time.Locatio
 	if err := r.db.QueryRowContext(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	listQuery := "SELECT day, id, subscription_id, subscription_name, api_key_id, api_key_name, key_prefix, provider, method, path, query, client_ip, status_code, started_at, finished_at, duration_ms, request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, request_truncated, response_truncated FROM " +
+	listQuery := "SELECT day, id, subscription_id, subscription_name, api_key_id, api_key_name, key_prefix, user_id, username, provider, method, path, query, client_ip, status_code, started_at, finished_at, duration_ms, request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens, request_truncated, response_truncated FROM " +
 		from + " logs " + where + " ORDER BY started_at DESC LIMIT ? OFFSET ?"
 	rows, err := r.db.QueryContext(ctx, listQuery, append(append([]any{}, args...), filter.Limit, filter.Offset)...)
 	if err != nil {
@@ -185,12 +189,14 @@ func (r *Repository) GetRequestLog(ctx context.Context, day string, id int64) (R
 		return RequestLog{}, err
 	}
 	query := fmt.Sprintf(`SELECT '%s' AS day, l.id, l.subscription_id, a.name AS subscription_name, l.api_key_id, k.name AS api_key_name, k.key_prefix,
+		COALESCE(l.user_id, k.user_id) AS user_id, COALESCE(u.username, '') AS username,
 		l.provider, l.method, l.path, l.query, l.client_ip, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
 		l.model, l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens, l.total_tokens,
 		l.request_headers, l.request_body, l.response_headers, l.response_body, l.request_truncated, l.response_truncated
 		FROM %s l
 		LEFT JOIN subscriptions a ON a.id=l.subscription_id
 		LEFT JOIN api_keys k ON k.id=l.api_key_id
+		LEFT JOIN users u ON u.id=COALESCE(l.user_id, k.user_id)
 		WHERE l.id=?`, day, table)
 	row := r.db.QueryRowContext(ctx, query, id)
 	entry, err := scanRequestLogDetail(row)
@@ -591,6 +597,10 @@ func requestLogWhere(dialect database.Dialect, filter RequestLogFilter) (string,
 		clauses = append(clauses, "api_key_id=?")
 		args = append(args, *filter.APIKeyID)
 	}
+	if filter.UserID != nil {
+		clauses = append(clauses, "user_id=?")
+		args = append(args, *filter.UserID)
+	}
 	if provider := strings.TrimSpace(filter.Provider); provider != "" {
 		clauses = append(clauses, "provider=?")
 		args = append(args, provider)
@@ -602,8 +612,11 @@ func requestLogWhere(dialect database.Dialect, filter RequestLogFilter) (string,
 	if q := strings.TrimSpace(filter.Query); q != "" {
 		like := "%" + q + "%"
 		op := dialect.LikeOperator()
-		clauses = append(clauses, fmt.Sprintf(`(COALESCE(path,'') %s ? OR COALESCE(query,'') %s ? OR COALESCE(client_ip,'') %s ? OR COALESCE(model,'') %s ? OR COALESCE(request_id,'') %s ? OR COALESCE(error_type,'') %s ? OR COALESCE(subscription_name,'') %s ? OR COALESCE(api_key_name,'') %s ?)`, op, op, op, op, op, op, op, op))
-		args = append(args, like, like, like, like, like, like, like, like)
+		// Free-text search: path, query, IP, model, Request ID, and username.
+		// Username matching is available to admins (members are scoped to self
+		// by UserID). Subscription/API Key names use dedicated filters.
+		clauses = append(clauses, fmt.Sprintf(`(COALESCE(path,'') %s ? OR COALESCE(query,'') %s ? OR COALESCE(client_ip,'') %s ? OR COALESCE(model,'') %s ? OR COALESCE(request_id,'') %s ? OR COALESCE(username,'') %s ?)`, op, op, op, op, op, op))
+		args = append(args, like, like, like, like, like, like)
 	}
 	return "WHERE " + strings.Join(clauses, " AND "), args
 }
@@ -662,17 +675,19 @@ type requestLogScanner interface {
 
 func scanRequestLogSummary(s requestLogScanner) (RequestLog, error) {
 	var entry RequestLog
-	var subscriptionID, apiKeyID, input, output, cacheRead, cacheCreation, total sql.NullInt64
-	var subscriptionName, apiKeyName, prefix, provider, query, clientIP, requestID, errorType, model sql.NullString
+	var subscriptionID, apiKeyID, userID, input, output, cacheRead, cacheCreation, total sql.NullInt64
+	var subscriptionName, apiKeyName, prefix, username, provider, query, clientIP, requestID, errorType, model sql.NullString
 	var started, finished string
 	var requestTrunc, responseTrunc int
-	if err := s.Scan(&entry.Day, &entry.ID, &subscriptionID, &subscriptionName, &apiKeyID, &apiKeyName, &prefix, &provider,
+	if err := s.Scan(&entry.Day, &entry.ID, &subscriptionID, &subscriptionName, &apiKeyID, &apiKeyName, &prefix, &userID, &username, &provider,
 		&entry.Method, &entry.Path, &query, &clientIP, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
 		&model, &input, &output, &cacheRead, &cacheCreation, &total, &requestTrunc, &responseTrunc); err != nil {
 		return RequestLog{}, err
 	}
 	entry.SubscriptionID = nullInt64Ptr(subscriptionID)
 	entry.APIKeyID = nullInt64Ptr(apiKeyID)
+	entry.UserID = nullInt64Ptr(userID)
+	entry.Username = username.String
 	entry.SubscriptionName = subscriptionName.String
 	entry.APIKeyName = apiKeyName.String
 	entry.APIKeyPrefix = prefix.String
@@ -696,12 +711,12 @@ func scanRequestLogSummary(s requestLogScanner) (RequestLog, error) {
 
 func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	var entry RequestLog
-	var subscriptionID, apiKeyID, input, output, cacheRead, cacheCreation, total sql.NullInt64
-	var subscriptionName, apiKeyName, prefix, provider, query, clientIP, requestID, errorType, model sql.NullString
+	var subscriptionID, apiKeyID, userID, input, output, cacheRead, cacheCreation, total sql.NullInt64
+	var subscriptionName, apiKeyName, prefix, username, provider, query, clientIP, requestID, errorType, model sql.NullString
 	var requestHeaders, requestBody, responseHeaders, responseBody sql.NullString
 	var started, finished string
 	var requestTrunc, responseTrunc int
-	if err := s.Scan(&entry.Day, &entry.ID, &subscriptionID, &subscriptionName, &apiKeyID, &apiKeyName, &prefix, &provider,
+	if err := s.Scan(&entry.Day, &entry.ID, &subscriptionID, &subscriptionName, &apiKeyID, &apiKeyName, &prefix, &userID, &username, &provider,
 		&entry.Method, &entry.Path, &query, &clientIP, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
 		&model, &input, &output, &cacheRead, &cacheCreation, &total,
 		&requestHeaders, &requestBody, &responseHeaders, &responseBody, &requestTrunc, &responseTrunc); err != nil {
@@ -709,6 +724,8 @@ func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	}
 	entry.SubscriptionID = nullInt64Ptr(subscriptionID)
 	entry.APIKeyID = nullInt64Ptr(apiKeyID)
+	entry.UserID = nullInt64Ptr(userID)
+	entry.Username = username.String
 	entry.SubscriptionName = subscriptionName.String
 	entry.APIKeyName = apiKeyName.String
 	entry.APIKeyPrefix = prefix.String

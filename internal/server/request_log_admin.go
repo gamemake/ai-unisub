@@ -12,14 +12,32 @@ import (
 )
 
 func (s *Server) listRequestLogs(c *gin.Context) {
-	if !requireRole(c, model.RoleAdmin) {
+	user := userFromContext(c)
+	if user.ID == 0 {
+		apiError(c, http.StatusUnauthorized, "unauthorized", "valid admin bearer token required")
 		return
 	}
 	filter := repository.RequestLogFilter{
 		Provider: strings.TrimSpace(c.Query("provider")),
 		Query:    strings.TrimSpace(c.Query("q")),
 	}
+	if user.Role != model.RoleAdmin {
+		// Members may only browse their own call records.
+		id := user.ID
+		filter.UserID = &id
+	} else if raw := strings.TrimSpace(c.Query("user_id")); raw != "" {
+		id, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || id <= 0 {
+			apiError(c, http.StatusBadRequest, "invalid_request", "invalid user_id")
+			return
+		}
+		filter.UserID = &id
+	}
 	if raw := strings.TrimSpace(c.Query("subscription_id")); raw != "" {
+		if user.Role != model.RoleAdmin {
+			apiError(c, http.StatusForbidden, "forbidden", "admin role is required")
+			return
+		}
 		id, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || id <= 0 {
 			apiError(c, http.StatusBadRequest, "invalid_request", "invalid subscription_id")
@@ -72,7 +90,9 @@ func (s *Server) listRequestLogs(c *gin.Context) {
 }
 
 func (s *Server) getRequestLog(c *gin.Context) {
-	if !requireRole(c, model.RoleAdmin) {
+	user := userFromContext(c)
+	if user.ID == 0 {
+		apiError(c, http.StatusUnauthorized, "unauthorized", "valid admin bearer token required")
 		return
 	}
 	day := c.Param("day")
@@ -84,6 +104,10 @@ func (s *Server) getRequestLog(c *gin.Context) {
 	entry, err := s.repo.GetRequestLog(c.Request.Context(), day, id)
 	if err != nil {
 		handleRepoError(c, err)
+		return
+	}
+	if user.Role != model.RoleAdmin && (entry.UserID == nil || *entry.UserID != user.ID) {
+		apiError(c, http.StatusNotFound, "not_found", "not found")
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"log": entry})

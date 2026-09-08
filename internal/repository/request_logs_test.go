@@ -189,6 +189,82 @@ func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
 	}
 }
 
+func TestListRequestLogsSearchesByUsername(t *testing.T) {
+	repo := testRepository(t)
+	ctx := context.Background()
+	alice, err := repo.CreateUser(ctx, "alice", "alice-password-ok", model.RoleAdmin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob, err := repo.CreateUser(ctx, "bob", "bob-password-ok", model.RoleUser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subscription, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
+		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Credentials: model.Credentials{AccessToken: "token"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliceKey, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: subscription.ID, UserID: &alice.ID, Name: "alice-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bobKey, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: subscription.ID, UserID: &bob.ID, Name: "bob-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Date(2026, 9, 8, 8, 0, 0, 0, time.UTC)
+	for i, item := range []struct {
+		keyID  int64
+		userID int64
+	}{{aliceKey.ID, alice.ID}, {bobKey.ID, bob.ID}} {
+		keyID, userID := item.keyID, item.userID
+		if err := repo.RecordRequest(time.UTC, RequestLog{
+			SubscriptionID: &subscription.ID, APIKeyID: &keyID, UserID: &userID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+			StatusCode: 200, StartedAt: started.Add(time.Duration(i) * time.Minute), FinishedAt: started.Add(time.Duration(i)*time.Minute + time.Second),
+			Model: "gpt-test",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logs, total, err := repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{Query: "ali", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 1 || len(logs) != 1 || logs[0].Username != "alice" || logs[0].UserID == nil || *logs[0].UserID != alice.ID {
+		t.Fatalf("username search = total:%d data:%+v", total, logs)
+	}
+	detail, err := repo.GetRequestLog(ctx, logs[0].Day, logs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Username != "alice" || detail.UserID == nil || *detail.UserID != alice.ID {
+		t.Fatalf("detail username = %+v", detail)
+	}
+
+	// API Key / subscription names are not part of free-text search.
+	keyNamed, _, err := repo.CreateAPIKey(ctx, CreateAPIKeyParams{SubscriptionID: subscription.ID, UserID: &bob.ID, Name: "alice-shadow-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordRequest(time.UTC, RequestLog{
+		SubscriptionID: &subscription.ID, APIKeyID: &keyNamed.ID, UserID: &bob.ID, Provider: "codex", Method: "POST", Path: "/v1/responses",
+		StatusCode: 200, StartedAt: started.Add(2 * time.Minute), FinishedAt: started.Add(2*time.Minute + time.Second),
+		Model: "gpt-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	logs, total, err = repo.ListRequestLogs(ctx, time.UTC, RequestLogFilter{Query: "shadow", Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 0 || len(logs) != 0 {
+		t.Fatalf("api key name should not match free-text search: total:%d data:%+v", total, logs)
+	}
+}
+
 func TestUsageByUserAttributesRequestsToAPIKeyIssuer(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
