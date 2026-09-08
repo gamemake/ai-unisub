@@ -16,38 +16,39 @@ import (
 var requestLogTablePattern = regexp.MustCompile(`^request_logs_([0-9]{8})$`)
 
 type RequestLog struct {
-	ID                  int64     `json:"id"`
-	Day                 string    `json:"day"`
-	SubscriptionID      *int64    `json:"subscription_id,omitempty"`
-	SubscriptionName    string    `json:"subscription_name,omitempty"`
-	APIKeyID            *int64    `json:"api_key_id,omitempty"`
-	UserID              *int64    `json:"user_id,omitempty"`
-	Username            string    `json:"username,omitempty"`
-	APIKeyName          string    `json:"api_key_name,omitempty"`
-	APIKeyPrefix        string    `json:"api_key_prefix,omitempty"`
-	Provider            string    `json:"provider,omitempty"`
-	Method              string    `json:"method"`
-	Path                string    `json:"path"`
-	Query               string    `json:"query,omitempty"`
-	ClientIP            string    `json:"client_ip,omitempty"`
-	StatusCode          int       `json:"status_code"`
-	StartedAt           time.Time `json:"started_at"`
-	FinishedAt          time.Time `json:"finished_at"`
-	DurationMs          int64     `json:"duration_ms"`
-	RequestID           string    `json:"request_id,omitempty"`
-	ErrorType           string    `json:"error_type,omitempty"`
-	Model               string    `json:"model,omitempty"`
-	InputTokens         *int64    `json:"input_tokens,omitempty"`
-	OutputTokens        *int64    `json:"output_tokens,omitempty"`
-	CacheReadTokens     *int64    `json:"cache_read_tokens,omitempty"`
-	CacheCreationTokens *int64    `json:"cache_creation_tokens,omitempty"`
-	TotalTokens         *int64    `json:"total_tokens,omitempty"`
-	RequestHeaders      string    `json:"request_headers,omitempty"`
-	RequestBody         string    `json:"request_body,omitempty"`
-	ResponseHeaders     string    `json:"response_headers,omitempty"`
-	ResponseBody        string    `json:"response_body,omitempty"`
-	RequestTruncated    bool      `json:"request_truncated"`
-	ResponseTruncated   bool      `json:"response_truncated"`
+	ID                     int64     `json:"id"`
+	Day                    string    `json:"day"`
+	SubscriptionID         *int64    `json:"subscription_id,omitempty"`
+	SubscriptionName       string    `json:"subscription_name,omitempty"`
+	APIKeyID               *int64    `json:"api_key_id,omitempty"`
+	UserID                 *int64    `json:"user_id,omitempty"`
+	Username               string    `json:"username,omitempty"`
+	APIKeyName             string    `json:"api_key_name,omitempty"`
+	APIKeyPrefix           string    `json:"api_key_prefix,omitempty"`
+	Provider               string    `json:"provider,omitempty"`
+	Method                 string    `json:"method"`
+	Path                   string    `json:"path"`
+	Query                  string    `json:"query,omitempty"`
+	ClientIP               string    `json:"client_ip,omitempty"`
+	StatusCode             int       `json:"status_code"`
+	StartedAt              time.Time `json:"started_at"`
+	FinishedAt             time.Time `json:"finished_at"`
+	DurationMs             int64     `json:"duration_ms"`
+	RequestID              string    `json:"request_id,omitempty"`
+	ErrorType              string    `json:"error_type,omitempty"`
+	Model                  string    `json:"model,omitempty"`
+	InputTokens            *int64    `json:"input_tokens,omitempty"`
+	OutputTokens           *int64    `json:"output_tokens,omitempty"`
+	CacheReadTokens        *int64    `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens    *int64    `json:"cache_creation_tokens,omitempty"`
+	TotalTokens            *int64    `json:"total_tokens,omitempty"`
+	RequestHeaders         string    `json:"request_headers,omitempty"`
+	UpstreamRequestHeaders string    `json:"upstream_request_headers,omitempty"`
+	RequestBody            string    `json:"request_body,omitempty"`
+	ResponseHeaders        string    `json:"response_headers,omitempty"`
+	ResponseBody           string    `json:"response_body,omitempty"`
+	RequestTruncated       bool      `json:"request_truncated"`
+	ResponseTruncated      bool      `json:"response_truncated"`
 }
 
 type RequestLogFilter struct {
@@ -83,8 +84,8 @@ func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) er
 	query := fmt.Sprintf(`INSERT INTO %s
 		(subscription_id, api_key_id, user_id, provider, method, path, query, client_ip, status_code, started_at, finished_at, duration_ms,
 		 request_id, error_type, model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, total_tokens,
-		 request_headers, request_body, response_headers, response_body, request_truncated, response_truncated)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, table)
+		 request_headers, upstream_request_headers, request_body, response_headers, response_body, request_truncated, response_truncated)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, table)
 	_, err = tx.ExecContext(ctx, query,
 		nullableInt64(entry.SubscriptionID), nullableInt64(entry.APIKeyID), nullableInt64(entry.UserID), nullableString(entry.Provider),
 		entry.Method, entry.Path, nullableString(entry.Query), nullableString(entry.ClientIP), entry.StatusCode,
@@ -92,7 +93,7 @@ func (r *Repository) RecordRequest(location *time.Location, entry RequestLog) er
 		nullableString(entry.RequestID), nullableString(entry.ErrorType), nullableString(entry.Model),
 		nullableInt64(entry.InputTokens), nullableInt64(entry.OutputTokens), nullableInt64(entry.CacheReadTokens),
 		nullableInt64(entry.CacheCreationTokens), nullableInt64(entry.TotalTokens),
-		nullableString(entry.RequestHeaders), nullableString(entry.RequestBody),
+		nullableString(entry.RequestHeaders), nullableString(entry.UpstreamRequestHeaders), nullableString(entry.RequestBody),
 		nullableString(entry.ResponseHeaders), nullableString(entry.ResponseBody),
 		boolToInt(entry.RequestTruncated), boolToInt(entry.ResponseTruncated))
 	if err != nil {
@@ -192,7 +193,7 @@ func (r *Repository) GetRequestLog(ctx context.Context, day string, id int64) (R
 		COALESCE(l.user_id, k.user_id) AS user_id, COALESCE(u.username, '') AS username,
 		l.provider, l.method, l.path, l.query, l.client_ip, l.status_code, l.started_at, l.finished_at, l.duration_ms, l.request_id, l.error_type,
 		l.model, l.input_tokens, l.output_tokens, l.cache_read_tokens, l.cache_creation_tokens, l.total_tokens,
-		l.request_headers, l.request_body, l.response_headers, l.response_body, l.request_truncated, l.response_truncated
+		l.request_headers, l.upstream_request_headers, l.request_body, l.response_headers, l.response_body, l.request_truncated, l.response_truncated
 		FROM %s l
 		LEFT JOIN subscriptions a ON a.id=l.subscription_id
 		LEFT JOIN api_keys k ON k.id=l.api_key_id
@@ -713,13 +714,13 @@ func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	var entry RequestLog
 	var subscriptionID, apiKeyID, userID, input, output, cacheRead, cacheCreation, total sql.NullInt64
 	var subscriptionName, apiKeyName, prefix, username, provider, query, clientIP, requestID, errorType, model sql.NullString
-	var requestHeaders, requestBody, responseHeaders, responseBody sql.NullString
+	var requestHeaders, upstreamRequestHeaders, requestBody, responseHeaders, responseBody sql.NullString
 	var started, finished string
 	var requestTrunc, responseTrunc int
 	if err := s.Scan(&entry.Day, &entry.ID, &subscriptionID, &subscriptionName, &apiKeyID, &apiKeyName, &prefix, &userID, &username, &provider,
 		&entry.Method, &entry.Path, &query, &clientIP, &entry.StatusCode, &started, &finished, &entry.DurationMs, &requestID, &errorType,
 		&model, &input, &output, &cacheRead, &cacheCreation, &total,
-		&requestHeaders, &requestBody, &responseHeaders, &responseBody, &requestTrunc, &responseTrunc); err != nil {
+		&requestHeaders, &upstreamRequestHeaders, &requestBody, &responseHeaders, &responseBody, &requestTrunc, &responseTrunc); err != nil {
 		return RequestLog{}, err
 	}
 	entry.SubscriptionID = nullInt64Ptr(subscriptionID)
@@ -741,6 +742,7 @@ func scanRequestLogDetail(s requestLogScanner) (RequestLog, error) {
 	entry.CacheCreationTokens = nullInt64Ptr(cacheCreation)
 	entry.TotalTokens = nullInt64Ptr(total)
 	entry.RequestHeaders = requestHeaders.String
+	entry.UpstreamRequestHeaders = upstreamRequestHeaders.String
 	entry.RequestBody = requestBody.String
 	entry.ResponseHeaders = responseHeaders.String
 	entry.ResponseBody = responseBody.String

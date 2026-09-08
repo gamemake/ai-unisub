@@ -102,7 +102,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 		SubscriptionID: &accountID, APIKeyID: &apiKeyID, Provider: "codex", Method: "POST", Path: "/v1/responses",
 		Query: "beta=1", ClientIP: "203.0.113.10", StatusCode: 200, StartedAt: started, FinishedAt: started.Add(40 * time.Millisecond),
 		RequestID: "req_1", Model: "gpt-test", InputTokens: &input, OutputTokens: &output, TotalTokens: &total,
-		RequestHeaders:  `{"Content-Type":["application/json"],"Authorization":["[redacted]"]}`,
+		RequestHeaders:  `{"Authorization":["Bearer unisub_test"],"Content-Type":["application/json"]}`,
 		RequestBody:     `{"model":"gpt-test"}`,
 		ResponseHeaders: `{"Content-Type":["application/json"]}`,
 		ResponseBody:    `{"id":"r1","usage":{"input_tokens":12,"output_tokens":34}}`,
@@ -131,7 +131,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	if detail.RequestBody != `{"model":"gpt-test"}` || detail.Query != "beta=1" || detail.ClientIP != "203.0.113.10" || detail.ResponseBody == "" {
 		t.Fatalf("detail http = %+v", detail)
 	}
-	if detail.RequestHeaders != `{"Content-Type":["application/json"],"Authorization":["[redacted]"]}` {
+	if detail.RequestHeaders != `{"Authorization":["Bearer unisub_test"],"Content-Type":["application/json"]}` {
 		t.Fatalf("request headers = %s", detail.RequestHeaders)
 	}
 	if detail.ResponseHeaders != `{"Content-Type":["application/json"]}` {

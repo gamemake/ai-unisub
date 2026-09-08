@@ -963,23 +963,11 @@ Provider 适配原则：
 - 管理员密码明文。
 - 下游 API Key 明文。
 
-### 11.2 日志脱敏
+### 11.2 调用日志
 
-禁止记录：
+「调用记录」按原文保存完整 HTTP 请求/响应头与正文（正文超过约 1 MiB 截断），**不做头脱敏**。管理入口仍须鉴权；勿将管理面暴露到公网。
 
-```text
-Authorization
-Cookie
-sessionKey
-sso
-refresh_token
-access_token
-id_token
-chatgpt-account-id
-完整请求 body
-```
-
-日志只记录：
+结构化摘要字段仍包括：
 
 ```text
 account_id

@@ -11,7 +11,7 @@ Claude、Codex 与 Grok 订阅账号的原生协议转发网关。每个下游 `
 - Claude Messages/Count Tokens、Codex Responses、Grok Responses 和三者 Models 原生透传。
 - SSE 实时 flush、客户端取消向上游传播、独立 Provider 连接池。
 - 平台别名隔离、账号并发限制、API Key RPM 限制、请求体上限。
-- 转发调用按系统当前时区写入每日请求日志分表（含脱敏后的完整 HTTP 请求/响应和 Token 用量），并在每个整点自动清理超过保留期的分表。控制台「调用记录」可浏览这些记录。
+- 转发调用按系统当前时区写入每日请求日志分表（含完整 HTTP 请求/响应和 Token 用量），并在每个整点自动清理超过保留期的分表。控制台「调用记录」可浏览这些记录。
 - 默认拒绝的 Responses 子路径校验和敏感下游请求头清洗。
 - Grok 官方 device-code OAuth 登录，以及 access token 到期前的自动刷新。
 - Claude / Codex 官方浏览器 PKCE OAuth 登录，以及 access token 到期前的自动刷新。
@@ -149,7 +149,7 @@ UNISUB_CODEX_OAUTH_SCOPES="openid profile email offline_access"
 
 `concurrency_queue_timeout_seconds` 控制账号达到最大并发数后的等待时间，范围为 0 到 300 秒。等待期间有请求释放并发槽位时会继续处理；超时后返回 `429 concurrency_limited`。账号值为 0 时继承环境变量 `UNISUB_CONCURRENCY_QUEUE_TIMEOUT_SECONDS`；环境变量未设置或为 0 时使用内置缺省值 180 秒（3 分钟）。
 
-请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。每条记录保存方法、路径、query、来源 IP、状态码、耗时、上游 request ID、错误类型、模型、Token 用量，以及脱敏后的请求/响应头和正文（正文超过 1 MiB 会截断）。来源 IP 使用 Gin `ClientIP()`：有可信反向代理时读取 `X-Forwarded-For` / `X-Real-IP`，否则记录直连地址。`Authorization`、`Cookie`、`x-api-key` 等敏感头只记录为 `[redacted]`。管理入口：
+请求日志按操作系统或容器的当前时区（Go `time.Local`）分天写入 `request_logs_YYYYMMDD` 表，不提供单独的应用时区配置。`UNISUB_REQUEST_LOG_RETENTION_DAYS` 指定保留天数，默认 30 天；服务按系统时区在每个整点检查并删除超出保留期的整张日志表。每条记录保存方法、路径、query、来源 IP、状态码、耗时、上游 request ID、错误类型、模型、Token 用量，以及完整请求/响应头和正文（正文超过 1 MiB 会截断；头不做脱敏，含 `Authorization` 等敏感值）。来源 IP 使用 Gin `ClientIP()`：有可信反向代理时读取 `X-Forwarded-For` / `X-Real-IP`，否则记录直连地址。管理入口：
 
 ```text
 GET /api/request-logs

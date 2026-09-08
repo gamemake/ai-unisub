@@ -190,9 +190,10 @@ request_logs_YYYYMMDD
 | `cache_read_tokens` | INTEGER | BIGINT | 可空 | 从缓存读取的 Token 数 |
 | `cache_creation_tokens` | INTEGER | BIGINT | 可空 | 用于创建缓存的 Token 数 |
 | `total_tokens` | INTEGER | BIGINT | 可空 | 总 Token 数 |
-| `request_headers` | TEXT | TEXT | 可空 | 脱敏后的完整请求头文本 |
+| `request_headers` | TEXT | TEXT | 可空 | 完整请求头文本（原文，不做脱敏） |
+| `upstream_request_headers` | TEXT | TEXT | 可空 | 发往上游的请求头文本（原文，不做脱敏） |
 | `request_body` | TEXT | TEXT | 可空 | 请求正文；超过记录上限时截断 |
-| `response_headers` | TEXT | TEXT | 可空 | 脱敏后的完整响应头文本 |
+| `response_headers` | TEXT | TEXT | 可空 | 完整响应头文本（原文，不做脱敏） |
 | `response_body` | TEXT | TEXT | 可空 | 响应正文；超过记录上限时截断 |
 | `request_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 请求正文是否被截断：`0` 否，`1` 是 |
 | `response_truncated` | INTEGER | INTEGER | 非空，默认 `0` | 响应正文是否被截断：`0` 否，`1` 是 |

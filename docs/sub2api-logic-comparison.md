@@ -294,7 +294,7 @@ Anthropic OAuth 实际多是 `anthropic-ratelimit-unified-*`。
 | A8 | **并发 limiter 随账号配置更新**：`concurrency_limit` 变更时重建/替换 channel；删除账号时清理 | done | `server.go`，`admin.go` | 管理端调高/调低并发后无需重启即生效；进行中请求不 panic |
 | A9 | **直连账号禁用环境代理**：无 `proxy_url` 时 `Transport.Proxy = nil`，禁止 `ProxyFromEnvironment` | done | `account_proxy.go`，`server.go` | 设置 `HTTP_PROXY` 时，无代理账号仍直连上游 |
 | A10 | **SOCKS5 使用远端 DNS（socks5h 语义）**：避免本机解析目标主机 | done | `account_proxy.go` | `socks5://` 规范化为 `socks5h://`；`FromURL` + 带超时 forward dialer |
-| A11 | **剥离 `Proxy-Authorization`**：加入转发黑名单（日志脱敏已有则保持） | done | `proxy.go` | 客户端带 `Proxy-Authorization` 时上游请求不含该头 |
+| A11 | **剥离 `Proxy-Authorization`**：加入转发黑名单 | done | `proxy.go` | 客户端带 `Proxy-Authorization` 时上游请求不含该头 |
 | A12 | **处理 `Accept-Encoding` / 压缩体**：不透传或出站关闭压缩协商，或对响应解压后再做本地 usage 解析与日志截断 | done | `proxy.go` | 剥离客户端 `Accept-Encoding`；配合 `DisableCompression` 保证本地 Token 统计可读 |
 
 ### P3 — 可选增强（非阻塞）

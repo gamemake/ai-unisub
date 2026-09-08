@@ -905,7 +905,7 @@ Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/
 
 ## 11. 请求日志
 
-转发调用按本地时区写入每日分表 `request_logs_YYYYMMDD`。敏感头（如 `Authorization`、`Cookie`、`x-api-key`）记录为 `[redacted]`；正文超过约 1 MiB 会截断。保留天数由 `UNISUB_REQUEST_LOG_RETENTION_DAYS` 控制（默认 30），整点清理过期整表。
+转发调用按本地时区写入每日分表 `request_logs_YYYYMMDD`。请求/响应头按原文落库（不做脱敏）；正文超过约 1 MiB 会截断。保留天数由 `UNISUB_REQUEST_LOG_RETENTION_DAYS` 控制（默认 30），整点清理过期整表。
 
 非 `admin` 用户只能看到自己创建的账号相关日志。
 
@@ -975,6 +975,7 @@ Claude 使用 Claude Code 公共客户端和 `https://platform.claude.com/oauth/
     "id": 12,
     "day": "20260827",
     "request_headers": "...",
+    "upstream_request_headers": "...",
     "request_body": "...",
     "response_headers": "...",
     "response_body": "...",

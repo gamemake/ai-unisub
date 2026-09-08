@@ -153,6 +153,27 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := migrateAPIKeyUsers(ctx, db, now); err != nil {
 		return err
 	}
+	if err := dropRequestLogRawHeaders(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func dropRequestLogRawHeaders(ctx context.Context, db *sql.DB) error {
+	tables, err := listTablesLike(ctx, dbQuerier{db}, SQLite, "request_logs_%")
+	if err != nil {
+		return err
+	}
+	for _, table := range tables {
+		if !validIdent(table) {
+			continue
+		}
+		for _, column := range []string{"raw_request_headers", "raw_upstream_request_headers"} {
+			if err := dropColumnIfExists(ctx, db, table, column); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

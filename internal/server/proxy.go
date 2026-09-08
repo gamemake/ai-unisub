@@ -37,7 +37,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 		c.Writer = capture
 		requestLog := repository.RequestLog{
 			Method: c.Request.Method, Path: c.Request.URL.Path, Query: c.Request.URL.RawQuery, ClientIP: c.ClientIP(), StartedAt: started,
-			RequestHeaders: sanitizeHeadersJSON(c.Request.Header),
+			RequestHeaders: headersJSON(c.Request.Header),
 		}
 		var requestBody []byte
 		defer func() {
@@ -51,7 +51,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 				requestLog.ErrorType = "client_canceled"
 			}
 			requestLog.RequestBody, requestLog.RequestTruncated = truncateForLog(requestBody, requestLogBodyMaxBytes)
-			requestLog.ResponseHeaders = sanitizeHeadersJSON(c.Writer.Header())
+			requestLog.ResponseHeaders = headersJSON(c.Writer.Header())
 			requestLog.ResponseBody = capture.Body()
 			requestLog.ResponseTruncated = capture.Truncated()
 			tokens := capture.TokenUsage()
@@ -169,6 +169,7 @@ func (s *Server) proxyHandler(expectedProvider string, kind routeKind, pathParam
 			}
 			copyDownstreamHeaders(request.Header, c.Request.Header)
 			injectProviderHeaders(request.Header, account.Provider, account.AuthType, currentCredentials, upstreamURL, s.cfg.GrokOAuth.ClientVersion, kind)
+			requestLog.UpstreamRequestHeaders = headersJSON(request.Header)
 			return request, nil
 		}
 		upstreamRequest, err := buildUpstreamRequest(credentials)

@@ -15,18 +15,6 @@ import (
 
 const requestLogBodyMaxBytes = 1 << 20
 
-var redactedLogHeaders = map[string]bool{
-	"authorization":          true,
-	"proxy-authorization":    true,
-	"x-api-key":              true,
-	"x-goog-api-key":         true,
-	"cookie":                 true,
-	"set-cookie":             true,
-	"chatgpt-account-id":     true,
-	"x-xai-token-auth":       true,
-	"x-authenticateresponse": true,
-}
-
 type capturingResponseWriter struct {
 	gin.ResponseWriter
 	stored limitedBuffer
@@ -142,7 +130,7 @@ func bytesToLogString(body []byte) string {
 	return strings.ToValidUTF8(string(body), "\uFFFD")
 }
 
-func sanitizeHeadersJSON(header http.Header) string {
+func headersJSON(header http.Header) string {
 	if len(header) == 0 {
 		return "{}"
 	}
@@ -153,10 +141,6 @@ func sanitizeHeadersJSON(header http.Header) string {
 	sort.Strings(keys)
 	out := make(map[string][]string, len(keys))
 	for _, key := range keys {
-		if redactedLogHeaders[strings.ToLower(key)] {
-			out[key] = []string{"[redacted]"}
-			continue
-		}
 		out[key] = append([]string(nil), header[key]...)
 	}
 	encoded, err := json.Marshal(out)

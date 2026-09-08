@@ -448,14 +448,14 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 	if !strings.Contains(detail.ResponseBody, `"id":"r1"`) {
 		t.Fatalf("response body = %s", detail.ResponseBody)
 	}
-	if strings.Contains(strings.ToLower(detail.RequestHeaders), "bearer "+strings.ToLower(key)) || strings.Contains(detail.RequestHeaders, key) {
-		t.Fatalf("api key leaked into request headers: %s", detail.RequestHeaders)
-	}
-	if !strings.Contains(detail.RequestHeaders, "[redacted]") {
-		t.Fatalf("authorization was not redacted: %s", detail.RequestHeaders)
+	if !strings.Contains(detail.RequestHeaders, "Bearer "+key) {
+		t.Fatalf("authorization missing from request headers: %s", detail.RequestHeaders)
 	}
 	if !strings.Contains(detail.RequestHeaders, "X-Custom") {
 		t.Fatalf("custom header missing: %s", detail.RequestHeaders)
+	}
+	if !strings.Contains(detail.UpstreamRequestHeaders, "X-Custom") || !strings.Contains(detail.UpstreamRequestHeaders, "upstream-token") {
+		t.Fatalf("upstream request headers incomplete: %s", detail.UpstreamRequestHeaders)
 	}
 	if !strings.Contains(detail.ResponseHeaders, "up-99") {
 		t.Fatalf("response headers missing request id: %s", detail.ResponseHeaders)

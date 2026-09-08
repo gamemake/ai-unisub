@@ -148,6 +148,13 @@ func migratePostgresRequestLogs(ctx context.Context, db *sql.DB) error {
 		if err != nil {
 			return err
 		}
+		for _, column := range []string{"raw_request_headers", "raw_upstream_request_headers"} {
+			if cols[column] {
+				if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, table, column)); err != nil {
+					return fmt.Errorf("drop %s.%s: %w", table, column, err)
+				}
+			}
+		}
 		if cols["account_id"] && !cols["subscription_id"] {
 			if _, err := db.ExecContext(ctx, fmt.Sprintf(`ALTER TABLE %s RENAME COLUMN account_id TO subscription_id`, table)); err != nil {
 				return fmt.Errorf("rename %s.account_id: %w", table, err)

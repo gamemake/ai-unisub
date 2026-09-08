@@ -93,6 +93,37 @@ func TestMigrateConvertsConcurrencyQueueTimeoutToSeconds(t *testing.T) {
 	}
 }
 
+func TestMigrateDropsRawRequestHeaderColumns(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "raw-headers.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE request_logs_20260908 (
+		id INTEGER PRIMARY KEY,
+		subscription_id INTEGER,
+		started_at TEXT,
+		raw_request_headers TEXT,
+		raw_upstream_request_headers TEXT,
+		request_headers TEXT,
+		upstream_request_headers TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	cols, err := columnNames(context.Background(), dbQuerier{db}, SQLite, "request_logs_20260908")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"raw_request_headers", "raw_upstream_request_headers"} {
+		if cols[column] {
+			t.Fatalf("column %s still exists", column)
+		}
+	}
+}
+
 func TestMigrateRemovesAPIKeyAccountUniqueConstraint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "keys.db")
 	db, err := sql.Open("sqlite", path)
