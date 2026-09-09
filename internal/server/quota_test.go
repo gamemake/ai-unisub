@@ -16,7 +16,7 @@ import (
 func TestSubscriptionUsageReturnsStoredQuotaForOverview(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "quota-account", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "quota-account", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
@@ -71,7 +71,7 @@ func TestSubscriptionUsageReturnsStoredQuotaForOverview(t *testing.T) {
 func TestSubscriptionUsageKeepsUnknownWhenQuotaUnavailable(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "unknown-quota", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "unknown-quota", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {

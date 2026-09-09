@@ -15,7 +15,6 @@ func currentSchema(d Dialect) []string {
 			id %s,
 			name TEXT NOT NULL,
 			provider TEXT NOT NULL CHECK (provider IN ('claude','codex','grok')),
-			auth_type TEXT NOT NULL CHECK (auth_type IN ('oauth','api_key')),
 			credentials_json %s NOT NULL,
 			metadata_json TEXT NOT NULL DEFAULT '{}',
 			proxy_url TEXT,

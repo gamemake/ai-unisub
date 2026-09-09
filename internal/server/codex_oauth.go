@@ -36,7 +36,7 @@ func (s *Server) exchangeCodexCode(ctx context.Context, flow *pkceOAuthFlow, cod
 }
 
 func (s *Server) codexCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
-	if account.Provider != model.ProviderCodex || account.AuthType != "oauth" {
+	if account.Provider != model.ProviderCodex {
 		return credentials, nil
 	}
 	originalAccessToken := credentials.AccessToken

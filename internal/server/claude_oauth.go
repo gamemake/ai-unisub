@@ -67,7 +67,7 @@ func (s *Server) exchangeClaudeCode(ctx context.Context, flow *pkceOAuthFlow, co
 }
 
 func (s *Server) claudeCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
-	if account.Provider != model.ProviderClaude || account.AuthType != "oauth" {
+	if account.Provider != model.ProviderClaude {
 		return credentials, nil
 	}
 	originalAccessToken := credentials.AccessToken
@@ -187,7 +187,7 @@ func parseOAuthErrorBody(body []byte) grokOAuthErrorResponse {
 
 func createOAuthSubscriptionParams(account oauthSubscriptionRequest, provider model.Provider, credentials model.Credentials, expiresAt *time.Time) repository.CreateSubscriptionParams {
 	return repository.CreateSubscriptionParams{
-		Name: account.Name, Provider: provider, AuthType: "oauth", Credentials: credentials,
+		Name: account.Name, Provider: provider, Credentials: credentials,
 		Metadata: account.Metadata, ConcurrencyLimit: account.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: account.ConcurrencyQueueTimeoutSeconds,
 		ProxyURL:                       account.ProxyURL, TokenExpiresAt: expiresAt,

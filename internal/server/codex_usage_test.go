@@ -48,7 +48,7 @@ func TestRefreshCodexUsageFetchesWindows(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.CodexUsage = upstream.URL + "/backend-api/wham/usage"
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "codex-usage", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "codex-usage", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "codex-access-token", RefreshToken: "refresh-token", ChatGPTAccountID: "acct-123"},
 	})
 	if err != nil {

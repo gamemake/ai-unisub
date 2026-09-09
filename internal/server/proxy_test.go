@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -58,7 +59,7 @@ func TestCodexSSEProxyIsolationAndPassthrough(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "codex", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 	})
 	if account.ID == 0 {
@@ -104,7 +105,7 @@ func TestProxyStripsProxyAuthorizationAndAcceptEncoding(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "strip-headers", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "strip-headers", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))
@@ -122,6 +123,56 @@ func TestProxyStripsProxyAuthorizationAndAcceptEncoding(t *testing.T) {
 	}
 	if len(logs) != 1 || logs[0].InputTokens == nil || *logs[0].InputTokens != 4 {
 		t.Fatalf("token stats = %+v", logs)
+	}
+}
+
+func TestProxyRestoresCorrectContentLength(t *testing.T) {
+	requestBody := []byte(`{"model":"gpt-test"}`)
+	want := strconv.Itoa(len(requestBody))
+	var gotContentLength string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotContentLength = r.Header.Get("Content-Length")
+		if r.ContentLength != int64(len(requestBody)) {
+			t.Errorf("ContentLength field = %d, want %d", r.ContentLength, len(requestBody))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"r1","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`)
+	}))
+	defer upstream.Close()
+
+	application, repo := testServer(t, upstream.URL+"/responses")
+	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
+		Name: "content-length", Provider: model.ProviderCodex,
+		Credentials: model.Credentials{AccessToken: "upstream-token"},
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader(requestBody))
+	request.Header.Set("Authorization", "Bearer "+key)
+	request.Header.Set("Content-Length", "1") // wrong on purpose; gateway must correct it
+	request.ContentLength = 1
+	recorder := httptest.NewRecorder()
+	application.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if gotContentLength != want {
+		t.Fatalf("upstream Content-Length = %q, want %q", gotContentLength, want)
+	}
+	logs, _, err := repo.ListRequestLogs(context.Background(), time.Local, repository.RequestLogFilter{Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("logs = %+v", logs)
+	}
+	detail, err := repo.GetRequestLog(context.Background(), logs[0].Day, logs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(detail.RequestHeaders, `"Content-Length"`) {
+		t.Fatalf("request headers missing Content-Length: %s", detail.RequestHeaders)
+	}
+	if !strings.Contains(detail.UpstreamRequestHeaders, `"Content-Length":["`+want+`"]`) {
+		t.Fatalf("upstream request headers missing corrected Content-Length: %s", detail.UpstreamRequestHeaders)
 	}
 }
 
@@ -145,7 +196,7 @@ func TestClaudePreservesClientUserAgent(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "claude-ua", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "claude-ua", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
@@ -169,7 +220,7 @@ func TestProxyAcceptsXAPIKeyHeader(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "claude-x-api-key", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "claude-x-api-key", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
 
@@ -192,7 +243,7 @@ func TestProxyAcceptsXAPIKeyHeader(t *testing.T) {
 
 func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
 	codexHeader := make(http.Header)
-	injectProviderHeaders(codexHeader, model.ProviderCodex, "oauth", model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", "", routeResponses)
+	injectProviderHeaders(codexHeader, model.ProviderCodex, model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", routeResponses)
 	if got := codexHeader.Get("User-Agent"); got != codexCLIUserAgent() {
 		t.Fatalf("codex UA = %q", got)
 	}
@@ -206,7 +257,7 @@ func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
 	claudeHeader := make(http.Header)
 	claudeHeader.Set("User-Agent", "claude-cli/2.1.200 (external, cli)")
 	claudeHeader.Set("anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
-	injectProviderHeaders(claudeHeader, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "", routeMessages)
+	injectProviderHeaders(claudeHeader, model.ProviderClaude, model.Credentials{AccessToken: "t"}, "", routeMessages)
 	if got := claudeHeader.Get("User-Agent"); got != "claude-cli/2.1.200 (external, cli)" {
 		t.Fatalf("claude UA overwritten = %q", got)
 	}
@@ -215,31 +266,55 @@ func TestInjectProviderHeadersCodexAndClaudeUA(t *testing.T) {
 	}
 
 	emptyClaude := make(http.Header)
-	injectProviderHeaders(emptyClaude, model.ProviderClaude, "oauth", model.Credentials{AccessToken: "t"}, "", "", routeMessages)
-	if got := emptyClaude.Get("User-Agent"); got != defaultClaudeCLIUserAgent {
-		t.Fatalf("claude mimic UA = %q", got)
+	injectProviderHeaders(emptyClaude, model.ProviderClaude, model.Credentials{AccessToken: "t"}, "", routeMessages)
+	if got := emptyClaude.Get("User-Agent"); got != "" {
+		t.Fatalf("claude UA should be preserved, got %q", got)
 	}
-	if got := emptyClaude.Get("anthropic-beta"); !strings.Contains(got, "oauth-2025-04-20") || !strings.Contains(got, "claude-code-20250219") {
-		t.Fatalf("claude mimic beta = %q", got)
-	}
-	if got := emptyClaude.Get("X-Stainless-Lang"); got != "js" {
-		t.Fatalf("missing stainless mimic header: %q", got)
+	if got := emptyClaude.Get("anthropic-beta"); got != "" {
+		t.Fatalf("claude beta should be preserved, got %q", got)
 	}
 }
 
-func TestClaudeMimicPathForNonCLIClient(t *testing.T) {
+func TestInjectProviderHeadersPassesAcceptThrough(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider model.Provider
+		kind     routeKind
+		accept   string
+	}{
+		{name: "claude", provider: model.ProviderClaude, kind: routeMessages, accept: "application/json"},
+		{name: "codex", provider: model.ProviderCodex, kind: routeResponses, accept: "text/event-stream"},
+		{name: "grok", provider: model.ProviderGrok, kind: routeResponses, accept: "application/json, text/event-stream"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			header := make(http.Header)
+			header.Set("Accept", tc.accept)
+			injectProviderHeaders(header, tc.provider, model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "https://cli-chat-proxy.grok.com/v1/responses", tc.kind)
+			if got := header.Get("Accept"); got != tc.accept {
+				t.Fatalf("Accept overwritten: got %q want %q", got, tc.accept)
+			}
+		})
+	}
+
+	empty := make(http.Header)
+	injectProviderHeaders(empty, model.ProviderCodex, model.Credentials{AccessToken: "t", ChatGPTAccountID: "a"}, "", routeResponses)
+	if got := empty.Get("Accept"); got != "" {
+		t.Fatalf("Accept should stay empty when client omitted it, got %q", got)
+	}
+}
+
+func TestClaudeOfficialClientHeadersArePreserved(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("beta") != "true" {
 			t.Errorf("beta query = %q", r.URL.RawQuery)
 		}
-		if got := r.Header.Get("User-Agent"); got != defaultClaudeCLIUserAgent {
+		if got := r.Header.Get("User-Agent"); got != "curl/8.0.0" {
 			t.Errorf("user-agent = %q", got)
 		}
 		beta := r.Header.Get("anthropic-beta")
-		for _, token := range []string{"claude-code-20250219", "oauth-2025-04-20", "interleaved-thinking-2025-05-14"} {
-			if !strings.Contains(beta, token) {
-				t.Errorf("anthropic-beta missing %s: %q", token, beta)
-			}
+		if beta != "" {
+			t.Errorf("anthropic-beta should be preserved, got %q", beta)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"msg_1"}`)
@@ -249,7 +324,7 @@ func TestClaudeMimicPathForNonCLIClient(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "claude-mimic", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "claude-official", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
@@ -276,7 +351,7 @@ func TestProxyStoresAnthropicUnifiedQuotaWindows(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/messages")
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "claude-unified-quota", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "claude-unified-quota", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "claude-access"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet-4-5","messages":[{"role":"user","content":"hi"}]}`))
@@ -338,7 +413,7 @@ func TestProxyStoresUpstreamRateLimitQuota(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "quota-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "quota-codex", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 
@@ -385,7 +460,7 @@ func TestUnsafeResponsesSubpathsAreRejected(t *testing.T) {
 	defer upstream.Close()
 	application, repo := testServer(t, upstream.URL+"/responses")
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "grok", Provider: model.ProviderGrok, AuthType: "oauth", Credentials: model.Credentials{AccessToken: "token"},
+		Name: "grok", Provider: model.ProviderGrok, Credentials: model.Credentials{AccessToken: "token"},
 	})
 	for _, path := range []string{"/v1/responses/../home", "/v1/responses/a%252fb", "/v1/responses/a//b"} {
 		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"x"}`))
@@ -409,7 +484,7 @@ func TestProxyRecordsHTTPAndTokens(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	account, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "log-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "log-codex", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 
@@ -482,7 +557,7 @@ func TestProxyRecordsSSETokens(t *testing.T) {
 	defer upstream.Close()
 	application, repo := testServer(t, upstream.URL+"/responses")
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "sse-log", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "sse-log", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-test"}`))

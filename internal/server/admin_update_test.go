@@ -17,8 +17,8 @@ import (
 func TestUpdateSubscriptionAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "grok-edit", Provider: model.ProviderGrok, AuthType: "oauth",
-		Credentials: model.Credentials{AccessToken: "token"},
+		Name: "grok-edit", Provider: model.ProviderGrok,
+		Credentials:      model.Credentials{AccessToken: "token"},
 		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestUpdateSubscriptionAPIEditsSettingsWithoutEchoingProxy(t *testing.T) {
 func TestUpdateSubscriptionAPIKeepsProxyWhenOmitted(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "keep-proxy", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "keep-proxy", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "token"},
 		ProxyURL:    "socks5://127.0.0.1:1080",
 	})
@@ -99,7 +99,7 @@ func stringsContainsProxySecret(body []byte) bool {
 func TestGetSubscriptionReturnsCredentialsJSON(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "show-creds", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "show-creds", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "secret-access", RefreshToken: "secret-refresh"},
 	})
 	if err != nil {
@@ -141,7 +141,7 @@ func TestGetSubscriptionReturnsCredentialsJSON(t *testing.T) {
 func TestUpdateSubscriptionReplacesCredentialsJSON(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "edit-creds", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "edit-creds", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "old-token"},
 	})
 	if err != nil {

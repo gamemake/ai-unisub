@@ -24,7 +24,7 @@ func TestAdminRequestLogsCollection(t *testing.T) {
 
 	application, repo := testServer(t, upstream.URL+"/responses")
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "log-account", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "log-account", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 
@@ -96,7 +96,7 @@ func TestMemberRequestLogsScopedToSelf(t *testing.T) {
 		t.Fatal(err)
 	}
 	subscription, err := repo.CreateSubscription(ctx, repository.CreateSubscriptionParams{
-		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "shared", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token"},
 	})
 	if err != nil {

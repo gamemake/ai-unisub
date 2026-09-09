@@ -34,7 +34,7 @@ func TestSubscriptionAPIKeyLifecycle(t *testing.T) {
 	}
 
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "codex-one", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "codex-one", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-secret", ChatGPTAccountID: "acct-1"},
 		ProxyURL:    "socks5://proxy-user:proxy-pass@127.0.0.1:1080", ConcurrencyQueueTimeoutSeconds: 15,
 	})
@@ -126,7 +126,7 @@ func TestUpdateSubscriptionSettings(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "edit-me", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "edit-me", Provider: model.ProviderGrok,
 		Credentials:      model.Credentials{AccessToken: "token"},
 		ConcurrencyLimit: 1, ProxyURL: "http://127.0.0.1:8080",
 	})
@@ -165,7 +165,7 @@ func TestMultipleAPIKeysCanBindToOneSubscription(t *testing.T) {
 	ctx := context.Background()
 	repo := testRepository(t)
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "shared", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "shared", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {

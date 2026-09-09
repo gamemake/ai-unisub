@@ -12,14 +12,14 @@ func TestListRequestLogsFiltersBySubscriptionID(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
 	accountA, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "account-a", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "account-a", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token-a"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	accountB, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "account-b", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "account-b", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token-b"},
 	})
 	if err != nil {
@@ -85,7 +85,7 @@ func TestRecordRequestStoresHTTPAndTokens(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "codex-main", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "codex-main", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
@@ -153,7 +153,7 @@ func TestUsageSummaryAggregatesRequestLogTokens(t *testing.T) {
 	repo := testRepository(t)
 	ctx := context.Background()
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "usage-account", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "usage-account", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func TestListRequestLogsSearchesByUsername(t *testing.T) {
 		t.Fatal(err)
 	}
 	subscription, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "shared", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
@@ -281,7 +281,7 @@ func TestUsageByUserAttributesRequestsToAPIKeyIssuer(t *testing.T) {
 		t.Fatal(err)
 	}
 	subscription, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "shared", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {

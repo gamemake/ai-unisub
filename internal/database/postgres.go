@@ -46,11 +46,14 @@ func migratePostgres(ctx context.Context, db *sql.DB) error {
 	if err := migratePostgresAccountsToSubscriptions(ctx, db); err != nil {
 		return err
 	}
+	if _, err := db.ExecContext(ctx, `ALTER TABLE subscriptions DROP COLUMN IF EXISTS auth_type`); err != nil {
+		return fmt.Errorf("drop subscriptions.auth_type: %w", err)
+	}
 	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_api_keys_subscription ON api_keys(subscription_id)`); err != nil {
 		return fmt.Errorf("create api_keys subscription index: %w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 9, 10, 11} {
+	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12} {
 		if _, err := db.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES($1, $2) ON CONFLICT (version) DO NOTHING`, version, now); err != nil {
 			return fmt.Errorf("record postgres schema version %d: %w", version, err)
 		}
@@ -75,11 +78,14 @@ func migratePostgresAccountsToSubscriptions(ctx context.Context, db *sql.DB) err
 		hasSubscriptions = true
 	}
 	if hasAccounts && hasSubscriptions {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE subscriptions DROP COLUMN IF EXISTS auth_type`); err != nil {
+			return fmt.Errorf("drop legacy subscriptions.auth_type: %w", err)
+		}
 		if _, err := db.ExecContext(ctx, `INSERT INTO subscriptions(
-			id, name, provider, auth_type, credentials_json, metadata_json, proxy_url, status, enabled,
+			id, name, provider, credentials_json, metadata_json, proxy_url, status, enabled,
 			concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, rate_limit_reset_at,
 			quota_json, quota_checked_at, quota_error, last_used_at, last_error, created_at, updated_at)
-			SELECT id, name, provider, auth_type, credentials_json, metadata_json, proxy_url, status, enabled,
+			SELECT id, name, provider, credentials_json, metadata_json, proxy_url, status, enabled,
 			concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, rate_limit_reset_at,
 			quota_json, quota_checked_at, quota_error, last_used_at, last_error, created_at, updated_at
 			FROM accounts

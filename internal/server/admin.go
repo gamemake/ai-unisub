@@ -64,7 +64,6 @@ func (s *Server) changePassword(c *gin.Context) {
 type createSubscriptionRequest struct {
 	Name                           string            `json:"name"`
 	Provider                       model.Provider    `json:"provider"`
-	AuthType                       string            `json:"auth_type"`
 	Credentials                    model.Credentials `json:"credentials"`
 	Metadata                       json.RawMessage   `json:"metadata"`
 	ConcurrencyLimit               int               `json:"concurrency_limit"`
@@ -79,18 +78,11 @@ func (s *Server) createSubscription(c *gin.Context) {
 		apiError(c, 400, "invalid_request", "name and a valid provider are required")
 		return
 	}
-	if request.AuthType == "" {
-		request.AuthType = "oauth"
-	}
-	if request.AuthType != "oauth" && request.AuthType != "api_key" {
-		apiError(c, 400, "invalid_request", "auth_type must be oauth or api_key")
+	if request.Credentials.AccessToken == "" {
+		apiError(c, 400, "invalid_request", "credentials must include access_token")
 		return
 	}
-	if request.Credentials.Bearer() == "" {
-		apiError(c, 400, "invalid_request", "credentials must include access_token or api_key")
-		return
-	}
-	if request.Provider == model.ProviderCodex && request.AuthType == "oauth" && request.Credentials.ChatGPTAccountID == "" {
+	if request.Provider == model.ProviderCodex && request.Credentials.ChatGPTAccountID == "" {
 		apiError(c, 400, "invalid_request", "Codex OAuth credentials require chatgpt_account_id")
 		return
 	}
@@ -108,7 +100,7 @@ func (s *Server) createSubscription(c *gin.Context) {
 		return
 	}
 	account, err := s.repo.CreateSubscription(c.Request.Context(), repository.CreateSubscriptionParams{
-		Name: strings.TrimSpace(request.Name), Provider: request.Provider, AuthType: request.AuthType,
+		Name: strings.TrimSpace(request.Name), Provider: request.Provider,
 		Credentials: request.Credentials, Metadata: request.Metadata, ConcurrencyLimit: request.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: request.ConcurrencyQueueTimeoutSeconds, ProxyURL: proxyURL,
 		TokenExpiresAt: request.TokenExpiresAt,
@@ -186,11 +178,11 @@ func (s *Server) updateSubscription(c *gin.Context) {
 		return
 	}
 	if request.Credentials != nil {
-		if request.Credentials.Bearer() == "" {
-			apiError(c, 400, "invalid_request", "credentials must include access_token or api_key")
+		if request.Credentials.AccessToken == "" {
+			apiError(c, 400, "invalid_request", "credentials must include access_token")
 			return
 		}
-		if account.Provider == model.ProviderCodex && account.AuthType == "oauth" && request.Credentials.ChatGPTAccountID == "" {
+		if account.Provider == model.ProviderCodex && request.Credentials.ChatGPTAccountID == "" {
 			apiError(c, 400, "invalid_request", "Codex OAuth credentials require chatgpt_account_id")
 			return
 		}

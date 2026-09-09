@@ -147,6 +147,12 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := migrateAccountsToSubscriptions(ctx, db, now); err != nil {
 		return err
 	}
+	if err := dropColumnIfExists(ctx, db, "subscriptions", "auth_type"); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(12, ?)`, now); err != nil {
+		return err
+	}
 	if err := ensureAPIKeysSubscriptionIndex(ctx, db); err != nil {
 		return err
 	}
@@ -278,11 +284,14 @@ func migrateAccountsToSubscriptions(ctx context.Context, db *sql.DB, now string)
 		hasSubscriptions = true
 	}
 	if hasAccounts && hasSubscriptions {
+		if err := dropColumnIfExists(ctx, db, "subscriptions", "auth_type"); err != nil {
+			return err
+		}
 		if _, err := db.ExecContext(ctx, `INSERT OR IGNORE INTO subscriptions(
-			id, name, provider, auth_type, credentials_json, metadata_json, proxy_url, status, enabled,
+			id, name, provider, credentials_json, metadata_json, proxy_url, status, enabled,
 			concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, rate_limit_reset_at,
 			quota_json, quota_checked_at, quota_error, last_used_at, last_error, created_at, updated_at)
-			SELECT id, name, provider, auth_type, credentials_json, metadata_json, proxy_url, status, enabled,
+			SELECT id, name, provider, credentials_json, metadata_json, proxy_url, status, enabled,
 			concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at, rate_limit_reset_at,
 			quota_json, quota_checked_at, quota_error, last_used_at, last_error, created_at, updated_at
 			FROM accounts`); err != nil {

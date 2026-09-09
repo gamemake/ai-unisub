@@ -19,7 +19,7 @@ const (
 )
 
 func (s *Server) refreshCodexQuota(ctx context.Context, account model.Subscription) (model.Subscription, error) {
-	if account.Provider != model.ProviderCodex || account.AuthType != "oauth" {
+	if account.Provider != model.ProviderCodex {
 		return account, errors.New("account is not a Codex OAuth account")
 	}
 	if strings.TrimSpace(s.cfg.Providers.CodexUsage) == "" {
@@ -95,7 +95,7 @@ func normalizeCodexUsage(existing json.RawMessage, body []byte) (json.RawMessage
 	var payload struct {
 		PlanType  string `json:"plan_type"`
 		RateLimit *struct {
-			LimitReached    bool            `json:"limit_reached"`
+			LimitReached    bool             `json:"limit_reached"`
 			PrimaryWindow   *codexRateWindow `json:"primary_window"`
 			SecondaryWindow *codexRateWindow `json:"secondary_window"`
 		} `json:"rate_limit"`

@@ -56,7 +56,7 @@ func TestRefreshGrokUsageFetchesAndNormalizesCredits(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.GrokBilling = upstream.URL + "/v1/billing?format=credits"
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "grok-usage", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "grok-usage", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "grok-access-token", RefreshToken: "refresh-token"},
 	})
 	if err != nil {
@@ -144,7 +144,7 @@ func TestRefreshGrokUsagePreservesLastGoodQuotaOnFailure(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.GrokBilling = upstream.URL + "/v1/billing?format=credits"
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "grok-usage-error", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "grok-usage-error", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "grok-access-token"},
 	})
 	if err != nil {

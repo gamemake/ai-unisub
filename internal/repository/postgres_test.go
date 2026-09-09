@@ -21,7 +21,7 @@ func TestPostgresSubscriptionAndRequestLogLifecycle(t *testing.T) {
 		t.Fatalf("bootstrap: created=%v err=%v", created, err)
 	}
 	account, err := repo.CreateSubscription(ctx, CreateSubscriptionParams{
-		Name: "pg-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "pg-codex", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-secret"},
 		ProxyURL:    "socks5://127.0.0.1:1080",
 	})

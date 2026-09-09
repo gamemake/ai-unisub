@@ -20,7 +20,7 @@ const (
 )
 
 func (s *Server) refreshClaudeQuota(ctx context.Context, account model.Subscription) (model.Subscription, error) {
-	if account.Provider != model.ProviderClaude || account.AuthType != "oauth" {
+	if account.Provider != model.ProviderClaude {
 		return account, errors.New("account is not a Claude OAuth account")
 	}
 	if strings.TrimSpace(s.cfg.Providers.ClaudeUsage) == "" {

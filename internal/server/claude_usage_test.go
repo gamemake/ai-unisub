@@ -39,7 +39,7 @@ func TestRefreshClaudeUsageFetchesWindows(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.Providers.ClaudeUsage = upstream.URL + "/api/oauth/usage"
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "claude-usage", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "claude-usage", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "claude-access-token", RefreshToken: "refresh-token"},
 	})
 	if err != nil {

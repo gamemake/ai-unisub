@@ -225,7 +225,7 @@ func TestExpiredClaudeOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	application.cfg.Providers.ClaudeAPI = upstream.URL
 	expired := time.Now().Add(-time.Minute)
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "expired-claude", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "expired-claude", Provider: model.ProviderClaude,
 		Credentials:    model.Credentials{AccessToken: "old-access", RefreshToken: "old-refresh", ClientID: "test-claude-client"},
 		TokenExpiresAt: &expired,
 	})
@@ -280,7 +280,7 @@ func TestCodexOAuthRetriesOnceAfterUpstreamUnauthorized(t *testing.T) {
 	application, repo := testServer(t, upstream.URL+"/responses")
 	application.cfg.CodexOAuth.TokenURL = oauth.URL
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "codex-without-expiry", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "codex-without-expiry", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "stale-codex", RefreshToken: "refresh-token", ChatGPTAccountID: "acct_1"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/codex/v1/responses", strings.NewReader(`{"model":"gpt-5","input":"hello"}`))

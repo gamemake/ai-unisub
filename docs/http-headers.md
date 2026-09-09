@@ -1,6 +1,6 @@
 # Grok / Claude / Codex HTTP 头修改规则
 
-本文整理 `ai-unisub` **当前实现**中，转发链路对 HTTP 头的剥离、注入与回传规则。实现以 [`internal/server/proxy.go`](../internal/server/proxy.go)、[`internal/server/claude_identity.go`](../internal/server/claude_identity.go) 为准；用量探测见各 Provider 的 `*_usage.go`。
+本文整理 `ai-unisub` **当前实现**中，转发链路对 HTTP 头的剥离、注入与回传规则。实现以 [`internal/server/provider_headers.go`](../internal/server/provider_headers.go)、[`internal/server/claude_identity.go`](../internal/server/claude_identity.go)、[`internal/server/codex_identity.go`](../internal/server/codex_identity.go)、[`internal/server/grok_identity.go`](../internal/server/grok_identity.go) 为准；转发编排见 [`proxy.go`](../internal/server/proxy.go)；用量探测见各 Provider 的 `*_usage.go`。
 
 业务 payload（Messages / Responses）**不做改写**；本文只覆盖请求/响应头与相关查询参数。
 
@@ -52,11 +52,11 @@ Claude Messages / Count Tokens 还会在上游 URL 上确保查询参数 `beta=t
 | --- | --- | --- |
 | 鉴权 | `authorization`, `proxy-authorization`, `x-api-key`, `x-goog-api-key`, `cookie` | 避免下游 Key / 代理凭据泄漏到上游 |
 | Codex 身份 | `chatgpt-account-id` | 必须用账号凭据中的值覆盖 |
-| 连接/传输 | `host`, `content-length`, `connection`, `proxy-connection`, `keep-alive`, `transfer-encoding`, `upgrade` | hop-by-hop / 由 Go HTTP 客户端自行管理 |
+| 连接/传输 | `host`, `content-length`, `connection`, `proxy-connection`, `keep-alive`, `transfer-encoding`, `upgrade` | hop-by-hop / 由 Go HTTP 客户端自行管理。其中 `Content-Length`：先剥离客户端原值，若客户端曾携带该头，再按实际 body 长度写回正确值（保证上游请求头与请求头语义一致，且不会透传错误长度） |
 | 压缩 | `accept-encoding` | 出站禁用压缩；透传会导致 gzip 体破坏本地 usage 解析 |
-| Grok 客户端 | `x-xai-token-auth`, `x-authenticateresponse`, `x-grok-client-version`, `x-grok-client-identifier`, `x-grok-client-mode` | 由网关按上游主机与配置重写 |
+| Grok 客户端 | `x-xai-token-auth`, `x-authenticateresponse`, `x-grok-client-mode` | 由网关重写；`User-Agent` / `X-Grok-Client-Version` / `x-grok-client-identifier` **不在黑名单中**，转发时透传 |
 
-**未列入黑名单的头会透传**（黑名单策略，非白名单）。常见透传例子：客户端自带的 `User-Agent`、`anthropic-beta`、`X-Stainless-*`、自定义追踪头等——是否最终保留取决于下一步 Provider 注入是否覆盖。
+**未列入黑名单的头会透传**（黑名单策略，非白名单）。常见透传例子：客户端自带的 `Accept`、`User-Agent`、`anthropic-beta`、`X-Stainless-*`、自定义追踪头等——是否最终保留取决于下一步 Provider 注入是否覆盖。`Accept` 在注入阶段不再改写。
 
 ---
 
@@ -72,7 +72,7 @@ Claude Messages / Count Tokens 还会在上游 URL 上确保查询参数 `beta=t
 
 ## 5. Claude
 
-源码：`injectProviderHeaders` + `applyClaudeOutboundHeaders`。
+源码：`provider_headers.go` → `injectProviderHeaders`；`claude_identity.go` → `applyClaudeOutboundHeaders`。
 
 ### 5.1 鉴权
 
@@ -86,7 +86,7 @@ Claude Messages / Count Tokens 还会在上游 URL 上确保查询参数 `beta=t
 | 头 | 规则 |
 | --- | --- |
 | `anthropic-version` | 客户端未带时设为 `2023-06-01` |
-| `Accept` | 强制 `application/json` |
+| `Accept` | 透传客户端原值，不做改写 |
 | `x-app` | 客户端未带 `x-app` / `X-App` 时设为 `cli` |
 
 ### 5.3 身份策略（UA + beta）
@@ -164,14 +164,14 @@ OAuth mimic 额外强制头：
 
 ## 6. Codex
 
-源码：`injectProviderHeaders` + `applyCodexIdentityHeaders`。
+源码：`provider_headers.go` → `injectProviderHeaders`；`codex_identity.go` → `applyCodexIdentityHeaders`。
 
 ### 6.1 鉴权与 Accept
 
 | 头 | 值 | 是否覆盖客户端 |
 | --- | --- | --- |
 | `Authorization` | `Bearer <access_token>` | 是（下游鉴权头已剥离） |
-| `Accept` | `text/event-stream` | 是 |
+| `Accept` | 透传客户端原值 | 否 |
 | `chatgpt-account-id` | 账号凭据中的 `chatgpt_account_id` | 是（黑名单剥离后注入） |
 
 ### 6.2 强制 CLI 身份
@@ -199,37 +199,34 @@ OAuth mimic 额外强制头：
 
 ## 7. Grok
 
-源码：`injectProviderHeaders` + `applyGrokCLIIdentityHeaders`。
+源码：`provider_headers.go` → `injectProviderHeaders`；`grok_identity.go` → `applyGrokCLIIdentityHeaders`。
 
 ### 7.1 鉴权与 Accept
 
 | 头 | 值 |
 | --- | --- |
 | `Authorization` | `Bearer <access_token>` |
-| `Accept` | `application/json, text/event-stream` |
+| `Accept` | 透传客户端原值，不做改写 |
 
 ### 7.2 CLI 身份
 
-版本来自配置 `UNISUB_GROK_CLIENT_VERSION`（默认 `0.2.114`）；空则回退 `0.2.114`。
-
 | 头 | 值 | 说明 |
 | --- | --- | --- |
-| `User-Agent` | `xai-grok-workspace/<version>` | 始终覆盖 |
-| `X-Grok-Client-Version` | `<version>` | 始终设置 |
-| `x-grok-client-version` | `<version>` | 同内容双写（大小写变体） |
-| `x-grok-client-identifier` | `grok-shell` | 始终设置 |
-| `X-Grok-Client-Mode` | `interactive` | 始终设置 |
+| `User-Agent` | 透传客户端原值 | **不改写** |
+| `X-Grok-Client-Version` | 透传客户端原值 | **不改写**（与 `x-grok-client-version` 为同一头） |
+| `x-grok-client-identifier` | 透传客户端原值 | **不改写**（客户端未带则出站也不补） |
+| `X-Grok-Client-Mode` | `interactive` | 始终覆盖（黑名单剥离后注入） |
 | `X-XAI-Token-Auth` | `xai-grok-cli` | **仅当**上游主机名为 `cli-chat-proxy.grok.com` 时设置 |
-
-客户端传入的 Grok 身份相关头已在黑名单中剥离，避免与上述注入冲突。
 
 ### 7.3 主动用量 / 用户探测
 
-Billing 与 `/user` 探测：
+Billing 与 `/user` 探测（`applyGrokCLIProbeHeaders`，非客户端转发）：
 
 | 头 | 规则 |
 | --- | --- |
-| 身份头 | 与转发相同（`applyGrokCLIIdentityHeaders`） |
+| `User-Agent` / `X-Grok-Client-Version` | 使用配置 `UNISUB_GROK_CLIENT_VERSION`（默认 / 空回退 `0.2.114`）写入 |
+| `x-grok-client-identifier` | 固定 `grok-shell`（探测无下游客户端可透传） |
+| 其余身份头 | 与转发相同（`applyGrokCLIIdentityHeaders`：mode / 条件性 Token-Auth） |
 | `X-XAI-Token-Auth` | **始终**设为 `xai-grok-cli`（含测试 URL，不依赖主机名判断） |
 | `x-userid` | Billing 请求在凭据含 user id 时额外设置 |
 
@@ -240,11 +237,11 @@ Billing 与 `/user` 探测：
 | 项目 | Claude | Codex | Grok |
 | --- | --- | --- | --- |
 | 上游鉴权 | OAuth → `Authorization`；API Key → `x-api-key` | `Authorization` | `Authorization` |
-| `Accept` | `application/json` | `text/event-stream` | `application/json, text/event-stream` |
-| UA 策略 | 真 CLI 透传；否则覆盖为 pin | **始终**覆盖为 `codex-tui/...` | **始终**覆盖为 `xai-grok-workspace/...` |
-| 关键身份头 | `anthropic-version` / `anthropic-beta` / `x-app`；mimic 时加 Stainless | `originator` + `version` + `chatgpt-account-id` | Grok Client-* 系列；条件性 `X-XAI-Token-Auth` |
+| `Accept` | 透传 | 透传 | 透传 |
+| UA 策略 | 真 CLI 透传；否则覆盖为 pin | **始终**覆盖为 `codex-tui/...` | **透传**客户端 `User-Agent` |
+| 关键身份头 | `anthropic-version` / `anthropic-beta` / `x-app`；mimic 时加 Stainless | `originator` + `version` + `chatgpt-account-id` | `mode` 覆盖；UA / Client-Version / identifier 透传；条件性 `X-XAI-Token-Auth` |
 | URL 附加 | Messages/CountTokens 确保 `?beta=true` | 无强制 | 无强制（主机名影响 Token-Auth） |
-| 客户端同名身份头 | 真 CLI 可保留 beta/UA | 被覆盖 | 黑名单剥离后重写 |
+| 客户端同名身份头 | 真 CLI 可保留 beta/UA | 被覆盖 | UA / Client-Version / identifier 透传；mode 黑名单后重写 |
 
 ---
 
@@ -283,12 +280,12 @@ SSE（`Content-Type` 含 `text/event-stream`）时，网关额外设置：
 
 | 逻辑 | 文件 / 符号 |
 | --- | --- |
-| 剥离 + 注入入口 | `internal/server/proxy.go` → `copyDownstreamHeaders`, `injectProviderHeaders` |
+| 剥离 + 注入入口 | `internal/server/provider_headers.go` → `copyDownstreamHeaders`, `injectProviderHeaders` |
 | Claude 身份 | `internal/server/claude_identity.go` → `applyClaudeOutboundHeaders` |
-| Codex 身份 | `proxy.go` → `applyCodexIdentityHeaders` |
-| Grok 身份 | `proxy.go` → `applyGrokCLIIdentityHeaders` |
-| Claude `?beta=true` | `proxy.go` 转发路径 + `ensureQueryParam` |
-| 响应头回传 | `proxy.go` → `copyUpstreamHeaders` |
+| Codex 身份 | `internal/server/codex_identity.go` → `applyCodexIdentityHeaders` |
+| Grok 身份 | `internal/server/grok_identity.go` → `applyGrokCLIIdentityHeaders`；用量探测 → `applyGrokCLIProbeHeaders` |
+| Claude `?beta=true` | `proxy.go` 转发路径 + `ensureQueryParam`（`claude_identity.go`） |
+| 响应头回传 | `provider_headers.go` → `copyUpstreamHeaders` |
 | 被动额度 | `internal/server/quota_headers.go` |
 | 调用日志头序列化 | `internal/server/httplog.go` → `headersJSON` |
 | 用量探测头 | `claude_usage.go` / `codex_usage.go` / `grok_usage.go` |

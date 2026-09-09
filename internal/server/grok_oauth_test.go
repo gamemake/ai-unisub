@@ -98,7 +98,7 @@ func TestGrokDeviceOAuthCreatesBoundSubscription(t *testing.T) {
 		t.Fatalf("complete status=%d body=%s", complete.Code, complete.Body.String())
 	}
 	var completed struct {
-		Status  string `json:"status"`
+		Status       string `json:"status"`
 		Subscription struct {
 			ID int64 `json:"id"`
 		} `json:"subscription"`
@@ -162,7 +162,7 @@ func TestExpiredGrokOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 	application.cfg.GrokOAuth.ClientID = "test-grok-client"
 	expired := time.Now().Add(-time.Minute)
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "expired-grok", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "expired-grok", Provider: model.ProviderGrok,
 		Credentials:    model.Credentials{AccessToken: "old-access", RefreshToken: "old-refresh", ClientID: "test-grok-client"},
 		TokenExpiresAt: &expired,
 	})
@@ -192,14 +192,17 @@ func TestExpiredGrokOAuthTokenRefreshesBeforeProxy(t *testing.T) {
 
 func TestGrokCLIProxyHeadersMatchOAuthClientContract(t *testing.T) {
 	header := http.Header{}
-	injectProviderHeaders(header, model.ProviderGrok, "oauth", model.Credentials{AccessToken: "token"}, "https://cli-chat-proxy.grok.com/v1/responses", "0.2.114", routeResponses)
+	header.Set("User-Agent", "xai-grok-workspace/0.3.0")
+	header.Set("X-Grok-Client-Version", "0.3.0")
+	header.Set("x-grok-client-identifier", "grok-pager")
+	injectProviderHeaders(header, model.ProviderGrok, model.Credentials{AccessToken: "token"}, "https://cli-chat-proxy.grok.com/v1/responses", routeResponses)
 	want := map[string]string{
-		"Authorization":           "Bearer token",
-		"User-Agent":              "xai-grok-workspace/0.2.114",
-		"X-Grok-Client-Version":   "0.2.114",
-		"x-grok-client-identifier": "grok-shell",
-		"X-Grok-Client-Mode":      "interactive",
-		"X-XAI-Token-Auth":        "xai-grok-cli",
+		"Authorization":            "Bearer token",
+		"User-Agent":               "xai-grok-workspace/0.3.0",
+		"X-Grok-Client-Version":    "0.3.0",
+		"x-grok-client-identifier": "grok-pager",
+		"X-Grok-Client-Mode":       "interactive",
+		"X-XAI-Token-Auth":         "xai-grok-cli",
 	}
 	for name, value := range want {
 		if got := header.Get(name); got != value {
@@ -208,6 +211,34 @@ func TestGrokCLIProxyHeadersMatchOAuthClientContract(t *testing.T) {
 	}
 	if got := header.Get("x-authenticateresponse"); got != "" {
 		t.Errorf("unexpected x-authenticateresponse = %q", got)
+	}
+
+	empty := http.Header{}
+	injectProviderHeaders(empty, model.ProviderGrok, model.Credentials{AccessToken: "token"}, "https://cli-chat-proxy.grok.com/v1/responses", routeResponses)
+	if got := empty.Get("User-Agent"); got != "" {
+		t.Errorf("User-Agent should pass through unset, got %q", got)
+	}
+	if got := empty.Get("X-Grok-Client-Version"); got != "" {
+		t.Errorf("X-Grok-Client-Version should pass through unset, got %q", got)
+	}
+	if got := empty.Get("x-grok-client-identifier"); got != "" {
+		t.Errorf("x-grok-client-identifier should pass through unset, got %q", got)
+	}
+
+	downstream := http.Header{}
+	downstream.Set("x-grok-client-identifier", "grok-pager")
+	downstream.Set("X-Grok-Client-Mode", "batch")
+	downstream.Set("X-Authenticateresponse", "authenticate-response")
+	out := http.Header{}
+	copyDownstreamHeaders(out, downstream)
+	if got := out.Get("x-grok-client-identifier"); got != "grok-pager" {
+		t.Errorf("identifier passthrough = %q, want grok-pager", got)
+	}
+	if got := out.Get("X-Grok-Client-Mode"); got != "" {
+		t.Errorf("client-mode should be stripped, got %q", got)
+	}
+	if got := out.Get("X-Authenticateresponse"); got != "" {
+		t.Errorf("authenticateresponse should be stripped, got %q", got)
 	}
 }
 
@@ -234,7 +265,7 @@ func TestGrokOAuthRetriesOnceAfterUpstreamUnauthorized(t *testing.T) {
 	application.cfg.GrokOAuth.Issuer = oauth.URL
 	application.cfg.GrokOAuth.ClientID = "test-grok-client"
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "grok-without-expiry", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "grok-without-expiry", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "stale-access", RefreshToken: "refresh-token", ClientID: "test-grok-client"},
 	})
 	request := httptest.NewRequest(http.MethodPost, "/grok/v1/responses", strings.NewReader(`{"model":"grok-build","input":"hello"}`))

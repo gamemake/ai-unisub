@@ -30,7 +30,6 @@ type Repository struct {
 type CreateSubscriptionParams struct {
 	Name                           string
 	Provider                       model.Provider
-	AuthType                       string
 	Credentials                    model.Credentials
 	Metadata                       json.RawMessage
 	ConcurrencyLimit               int
@@ -262,8 +261,8 @@ func (r *Repository) CreateSubscription(ctx context.Context, p CreateSubscriptio
 		expires = p.TokenExpiresAt.UTC().Format(time.RFC3339Nano)
 	}
 	subscriptionID, err := r.db.InsertID(ctx, `INSERT INTO subscriptions
-		(name, provider, auth_type, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
-		VALUES(?,?,?,?,?,?,?,?,?)`, p.Name, p.Provider, p.AuthType, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
+		(name, provider, credentials_json, metadata_json, proxy_url, concurrency_limit, concurrency_queue_timeout_seconds, token_expires_at)
+		VALUES(?,?,?,?,?,?,?,?)`, p.Name, p.Provider, credentialJSON, string(metadata), p.ProxyURL, limit, p.ConcurrencyQueueTimeoutSeconds, expires)
 	if err != nil {
 		return model.Subscription{}, err
 	}
@@ -592,7 +591,7 @@ func scanUser(s scanner) (model.User, error) {
 	return user, nil
 }
 
-const subscriptionBaseColumns = `a.id, a.name, a.provider, a.auth_type, a.credentials_json,
+const subscriptionBaseColumns = `a.id, a.name, a.provider, a.credentials_json,
 	a.metadata_json, a.proxy_url, a.status, a.enabled, a.concurrency_limit, a.concurrency_queue_timeout_seconds, a.token_expires_at, a.quota_json,
 	a.quota_checked_at, a.quota_error, a.last_used_at, a.last_error, a.created_at, a.updated_at`
 
@@ -620,7 +619,7 @@ type subscriptionScan struct {
 
 func subscriptionScanDest(row *subscriptionScan) []any {
 	return []any{
-		&row.subscription.ID, &row.subscription.Name, &row.provider, &row.subscription.AuthType, &row.subscription.CredentialsJSON,
+		&row.subscription.ID, &row.subscription.Name, &row.provider, &row.subscription.CredentialsJSON,
 		&row.metadata, &row.subscription.ProxyURL, &row.subscription.Status, &row.enabled, &row.subscription.ConcurrencyLimit, &row.subscription.ConcurrencyQueueTimeoutSeconds, &row.tokenExpires, &row.quota,
 		&row.quotaChecked, &row.quotaError, &row.lastUsed, &row.lastError, &row.created, &row.updated,
 	}

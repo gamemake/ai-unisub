@@ -275,7 +275,7 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 	}
 	expiresAt := oauthTokenExpiry(token.ExpiresIn)
 	account, err := s.repo.CreateSubscription(c.Request.Context(), repository.CreateSubscriptionParams{
-		Name: accountRequest.Name, Provider: model.ProviderGrok, AuthType: "oauth", Credentials: credentials,
+		Name: accountRequest.Name, Provider: model.ProviderGrok, Credentials: credentials,
 		Metadata: accountRequest.Metadata, ConcurrencyLimit: accountRequest.ConcurrencyLimit,
 		ConcurrencyQueueTimeoutSeconds: accountRequest.ConcurrencyQueueTimeoutSeconds,
 		ProxyURL:                       accountRequest.ProxyURL, TokenExpiresAt: expiresAt,
@@ -299,7 +299,7 @@ func (s *Server) finishGrokOAuthFlow(c *gin.Context, flow *grokOAuthFlow) {
 }
 
 func (s *Server) grokCredentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
-	if account.Provider != model.ProviderGrok || account.AuthType != "oauth" {
+	if account.Provider != model.ProviderGrok {
 		return credentials, nil
 	}
 	originalAccessToken := credentials.AccessToken

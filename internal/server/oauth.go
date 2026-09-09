@@ -58,9 +58,6 @@ func oauthRefreshSkew(provider model.Provider) time.Duration {
 }
 
 func (s *Server) credentialsForRequest(ctx context.Context, account model.Subscription, credentials model.Credentials, force bool) (model.Credentials, error) {
-	if account.AuthType != "oauth" {
-		return credentials, nil
-	}
 	switch account.Provider {
 	case model.ProviderGrok:
 		return s.grokCredentialsForRequest(ctx, account, credentials, force)

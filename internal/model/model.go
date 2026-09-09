@@ -21,7 +21,6 @@ type Subscription struct {
 	ID                             int64           `json:"id"`
 	Name                           string          `json:"name"`
 	Provider                       Provider        `json:"provider"`
-	AuthType                       string          `json:"auth_type"`
 	Metadata                       json.RawMessage `json:"metadata"`
 	Status                         string          `json:"status"`
 	Enabled                        bool            `json:"enabled"`
@@ -62,7 +61,6 @@ type Credentials struct {
 	AccessToken      string `json:"access_token,omitempty"`
 	RefreshToken     string `json:"refresh_token,omitempty"`
 	IDToken          string `json:"id_token,omitempty"`
-	APIKey           string `json:"api_key,omitempty"`
 	TokenType        string `json:"token_type,omitempty"`
 	ChatGPTAccountID string `json:"chatgpt_account_id,omitempty"`
 	OrganizationID   string `json:"organization_id,omitempty"`
@@ -74,10 +72,7 @@ type Credentials struct {
 }
 
 func (c Credentials) Bearer() string {
-	if c.AccessToken != "" {
-		return c.AccessToken
-	}
-	return c.APIKey
+	return c.AccessToken
 }
 
 type ResolvedSubscription struct {

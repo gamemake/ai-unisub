@@ -17,7 +17,7 @@ import (
 func TestAPIKeyCRUDAllowsMultipleKeysPerSubscription(t *testing.T) {
 	application, repo := testServer(t, "https://example.invalid/responses")
 	account, err := repo.CreateSubscription(context.Background(), repository.CreateSubscriptionParams{
-		Name: "multi-key", Provider: model.ProviderGrok, AuthType: "oauth",
+		Name: "multi-key", Provider: model.ProviderGrok,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {

@@ -1072,6 +1072,8 @@ Key 解析失败：`401 invalid_api_key`。
 
 `Authorization`、`x-api-key`、`Cookie`、`chatgpt-account-id`、`Host`、`Content-Length`、`Connection`、`Transfer-Encoding`、`Upgrade`，以及若干 Grok 客户端头。
 
+其中 `Content-Length` 会先剥离；若客户端请求携带了该头，出站时会按实际读取到的 body 长度重新写入正确值。
+
 ### 12.7 Token 过期
 
 | Provider | 行为 |

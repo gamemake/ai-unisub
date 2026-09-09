@@ -21,14 +21,14 @@ func TestAdminCanQueryUsageByUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	subscription, err := repo.CreateSubscription(ctx, repository.CreateSubscriptionParams{
-		Name: "shared", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "shared", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "token"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	otherSubscription, err := repo.CreateSubscription(ctx, repository.CreateSubscriptionParams{
-		Name: "other", Provider: model.ProviderClaude, AuthType: "oauth",
+		Name: "other", Provider: model.ProviderClaude,
 		Credentials: model.Credentials{AccessToken: "other-token"},
 	})
 	if err != nil {

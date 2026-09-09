@@ -251,6 +251,9 @@ func TestMigrateAccountsToSubscriptions(t *testing.T) {
 	if columns["created_by_user_id"] {
 		t.Fatal("created_by_user_id was not dropped")
 	}
+	if columns["auth_type"] {
+		t.Fatal("auth_type was not dropped")
+	}
 
 	var subscriptionID int64
 	var plaintext string
@@ -295,6 +298,12 @@ func TestMigrateAccountsToSubscriptions(t *testing.T) {
 	}
 	if migrated != 1 {
 		t.Fatalf("migration version 11 count = %d", migrated)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version=12`).Scan(&migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated != 1 {
+		t.Fatalf("migration version 12 count = %d", migrated)
 	}
 }
 

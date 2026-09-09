@@ -104,7 +104,7 @@ func TestSubscriptionHTTPProxy(t *testing.T) {
 
 	application, repo := testServer(t, "http://upstream.example/responses")
 	_, key := createSubscriptionWithKey(t, repo, repository.CreateSubscriptionParams{
-		Name: "proxied-codex", Provider: model.ProviderCodex, AuthType: "oauth",
+		Name: "proxied-codex", Provider: model.ProviderCodex,
 		Credentials: model.Credentials{AccessToken: "upstream-token", ChatGPTAccountID: "account-123"},
 		ProxyURL:    proxyServer.URL,
 	})
