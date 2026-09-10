@@ -1,0 +1,9 @@
+{
+    "go.toolsManagement.autoUpdate": true,
+    "go.testFlags": [
+        "-v"
+    ],
+    "go.lintOnSave": "package",
+    "go.useLanguageServer": true,
+    "files.eol": "\n"
+}

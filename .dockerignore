@@ -1,0 +1,11 @@
+.git
+.gitignore
+.vscode
+data
+bin
+*.db
+*.db-shm
+*.db-wal
+Dockerfile
+docker-compose*.yml
+README.md

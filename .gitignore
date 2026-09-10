@@ -1,11 +1,35 @@
-/data/
+# Go build and test artifacts
 /bin/
-/.gocache/
-/.env
-/ai-unisub
-/ai-unisub.exe
+*.exe
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Local application data
+/data/
 *.db
 *.db-shm
 *.db-wal
-*.db-journal
-.tmp
+cmd/app/*.json
+
+# Local environment configuration
+.env
+.env.*
+!.env.example
+
+# VS Code local state
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/settings.json
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Temporary logs
+*.log

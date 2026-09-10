@@ -1,0 +1,19 @@
+services:
+  ai-unisub2:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    container_name: ai-unisub2
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8080}:8080"
+    environment:
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin12345}
+      DATABASE_URL: sqlite:///data/ai-unisub2.db
+      LISTEN_ADDR: :8080
+    volumes:
+      - ai-unisub2-data:/data
+
+volumes:
+  ai-unisub2-data:

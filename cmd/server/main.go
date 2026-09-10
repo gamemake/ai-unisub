@@ -1,62 +1,44 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"log/slog"
+	"log"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
-	"github.com/ai-unisub/ai-unisub/internal/config"
-	"github.com/ai-unisub/ai-unisub/internal/database"
-	"github.com/ai-unisub/ai-unisub/internal/repository"
-	appserver "github.com/ai-unisub/ai-unisub/internal/server"
+	"ai-unisub2/internal/service"
 )
 
 func main() {
-	ctx := context.Background()
-	cfg, err := config.Load()
-	if err != nil {
-		slog.Error("configuration error", "error", err)
-		os.Exit(1)
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "sqlite://./data/ai-unisub2.db"
 	}
-	db, err := database.Open(ctx, cfg.DatabaseDriver, cfg.DatabaseDSN)
-	if err != nil {
-		slog.Error("database error", "error", err)
-		os.Exit(1)
+	adminUsername := os.Getenv("ADMIN_USERNAME")
+	if adminUsername == "" {
+		adminUsername = "admin"
 	}
-	repo := repository.New(db)
-	defer repo.Close()
-	created, err := repo.BootstrapAdmin(ctx, cfg.AdminUsername, cfg.AdminPassword)
-	if err != nil {
-		slog.Error("admin bootstrap error", "error", err)
-		os.Exit(1)
+	adminPassword := os.Getenv("ADMIN_PASSWORD")
+	if adminPassword == "" {
+		adminPassword = "admin12345"
 	}
-	if created {
-		slog.Info("initial admin created", "username", cfg.AdminUsername)
-		if cfg.AdminPassword == "admin" {
-			slog.Warn("initial admin uses the default password; change it before exposing the service")
+	srv, err := service.New(service.Config{DatabaseURL: dbURL, AdminUsername: adminUsername, AdminPassword: adminPassword})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer srv.Close()
+	if err := srv.Auth().EnsureAdmin(adminUsername, adminPassword); err != nil {
+		log.Fatal(err)
+	}
+	for _, module := range []service.Module{service.NewStaticModule(), service.NewAPIModule(), service.NewOAuthFlowModule()} {
+		if err := srv.AddModule(module); err != nil {
+			log.Fatal(err)
 		}
 	}
 
-	application := appserver.New(cfg, repo)
-	httpServer := &http.Server{Addr: cfg.ListenAddress, Handler: application.Handler(), ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 1 << 20}
-	go func() {
-		slog.Info("server listening", "address", cfg.ListenAddress, "db_driver", cfg.DatabaseDriver)
-		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("server stopped", "error", err)
-			os.Exit(1)
-		}
-	}()
-
-	signalContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	<-signalContext.Done()
-	shutdownContext, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
-	defer cancel()
-	_ = httpServer.Shutdown(shutdownContext)
-	_ = application.Shutdown(shutdownContext)
+	addr := os.Getenv("LISTEN_ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+	log.Printf("AI UniSub listening on %s", addr)
+	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
 }

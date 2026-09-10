@@ -1,90 +1,59 @@
 {
-  "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "ai-unisub: prepare build directory",
-      "type": "process",
-      "command": "powershell.exe",
-      "args": [
-        "-NoProfile",
-        "-Command",
-        "New-Item -ItemType Directory -Force -Path '${workspaceFolder}/bin' | Out-Null"
-      ],
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "never",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "ai-unisub: build",
-      "type": "process",
-      "command": "go",
-      "args": [
-        "build",
-        "-o",
-        "${workspaceFolder}/bin/ai-unisub.exe",
-        "./cmd/server"
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "dependsOn": "ai-unisub: prepare build directory",
-      "dependsOrder": "sequence",
-      "problemMatcher": [
-        "$go"
-      ],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      }
-    },
-    {
-      "label": "ai-unisub: test",
-      "type": "process",
-      "command": "go",
-      "args": [
-        "test",
-        "-count=1",
-        "./..."
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": [
-        "$go"
-      ],
-      "group": "test",
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      }
-    },
-    {
-      "label": "ai-unisub: vet",
-      "type": "process",
-      "command": "go",
-      "args": [
-        "vet",
-        "./..."
-      ],
-      "options": {
-        "cwd": "${workspaceFolder}"
-      },
-      "problemMatcher": [
-        "$go"
-      ],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated",
-        "clear": true
-      }
-    }
-  ]
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Go: Build Server",
+            "type": "process",
+            "command": "go",
+            "args": [
+                "build",
+                "-o",
+                "${workspaceFolder}/bin/ai-unisub2",
+                "./cmd/server"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$go"
+            ]
+        },
+        {
+            "label": "Go: Build App",
+            "type": "process",
+            "command": "go",
+            "args": [
+                "build",
+                "-o",
+                "${workspaceFolder}/bin/ai-unisub2-app.exe",
+                "./cmd/app"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [
+                "$go"
+            ]
+        },
+        {
+            "label": "Go: Test All",
+            "type": "process",
+            "command": "go",
+            "args": [
+                "test",
+                "./..."
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "group": "test",
+            "problemMatcher": [
+                "$go"
+            ]
+        }
+    ]
 }
