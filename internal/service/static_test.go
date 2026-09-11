@@ -67,6 +67,9 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "setAuthJSON") || strings.Contains(js, "credentialSummaryHTML") {
 		t.Fatal("admin js should display OAuthCredential JSON as-is")
 	}
+	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "function parseResponse") || !strings.Contains(js, "function errorText") || !strings.Contains(js, "body.error") {
+		t.Fatal("admin js should parse and translate JSON error responses centrally")
+	}
 	if got := get("/static/admin.css", nil); got.Code != http.StatusOK || got.Header().Get("Content-Type") == "" {
 		t.Fatalf("static css: status=%d content-type=%q", got.Code, got.Header().Get("Content-Type"))
 	}

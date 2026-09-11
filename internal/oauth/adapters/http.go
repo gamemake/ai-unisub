@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"ai-unisub/internal/common"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -12,8 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	"ai-unisub/internal/oauth"
 )
 
 func challenge(verifier string) string {
@@ -28,11 +27,11 @@ func clientWithProxy(ctx context.Context, base *http.Client) *http.Client {
 	if base == nil {
 		base = defaultHTTPClient()
 	}
-	proxy := oauth.HTTPProxyFrom(ctx)
+	proxy := common.HTTPProxyFrom(ctx)
 	if proxy == "" {
 		return base
 	}
-	proxyURL, err := oauth.ParseHTTPProxy(proxy)
+	proxyURL, err := common.ParseHTTPProxy(proxy)
 	if err != nil || proxyURL == nil {
 		return base
 	}

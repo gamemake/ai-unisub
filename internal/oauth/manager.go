@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"ai-unisub/internal/common"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -58,7 +59,7 @@ func (m *OAuthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	if err != nil {
 		return nil, err
 	}
-	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, Proxy: HTTPProxyFrom(ctx), ExpiresAt: time.Now().Add(oauthSessionTTL)}
+	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, Proxy: common.HTTPProxyFrom(ctx), ExpiresAt: time.Now().Add(oauthSessionTTL)}
 	result := &StartResult{SessionID: session.ID, ExpiresAt: session.ExpiresAt}
 	switch adapter := a.(type) {
 	case PKCEAdapter:

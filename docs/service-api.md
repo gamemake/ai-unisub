@@ -33,7 +33,7 @@ Service 的认证中间件先验证 Session，并将 `Principal` 写入 `request
 }
 ```
 
-错误接口：
+错误接口使用包含稳定英文消息的 JSON：
 
 ```json
 {

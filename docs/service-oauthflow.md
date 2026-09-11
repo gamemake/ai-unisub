@@ -145,7 +145,7 @@ SessionForState(service, subjectID, state string) (string, error)
 callback 只返回固定的最小 HTML 页面：
 
 - 成功：`授权成功，可以关闭此窗口`；
-- 失败：`授权失败，请重新开始授权`；
+- 失败：`OAuth authorization failed; please restart authorization`；
 - 不显示 `code`、`state`、Access Token、Refresh Token、result ID 或其他 OAuth 数据；
 - 不自动跳转到 `/home` 或其他页面；
 - 不把 callback 页面当作 OAuth JSON API。

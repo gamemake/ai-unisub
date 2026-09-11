@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ai-unisub/internal/common"
 	"bufio"
 	"context"
 	"crypto/rand"
@@ -76,7 +77,9 @@ func (r *router) handler(s *Service) http.Handler {
 			defer func() {
 				if recovered := recover(); recovered != nil {
 					log.Printf("service request panic route=%s method=%s path=%s panic=%v", best.options.Name, q.Method, q.URL.Path, recovered)
-					http.Error(statusWriter, "internal server error", http.StatusInternalServerError)
+					if statusWriter.status == 0 {
+						common.WriteError(statusWriter, http.StatusInternalServerError, common.MessageInternalServerError)
+					}
 				}
 				if statusWriter.status == 0 {
 					statusWriter.status = http.StatusOK

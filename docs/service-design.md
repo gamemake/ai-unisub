@@ -80,7 +80,6 @@ internal/service/
 ├── router.go                  # 路由注册表和最终 Handler
 ├── context.go                 # Module 可使用的 Service 能力边界
 ├── auth.go                    # 跨 Module 的认证与调用主体解析
-├── errors.go                  # 跨 Module 的错误响应和错误映射
 ├── static/                    # static Service Module
 │   ├── module.go              # Module 入口和路由注册
 │   ├── app.js
@@ -331,22 +330,21 @@ API Key 认证使用 `Authorization: Bearer <key>`。认证服务必须先确认
 
 因此同一个 API 可以同时服务 admin 和 user。外层只负责把二者都识别为合法主体，并加载对应的 User/Account 对象；`api` Module 再根据 `Principal.User.Role`、`Principal.User.ID`、`Principal.Account.ID` 和资源归属决定查询范围、可执行操作和响应字段。用户身份应来自受保护的 Context，不应来自 URL、JSON body 或客户端自行提交的 `user_id`。
 
-### 6.5 统一错误处理（`errors.go`）
+### 6.5 统一错误处理（`internal/common`）
 
-`errors.go` 用于统一不同 Module 的 HTTP 错误响应和内部错误映射，负责区分页面请求与 JSON/API 请求，并避免把数据库错误、Provider 地址、OAuth Token 等敏感信息直接返回给客户端。
+`internal/common` 提供不同 Module 共用的 HTTP 错误响应能力，负责统一包含英文消息的 JSON 错误格式，并由调用方完成内部错误到安全公共消息的映射，避免把数据库错误、Provider 地址、OAuth Token 等敏感信息直接返回给客户端。
 
 Service 至少提供统一的 JSON 错误输出能力，例如：
 
 ```go
 func WriteError(w http.ResponseWriter, status int, message string)
-func WriteCodedError(w http.ResponseWriter, status int, code, message string)
 ```
 
 认证失败、路由未找到、路由处理 panic 和基础设施错误不得把敏感内部错误直接返回给客户端。请求处理链应统一完成 Request ID、恢复、访问日志和路由声明的认证，然后才进入 Module Handler；Request ID 同时写入响应 Header 和请求 Context。
 
 它与 `auth.go` 的关系是：认证服务负责判断请求是否有权访问，错误处理服务负责将认证失败和业务失败转换为一致的 HTTP 响应。两者都属于 Service 的横切能力，不属于某个具体 Module。
 
-这些文件名不是架构要求；如果实现规模较小，可以把 `context.go`、`auth.go` 和 `errors.go` 合并到少量 Service 基础设施文件中，但职责边界应保持不变。
+这些文件名不是架构要求；如果实现规模较小，可以把 `context.go` 和 `auth.go` 合并到少量 Service 基础设施文件中，但通用错误输出应继续保持在 `internal/common` 的职责边界内。
 
 ## 7. 四个 Service Module 的职责
 

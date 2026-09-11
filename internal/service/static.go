@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ai-unisub/internal/common"
 	"embed"
 	"encoding/json"
 	"io/fs"
@@ -121,19 +122,19 @@ func (m *StaticModule) login(ctx ModuleContext, w http.ResponseWriter, r *http.R
 		Password string `json:"password"`
 	}
 	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil || strings.TrimSpace(input.Username) == "" || input.Password == "" {
-		WriteError(w, http.StatusBadRequest, "username and password are required")
+		common.WriteError(w, http.StatusBadRequest, common.MessageUsernamePasswordRequired)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "could not authenticate user")
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotAuthenticateUser)
 		return
 	}
 	for i := range users {
 		if users[i].Name == input.Username && users[i].Enabled && verifyPassword(users[i].PasswordHash, input.Password) {
 			token, err := ctx.Auth().CreateSession(&users[i])
 			if err != nil {
-				WriteError(w, http.StatusInternalServerError, "could not create session")
+				common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotCreateSession)
 				return
 			}
 			ctx.Auth().SetSessionCookie(w, token)
@@ -141,7 +142,7 @@ func (m *StaticModule) login(ctx ModuleContext, w http.ResponseWriter, r *http.R
 			return
 		}
 	}
-	WriteError(w, http.StatusUnauthorized, "invalid username or password")
+	common.WriteError(w, http.StatusUnauthorized, common.MessageInvalidUsernameOrPassword)
 }
 
 func noStore(w http.ResponseWriter) {

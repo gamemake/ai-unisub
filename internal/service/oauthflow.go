@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/oauth"
 	"encoding/json"
 	"errors"
@@ -63,11 +64,11 @@ func (m *OAuthFlowModule) api(ctx ModuleContext, w http.ResponseWriter, r *http.
 func (m *OAuthFlowModule) start(ctx ModuleContext, w http.ResponseWriter, r *http.Request, service string) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.User == nil {
-		WriteError(w, http.StatusUnauthorized, "unauthorized")
+		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
 	if !validOAuthService(service) {
-		WriteError(w, http.StatusBadRequest, "unsupported OAuth service")
+		common.WriteError(w, http.StatusBadRequest, common.MessageUnsupportedOAuthService)
 		return
 	}
 	redirect := callbackURL(ctx.Config(), r, service)
@@ -75,16 +76,16 @@ func (m *OAuthFlowModule) start(ctx ModuleContext, w http.ResponseWriter, r *htt
 		Proxy string `json:"proxy"`
 	}
 	if err := decodeOptionalJSON(r, &input); err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidJSONBody)
 		return
 	}
 	reqCtx := r.Context()
 	if proxy := strings.TrimSpace(input.Proxy); proxy != "" {
-		if _, err := oauth.ParseHTTPProxy(proxy); err != nil {
-			WriteError(w, http.StatusBadRequest, err.Error())
+		if _, err := common.ParseHTTPProxy(proxy); err != nil {
+			common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
 			return
 		}
-		reqCtx = oauth.WithHTTPProxy(reqCtx, proxy)
+		reqCtx = common.WithHTTPProxy(reqCtx, proxy)
 	}
 	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect)
 	if err != nil {
@@ -108,11 +109,11 @@ func decodeOptionalJSON(r *http.Request, dest any) error {
 func (m *OAuthFlowModule) poll(ctx ModuleContext, w http.ResponseWriter, r *http.Request, service, sessionID string) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.User == nil {
-		WriteError(w, http.StatusUnauthorized, "unauthorized")
+		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
 	if !validOAuthService(service) || sessionID == "" {
-		WriteError(w, http.StatusBadRequest, "invalid OAuth session")
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidOAuthSession)
 		return
 	}
 	session, err := ctx.OAuth().SessionForSubject(sessionID, service, p.User.ID)
@@ -139,12 +140,12 @@ func (m *OAuthFlowModule) poll(ctx ModuleContext, w http.ResponseWriter, r *http
 		return
 	}
 	if credential == nil || credential.AccessToken == "" {
-		WriteError(w, http.StatusBadGateway, "invalid OAuth credential")
+		common.WriteError(w, http.StatusBadGateway, common.MessageInvalidOAuthCredential)
 		return
 	}
 	id, err := ctx.OAuthResults().Put(OAuthResult{SubjectID: p.User.ID, Service: service, Credential: *credential})
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "could not store OAuth result")
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotStoreOAuthResult)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "complete", "result_id": id})
@@ -153,12 +154,12 @@ func (m *OAuthFlowModule) poll(ctx ModuleContext, w http.ResponseWriter, r *http
 func (m *OAuthFlowModule) result(ctx ModuleContext, w http.ResponseWriter, r *http.Request, id string) {
 	p, ok := PrincipalFromContext(r.Context())
 	if !ok || p.User == nil {
-		WriteError(w, http.StatusUnauthorized, "unauthorized")
+		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
 	result, err := ctx.OAuthResults().Take(id, p.User.ID)
 	if err != nil {
-		WriteError(w, http.StatusNotFound, "oauth result not found")
+		common.WriteError(w, http.StatusNotFound, common.MessageOAuthResultNotFound)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -230,13 +231,13 @@ func validOAuthService(service string) bool {
 func oauthAPIError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, oauth.ErrSessionNotFound), errors.Is(err, oauth.ErrSessionExpired):
-		WriteError(w, http.StatusBadRequest, "oauth session not found")
+		common.WriteError(w, http.StatusBadRequest, common.MessageOAuthSessionNotFound)
 	case errors.Is(err, oauth.ErrStateMismatch):
-		WriteError(w, http.StatusBadRequest, "invalid OAuth state")
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidOAuthState)
 	case errors.Is(err, oauth.ErrUnsupportedFlow):
-		WriteError(w, http.StatusBadRequest, "unsupported OAuth flow")
+		common.WriteError(w, http.StatusBadRequest, common.MessageUnsupportedOAuthFlow)
 	default:
-		WriteError(w, http.StatusBadGateway, "OAuth upstream request failed")
+		common.WriteError(w, http.StatusBadGateway, common.MessageOAuthUpstreamFailed)
 	}
 }
 
@@ -244,7 +245,7 @@ func oauthCallbackPage(w http.ResponseWriter, success bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	message := "授权失败，请重新开始授权"
+	message := common.MessageOAuthAuthorizationFailed
 	if success {
 		message = "授权成功，可以关闭此窗口"
 	}
@@ -253,7 +254,7 @@ func oauthCallbackPage(w http.ResponseWriter, success bool) {
 
 func methodNotAllowed(w http.ResponseWriter) {
 	w.Header().Set("Allow", http.MethodGet+", "+http.MethodPost)
-	WriteError(w, http.StatusMethodNotAllowed, "method not allowed")
+	common.WriteError(w, http.StatusMethodNotAllowed, common.MessageMethodNotAllowed)
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

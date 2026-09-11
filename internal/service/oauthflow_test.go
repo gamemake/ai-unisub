@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
 	"encoding/json"
@@ -95,7 +96,7 @@ func TestOAuthAPIErrorUsesBadRequestForUnknownOrExpiredSession(t *testing.T) {
 		if decodeErr := json.Unmarshal(w.Body.Bytes(), &body); decodeErr != nil {
 			t.Fatalf("error %v: invalid JSON response: %v", err, decodeErr)
 		}
-		if body["error"] != "oauth session not found" {
+		if body["error"] != common.MessageOAuthSessionNotFound {
 			t.Fatalf("error %v: body=%v", err, body)
 		}
 	}

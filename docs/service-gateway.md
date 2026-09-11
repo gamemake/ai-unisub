@@ -216,13 +216,12 @@ granted  -> canceled   （Acquire 观察到客户端已断开）
 ```http
 HTTP/1.1 429 Too Many Requests
 Retry-After: 1
-Content-Type: application/json
+Content-Type: application/json; charset=utf-8
 ```
 
 ```json
 {
-  "error": "provider request queue is full",
-  "code": "provider_queue_full"
+  "error": "provider request queue is full"
 }
 ```
 

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"context"
 	"crypto/rand"
@@ -229,12 +230,12 @@ func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler 
 		}
 		if !ok {
 			if mode == AuthAPIKey || strings.HasPrefix(r.URL.Path, "/api/") {
-				message := "unauthorized"
+				message := common.MessageUnauthorized
 				if status == http.StatusForbidden {
-					message = "forbidden"
+					message = common.MessageForbidden
 				}
 				if status == http.StatusInternalServerError {
-					message = "internal server error"
+					message = common.MessageInternalServerError
 				}
 				writeError(w, status, message)
 			} else {
@@ -243,14 +244,14 @@ func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler 
 			return
 		}
 		if mode == AuthSessionAdmin && p.User.Role != database.UserRoleAdmin {
-			writeError(w, 403, "forbidden")
+			writeError(w, 403, common.MessageForbidden)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 	})
 }
 func writeError(w http.ResponseWriter, status int, msg string) {
-	WriteError(w, status, msg)
+	common.WriteError(w, status, msg)
 }
 
 const passwordIterations = 120000
