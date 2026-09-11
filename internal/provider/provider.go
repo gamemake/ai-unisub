@@ -8,16 +8,24 @@ import (
 	"net/http"
 )
 
+type ProxyResolver interface {
+	ResolveProxy(context.Context, string) (string, error)
+	ProxyRetryLimit(string) int
+	ReportProxy(string, string, bool)
+}
+
 // ProviderConfig is the configuration of one concrete provider instance.
 //
 // A provider is a transparent HTTP forwarder. Only authentication-related
 // request headers may be replaced or added; the request body, URL, method,
 // query, and all other headers must be forwarded unchanged.
 type ProviderConfig struct {
-	ID                       string         `json:"id"`
-	Name                     string         `json:"name"`
-	Labels                   []string       `json:"labels"`
-	Proxy                    string         `json:"proxy"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Labels       []string `json:"labels"`
+	ProxyGroupID string   `json:"proxy_group_id,omitempty"`
+	// Proxy is retained for backward-compatible configs; new configs should use ProxyGroupID.
+	Proxy                    string         `json:"proxy,omitempty"`
 	APIEndpoint              string         `json:"api_endpoint"`
 	Enabled                  bool           `json:"enabled"`
 	MaxConcurrentConnections int            `json:"max_concurrent_connections"`

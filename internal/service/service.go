@@ -34,6 +34,7 @@ type Service struct {
 	cfg       Config
 	db        database.Database
 	providers *provider.ProviderManager
+	proxy     *ProxyManager
 	oauth     *oauth.OAuthManager
 	router    *router
 	results   *OAuthResultStore
@@ -63,7 +64,8 @@ func NewWithDependencies(cfg Config, db database.Database, p *provider.ProviderM
 	if p == nil {
 		p = provider.NewProviderManager()
 	}
-	s := &Service{cfg: cfg, db: db, providers: p, oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
+	s := &Service{cfg: cfg, db: db, providers: p, proxy: NewProxyManager(db), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
+	p.SetProxyResolver(s.proxy)
 	s.authSvc = &authService{s: s, sessions: map[string]session{}}
 	for _, adapter := range []oauth.OAuthAdapter{adapters.NewGrok(adapters.GrokConfig{}), adapters.NewCodex(adapters.CodexConfig{}), adapters.NewClaude(adapters.ClaudeConfig{}), oauth.NewDummyAdapter()} {
 		if err := s.oauth.Register(adapter); err != nil {
@@ -112,6 +114,7 @@ func (s *Service) Handler() http.Handler                { return s.router.handle
 func (s *Service) Config() Config                       { return s.cfg }
 func (s *Service) Database() database.Database          { return s.db }
 func (s *Service) Providers() *provider.ProviderManager { return s.providers }
+func (s *Service) Proxy() *ProxyManager                 { return s.proxy }
 func (s *Service) OAuth() *oauth.OAuthManager           { return s.oauth }
 func (s *Service) Auth() AuthService                    { return s.authSvc }
 func (s *Service) OAuthResults() *OAuthResultStore      { return s.results }

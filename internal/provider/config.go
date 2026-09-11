@@ -42,6 +42,9 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 			return ProviderConfig{}, err
 		}
 	}
+	if err := validateProxy(config.Proxy); err != nil {
+		return ProviderConfig{}, err
+	}
 	for i := range config.APIKeys {
 		config.APIKeys[i].APIKey = strings.TrimSpace(config.APIKeys[i].APIKey)
 		config.APIKeys[i].APIEndpoint = strings.TrimSpace(config.APIKeys[i].APIEndpoint)
@@ -53,9 +56,6 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 			if err := validateEndpoint(config.APIKeys[i].APIEndpoint); err != nil {
 				return ProviderConfig{}, err
 			}
-		}
-		if err := validateProxy(config.APIKeys[i].Proxy); err != nil {
-			return ProviderConfig{}, err
 		}
 	}
 	if config.AuthType == AuthTypeAPIKey && len(config.APIKeys) == 0 {
@@ -73,9 +73,6 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 	if config.QueueTimeoutSeconds < 0 {
 		return ProviderConfig{}, errors.New("queue_timeout_seconds must not be negative")
 	}
-	if err := validateProxy(config.Proxy); err != nil {
-		return ProviderConfig{}, err
-	}
 	for i := range config.APIKeys {
 		config.APIKeys[i] = config.APIKeys[i].Resolved(config.APIEndpoint, config.Proxy)
 	}
@@ -86,11 +83,11 @@ func validateProxy(proxy string) error {
 	if strings.TrimSpace(proxy) == "" {
 		return nil
 	}
-	proxyURL, err := url.Parse(proxy)
-	if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+	u, err := url.Parse(proxy)
+	if err != nil || u.Scheme == "" || u.Host == "" {
 		return errors.New("invalid provider proxy")
 	}
-	switch strings.ToLower(proxyURL.Scheme) {
+	switch strings.ToLower(u.Scheme) {
 	case "http", "https", "socks5", "socks5h":
 		return nil
 	default:

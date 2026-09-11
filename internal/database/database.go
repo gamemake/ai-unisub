@@ -78,6 +78,35 @@ type PersistedAccount struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
+// PersistedProxyGroup is a named pool of outbound proxy addresses.
+type PersistedProxyGroup struct {
+	ID         string           `json:"id"`
+	Name       string           `json:"name"`
+	Remark     string           `json:"remark"`
+	MaxRetries int              `json:"max_retries"`
+	Proxies    []PersistedProxy `json:"proxies"`
+	CreatedAt  time.Time        `json:"created_at"`
+	UpdatedAt  time.Time        `json:"updated_at"`
+}
+
+type PersistedProxy struct {
+	ID            string             `json:"id"`
+	Name          string             `json:"name"`
+	URL           string             `json:"url"`
+	Remark        string             `json:"remark"`
+	Enabled       bool               `json:"enabled"`
+	Status        string             `json:"status"`
+	Available     bool               `json:"available"`
+	LastAvailable *time.Time         `json:"last_available,omitempty"`
+	LastErrorAt   *time.Time         `json:"last_error_at,omitempty"`
+	ErrorRecords  []ProxyErrorRecord `json:"error_records,omitempty"`
+}
+
+type ProxyErrorRecord struct {
+	StartAt time.Time `json:"start_at"`
+	Count   int       `json:"count"`
+}
+
 // PersistedUser represents a user who can create API keys.
 type PersistedUser struct {
 	ID           string    `json:"id"`
@@ -192,6 +221,10 @@ type Database interface {
 	ListAccounts() ([]PersistedAccount, error)
 	SaveAccount(*PersistedAccount) error
 	DeleteAccount(string) error
+
+	ListProxyGroups() ([]PersistedProxyGroup, error)
+	SaveProxyGroup(*PersistedProxyGroup) error
+	DeleteProxyGroup(string) error
 
 	ListUsers() ([]PersistedUser, error)
 	SaveUser(*PersistedUser) error

@@ -15,11 +15,14 @@ import (
 )
 
 type oauthProvider struct {
-	mu      sync.RWMutex
-	config  ProviderConfig
-	manager *oauth.OAuthManager
-	client  *http.Client
+	mu       sync.RWMutex
+	config   ProviderConfig
+	manager  *oauth.OAuthManager
+	client   *http.Client
+	resolver ProxyResolver
 }
+
+func (p *oauthProvider) SetProxyResolver(r ProxyResolver) { p.mu.Lock(); p.resolver = r; p.mu.Unlock() }
 
 func newOAuthProvider(id string, raw json.RawMessage, manager *oauth.OAuthManager) (oauthProvider, error) {
 	if id == "" {
@@ -71,14 +74,18 @@ func (p *oauthProvider) update(raw json.RawMessage) error {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if next.Proxy != p.config.Proxy {
+	if next.ProxyGroupID != p.config.ProxyGroupID {
+		client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+		p.client = client
+	}
+	if next.Proxy != p.config.Proxy && next.ProxyGroupID == "" {
 		client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 		if next.Proxy != "" {
-			proxyURL, err := url.Parse(next.Proxy)
-			if err != nil {
-				return errors.New("invalid provider proxy")
+			u, e := url.Parse(next.Proxy)
+			if e != nil {
+				return e
 			}
-			client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
+			client.Transport.(*http.Transport).Proxy = http.ProxyURL(u)
 		}
 		p.client = client
 	}
@@ -111,7 +118,21 @@ func (p *oauthProvider) handle(service, credentialID string, req *http.Request, 
 		}
 		return
 	}
-	token, err := p.manager.GetValidAccessToken(common.WithHTTPProxy(req.Context(), p.config.Proxy), service, credentialID)
+	p.mu.RLock()
+	groupID, resolver := p.config.ProxyGroupID, p.resolver
+	p.mu.RUnlock()
+	proxyURL := ""
+	if resolver != nil && groupID != "" {
+		proxyURL, err = resolver.ResolveProxy(req.Context(), groupID)
+		if err != nil {
+			trace.HTTPErrorInfo = err.Error()
+			if recorder != nil {
+				recorder(trace)
+			}
+			return
+		}
+	}
+	token, err := p.manager.GetValidAccessToken(common.WithHTTPProxy(req.Context(), proxyURL), service, credentialID)
 	if err != nil {
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		if recorder != nil {
@@ -121,10 +142,63 @@ func (p *oauthProvider) handle(service, credentialID string, req *http.Request, 
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+token)
+	var client *http.Client
+	if proxyURL != "" {
+		parsed, parseErr := url.Parse(proxyURL)
+		if parseErr != nil {
+			trace.HTTPErrorInfo = parseErr.Error()
+			if recorder != nil {
+				recorder(trace)
+			}
+			return
+		}
+		req = req.Clone(req.Context())
+		p.mu.RLock()
+		client = p.client
+		p.mu.RUnlock()
+		transport := client.Transport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(parsed)
+		client = &http.Client{Transport: transport}
+	}
 	p.mu.RLock()
-	client := p.client
+	if client == nil {
+		client = p.client
+	}
 	p.mu.RUnlock()
-	response, err := client.Do(req)
+	maxRetries := 0
+	if resolver != nil && groupID != "" {
+		maxRetries = resolver.ProxyRetryLimit(groupID)
+	}
+	var response *http.Response
+	for attempt := 0; ; attempt++ {
+		req.Body = io.NopCloser(bytes.NewReader(body))
+		response, err = client.Do(req)
+		retryable := err != nil || (response != nil && response.StatusCode >= 500)
+		if resolver != nil && groupID != "" {
+			resolver.ReportProxy(groupID, proxyURL, !retryable)
+		}
+		if !retryable || attempt >= maxRetries || resolver == nil || groupID == "" {
+			break
+		}
+		if response != nil {
+			response.Body.Close()
+		}
+		proxyURL, err = resolver.ResolveProxy(req.Context(), groupID)
+		if err != nil {
+			break
+		}
+		parsed, parseErr := url.Parse(proxyURL)
+		if parseErr != nil {
+			err = parseErr
+			break
+		}
+		p.mu.RLock()
+		baseClient := p.client
+		p.mu.RUnlock()
+		transport := baseClient.Transport.(*http.Transport).Clone()
+		transport.Proxy = http.ProxyURL(parsed)
+		client = &http.Client{Transport: transport}
+	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	trace.OutboundRequestHeaders = req.Header.Clone()
 	if err != nil {

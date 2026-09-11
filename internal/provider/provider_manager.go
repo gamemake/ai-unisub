@@ -14,9 +14,28 @@ type ProviderFactory func(id string, config json.RawMessage) (Provider, error)
 
 // ProviderManager manages the Provider instances used by the system.
 type ProviderManager struct {
-	mu        sync.RWMutex
-	factories map[string]ProviderFactory
-	providers map[string]Provider
+	mu            sync.RWMutex
+	factories     map[string]ProviderFactory
+	providers     map[string]Provider
+	proxyResolver ProxyResolver
+}
+
+func (m *ProviderManager) SetProxyResolver(resolver ProxyResolver) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.proxyResolver = resolver
+	xs := make([]Provider, 0, len(m.providers))
+	for _, p := range m.providers {
+		xs = append(xs, p)
+	}
+	m.mu.Unlock()
+	for _, p := range xs {
+		if x, ok := p.(interface{ SetProxyResolver(ProxyResolver) }); ok {
+			x.SetProxyResolver(resolver)
+		}
+	}
 }
 
 // NewProviderManager creates an empty ProviderManager.
@@ -89,6 +108,9 @@ func (m *ProviderManager) Create(instanceID, providerType string, config json.Ra
 		return nil, errors.New("provider instance ID is already in use")
 	}
 	m.providers[instanceID] = provider
+	if x, ok := provider.(interface{ SetProxyResolver(ProxyResolver) }); ok {
+		x.SetProxyResolver(m.proxyResolver)
+	}
 	return provider, nil
 }
 

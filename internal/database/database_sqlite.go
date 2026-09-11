@@ -60,6 +60,14 @@ func (s *SQLiteDatabase) Open() error {
 		db.Close()
 		return err
 	}
+	if _, err = db.Exec(`ALTER TABLE proxy_groups ADD COLUMN remark TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		db.Close()
+		return err
+	}
+	if _, err = db.Exec(`ALTER TABLE proxy_groups ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		db.Close()
+		return err
+	}
 	s.db = db
 	if err = s.loadMemory(); err != nil {
 		db.Close()
@@ -89,6 +97,9 @@ func (s *SQLiteDatabase) Close() error {
 }
 
 func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) { return s.mem.ListAccounts() }
+func (s *SQLiteDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
+	return s.mem.ListProxyGroups()
+}
 
 func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
 	if err := s.ensureOpen(); err != nil {
@@ -161,6 +172,33 @@ func (s *SQLiteDatabase) DeleteAccount(id string) error {
 		return err
 	}
 	return s.mem.DeleteAccount(id)
+}
+
+func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
+	if value == nil || value.ID == "" {
+		return errors.New("proxy group and ID are required")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(value.Proxies)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO proxy_groups(id, name, remark, max_retries, proxies, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, remark=excluded.remark, max_retries=excluded.max_retries, proxies=excluded.proxies, created_at=excluded.created_at, updated_at=excluded.updated_at`, value.ID, value.Name, value.Remark, value.MaxRetries, data, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+	if err != nil {
+		return err
+	}
+	return s.mem.SaveProxyGroup(value)
+}
+func (s *SQLiteDatabase) DeleteProxyGroup(id string) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return s.mem.DeleteProxyGroup(id)
 }
 
 func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
@@ -444,6 +482,31 @@ func (s *SQLiteDatabase) loadMemory() error {
 		return err
 	}
 	users.Close()
+	groups, err := s.db.Query(`SELECT id, name, remark, max_retries, proxies, created_at, updated_at FROM proxy_groups`)
+	if err != nil {
+		return err
+	}
+	for groups.Next() {
+		var v PersistedProxyGroup
+		var raw []byte
+		if err = groups.Scan(&v.ID, &v.Name, &v.Remark, &v.MaxRetries, &raw, &v.CreatedAt, &v.UpdatedAt); err != nil {
+			groups.Close()
+			return err
+		}
+		if err = json.Unmarshal(raw, &v.Proxies); err != nil {
+			groups.Close()
+			return err
+		}
+		if err = s.mem.SaveProxyGroup(&v); err != nil {
+			groups.Close()
+			return err
+		}
+	}
+	if err = groups.Err(); err != nil {
+		groups.Close()
+		return err
+	}
+	groups.Close()
 	keys, err := s.db.Query(`SELECT id, user_id, account_id, name, key_value, valid_seconds, created_at, updated_at FROM api_keys`)
 	if err != nil {
 		return err
@@ -651,7 +714,8 @@ CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
 CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', key_value TEXT NOT NULL, valid_seconds INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys(account_id);
-CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);`
+CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
+CREATE TABLE IF NOT EXISTS proxy_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', remark TEXT NOT NULL DEFAULT '', max_retries INTEGER NOT NULL DEFAULT 0, proxies BLOB NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
 
 var _ Database = (*MemoryDatabase)(nil)
 var _ Database = (*SQLiteDatabase)(nil)

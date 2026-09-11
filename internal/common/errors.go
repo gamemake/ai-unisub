@@ -67,11 +67,11 @@ const (
 	MessageCouldNotAuthenticateUser     = "could not authenticate user"
 	MessageCouldNotCreateSession        = "could not create session"
 	MessageInvalidUsernameOrPassword    = "invalid username or password"
-	MessageInvalidProxy                 = "invalid proxy"
+	MessageInvalidProxy                 = "invalid proxy URL"
 	MessageOAuthAuthorizationFailed     = "OAuth authorization failed; please restart authorization"
 )
 
-// WriteError writes a client-safe English error message as JSON.
+// WriteError writes a client-safe error message as JSON.
 func WriteError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)

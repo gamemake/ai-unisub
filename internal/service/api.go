@@ -55,6 +55,9 @@ func (m *APIModule) handle(ctx ModuleContext, w http.ResponseWriter, r *http.Req
 	case "providers":
 		m.providers(ctx, w, r, parts)
 		return
+	case "proxy-groups":
+		m.proxyGroups(ctx, w, r, parts[1:])
+		return
 	case "keys":
 		m.keys(ctx, w, r, parts)
 		return
@@ -74,6 +77,185 @@ func (m *APIModule) handle(ctx ModuleContext, w http.ResponseWriter, r *http.Req
 		}
 	}
 	http.NotFound(w, r)
+}
+
+func (m *APIModule) proxyGroups(ctx ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
+	if !isAdmin(r) {
+		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		return
+	}
+	id := ""
+	if len(parts) == 1 {
+		id = parts[0]
+	}
+	if len(parts) == 1 && parts[0] == "errors" && r.Method == http.MethodGet {
+		groupID := strings.TrimSpace(r.URL.Query().Get("group_id"))
+		proxyID := strings.TrimSpace(r.URL.Query().Get("proxy_id"))
+		if groupID == "" || proxyID == "" {
+			common.WriteError(w, http.StatusBadRequest, "group_id and proxy_id are required")
+			return
+		}
+		value, err := ctx.Proxy().ErrorRecords(groupID, proxyID)
+		if err != nil {
+			common.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
+	if len(parts) == 1 && parts[0] == "test" && r.Method == http.MethodPost {
+		var input struct {
+			GroupID string `json:"group_id"`
+			ProxyID string `json:"proxy_id"`
+			URL     string `json:"url"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil {
+			common.WriteError(w, http.StatusBadRequest, "invalid proxy test request")
+			return
+		}
+		var value *database.PersistedProxy
+		var err error
+		if strings.TrimSpace(input.GroupID) != "" && strings.TrimSpace(input.ProxyID) != "" {
+			value, err = ctx.Proxy().Test(r.Context(), input.GroupID, input.ProxyID)
+		} else if strings.TrimSpace(input.URL) != "" {
+			if _, err := common.ParseHTTPProxy(input.URL); err != nil {
+				common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
+				return
+			}
+			value, err = ctx.Proxy().TestURL(r.Context(), input.URL)
+		} else {
+			common.WriteError(w, http.StatusBadRequest, "group_id and proxy_id or url are required")
+			return
+		}
+		if err != nil {
+			common.WriteError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "test" && r.Method == http.MethodPost {
+		var input struct {
+			ProxyID string `json:"proxy_id"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil || input.ProxyID == "" {
+			common.WriteError(w, http.StatusBadRequest, "proxy_id is required")
+			return
+		}
+		value, err := ctx.Proxy().Test(r.Context(), parts[0], input.ProxyID)
+		if err != nil {
+			common.WriteError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
+	if len(parts) > 1 {
+		http.NotFound(w, r)
+		return
+	}
+	if id == "" && r.Method == http.MethodGet {
+		value, err := ctx.Proxy().List()
+		if err != nil {
+			common.WriteError(w, http.StatusInternalServerError, "could not list proxy groups")
+			return
+		}
+		stripProxyErrors(value)
+		writeJSON(w, http.StatusOK, value)
+		return
+	}
+	if id == "" && r.Method == http.MethodPost {
+		var value database.PersistedProxyGroup
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&value) != nil {
+			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
+			return
+		}
+		if err := validateProxyGroupURLs(value); err != nil {
+			common.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		value.ID = newProxyID()
+		now := time.Now().UTC()
+		value.CreatedAt = now
+		value.UpdatedAt = now
+		if err := ctx.Proxy().Save(&value); err != nil {
+			common.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		stripProxyErrors([]database.PersistedProxyGroup{value})
+		writeJSON(w, http.StatusCreated, value)
+		return
+	}
+	if id == "" {
+		http.NotFound(w, r)
+		return
+	}
+	groups, err := ctx.Proxy().List()
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, "could not list proxy groups")
+		return
+	}
+	var current *database.PersistedProxyGroup
+	for i := range groups {
+		if groups[i].ID == id {
+			current = &groups[i]
+			break
+		}
+	}
+	if current == nil {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		stripProxyErrors([]database.PersistedProxyGroup{*current})
+		writeJSON(w, http.StatusOK, current)
+	case http.MethodPut:
+		var value database.PersistedProxyGroup
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&value) != nil {
+			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
+			return
+		}
+		if err := validateProxyGroupURLs(value); err != nil {
+			common.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		value.ID = id
+		value.CreatedAt = current.CreatedAt
+		value.UpdatedAt = time.Now().UTC()
+		if err := ctx.Proxy().Save(&value); err != nil {
+			common.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		stripProxyErrors([]database.PersistedProxyGroup{value})
+		writeJSON(w, http.StatusOK, value)
+	case http.MethodDelete:
+		if err := ctx.Proxy().Delete(id); err != nil {
+			common.WriteError(w, http.StatusInternalServerError, "could not delete proxy group")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		methodNotAllowed(w)
+	}
+}
+
+func validateProxyGroupURLs(group database.PersistedProxyGroup) error {
+	for _, proxy := range group.Proxies {
+		if _, err := common.ParseHTTPProxy(proxy.URL); err != nil || strings.TrimSpace(proxy.URL) == "" {
+			return errors.New(common.MessageInvalidProxy)
+		}
+	}
+	return nil
+}
+
+func stripProxyErrors(groups []database.PersistedProxyGroup) {
+	for gi := range groups {
+		for pi := range groups[gi].Proxies {
+			groups[gi].Proxies[pi].LastErrorAt = nil
+			groups[gi].Proxies[pi].ErrorRecords = nil
+		}
+	}
 }
 
 type usageTotals struct {

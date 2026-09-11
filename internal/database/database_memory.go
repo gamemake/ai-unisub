@@ -17,6 +17,7 @@ type MemoryDatabase struct {
 	users       map[string]PersistedUser
 	apiKeys     map[string]PersistedAPIKey
 	credentials map[string]json.RawMessage
+	proxyGroups map[string]PersistedProxyGroup
 }
 
 func validateAccount(value *PersistedAccount) error {
@@ -47,7 +48,46 @@ func NewMemoryDatabase() *MemoryDatabase {
 		users:       make(map[string]PersistedUser),
 		apiKeys:     make(map[string]PersistedAPIKey),
 		credentials: make(map[string]json.RawMessage),
+		proxyGroups: make(map[string]PersistedProxyGroup),
 	}
+}
+
+func (m *MemoryDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
+	if m == nil {
+		return nil, errors.New("memory database is nil")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]PersistedProxyGroup, 0, len(m.proxyGroups))
+	for _, v := range m.proxyGroups {
+		result = append(result, cloneProxyGroup(v))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
+}
+func (m *MemoryDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	if value == nil || value.ID == "" {
+		return errors.New("proxy group and ID are required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.proxyGroups == nil {
+		m.proxyGroups = make(map[string]PersistedProxyGroup)
+	}
+	m.proxyGroups[value.ID] = cloneProxyGroup(*value)
+	return nil
+}
+func (m *MemoryDatabase) DeleteProxyGroup(id string) error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.proxyGroups, id)
+	return nil
 }
 
 func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
@@ -260,5 +300,12 @@ func cloneAccount(value PersistedAccount) PersistedAccount {
 }
 func cloneUser(value PersistedUser) PersistedUser {
 	value.Labels = append([]string(nil), value.Labels...)
+	return value
+}
+func cloneProxyGroup(value PersistedProxyGroup) PersistedProxyGroup {
+	value.Proxies = append([]PersistedProxy(nil), value.Proxies...)
+	for i := range value.Proxies {
+		value.Proxies[i].ErrorRecords = append([]ProxyErrorRecord(nil), value.Proxies[i].ErrorRecords...)
+	}
 	return value
 }

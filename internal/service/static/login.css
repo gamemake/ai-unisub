@@ -1,0 +1,16 @@
+/* Login-only presentation. Shared form controls remain in common.css. */
+
+.login-shell{min-height:100vh;display:grid;grid-template-columns:1.08fr .92fr}
+.login-art{position:relative;overflow:hidden;padding:64px;display:flex;flex-direction:column;justify-content:space-between;border-right:1px solid var(--line)}
+.login-side{display:grid;place-items:center;padding:32px}
+.login-card{width:min(420px,100%)}
+.login-card h2{font-size:28px;margin:0 0 8px}
+.login-card>p{color:var(--muted);margin:0 0 32px}
+.login-error{color:#ff9baa;margin:10px 0 0;min-height:21px}
+.secure-note{display:flex;gap:10px;color:var(--muted);font-size:12px;margin-top:24px}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);display:inline-block}
+
+@media(max-width:1050px){
+  .login-shell{grid-template-columns:1fr}
+  .login-art{display:none}
+}

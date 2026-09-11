@@ -27,6 +27,7 @@ type ModuleContext interface {
 	Database() database.Database
 	OAuth() *oauth.OAuthManager
 	Providers() *provider.ProviderManager
+	Proxy() *ProxyManager
 	Auth() AuthService
 	OAuthResults() *OAuthResultStore
 }
@@ -38,5 +39,6 @@ func (c *moduleContext) HandleFunc(p string, o RouteOptions, h http.HandlerFunc)
 func (c *moduleContext) Database() database.Database                             { return c.s.db }
 func (c *moduleContext) OAuth() *oauth.OAuthManager                              { return c.s.oauth }
 func (c *moduleContext) Providers() *provider.ProviderManager                    { return c.s.providers }
+func (c *moduleContext) Proxy() *ProxyManager                                    { return c.s.proxy }
 func (c *moduleContext) Auth() AuthService                                       { return c.s.authSvc }
 func (c *moduleContext) OAuthResults() *OAuthResultStore                         { return c.s.results }

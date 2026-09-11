@@ -29,7 +29,7 @@ func main() {
 	if err := srv.Auth().EnsureAdmin(adminUsername, adminPassword); err != nil {
 		log.Fatal(err)
 	}
-	for _, module := range []service.Module{service.NewStaticModule(), service.NewAPIModule(), service.NewOAuthFlowModule()} {
+	for _, module := range []service.Module{service.NewStaticModule(), service.NewAPIModule(), service.NewProxyModule(), service.NewOAuthFlowModule()} {
 		if err := srv.AddModule(module); err != nil {
 			log.Fatal(err)
 		}
