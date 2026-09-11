@@ -58,7 +58,7 @@ Service 的认证中间件先验证 Session，并将 `Principal` 写入 `request
 
 | Method | Path | 参数 | 权限 | 作用 |
 | --- | --- | --- | --- | --- |
-| `GET` | `/api/me` | 无 | Session | 返回当前用户的 `id`、`name`、`role` |
+| `GET` | `/api/me` | 无 | Session | 返回当前用户的 `id`、`name`、`role` 和 `server_version` |
 | `POST` | `/api/password` | JSON：`old_password`、`new_password` | Session | 修改当前用户密码；新密码至少 8 位 |
 
 `POST /api/password` 请求示例：

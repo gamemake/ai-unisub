@@ -9,7 +9,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ai-unisub ./cmd/server
+ARG VERSION=dev
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w -X ai-unisub/internal/service.Version=${VERSION}" -o /out/ai-unisub ./cmd/server
 
 FROM alpine:3.22
 

@@ -52,6 +52,46 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 		t.Fatalf("login page missing API key name field")
 	}
 	loginHTML := get("/login", nil).Body.String()
+	if !strings.Contains(loginHTML, `id="serverVersion"`) || !strings.Contains(loginHTML, `id="serverCopyright"`) {
+		t.Fatal("sidebar footer should show server metadata")
+	}
+	topbarStart := strings.Index(loginHTML, `<header class="topbar">`)
+	topbarEnd := -1
+	if topbarStart >= 0 {
+		topbarEnd = strings.Index(loginHTML[topbarStart:], `</header>`)
+	}
+	if topbarStart < 0 || topbarEnd < 0 {
+		t.Fatal("top bar is missing")
+	}
+	topbarHTML := loginHTML[topbarStart : topbarStart+topbarEnd]
+	if !strings.Contains(topbarHTML, `id="logoutButton"`) || !strings.Contains(topbarHTML, `class="btn btn-ghost icon-btn"`) || !strings.Contains(topbarHTML, `aria-label="退出登录"`) {
+		t.Fatal("top bar should contain an accessible icon-only logout button")
+	}
+	sidebarEnd := strings.Index(loginHTML, `</aside>`)
+	if sidebarEnd < 0 || strings.Contains(loginHTML[:sidebarEnd], `id="logoutButton"`) {
+		t.Fatal("sidebar should not contain the logout button")
+	}
+	if strings.Contains(loginHTML, `id="sidebarUserName"`) || strings.Contains(loginHTML, `id="sidebarUserRole"`) || strings.Contains(loginHTML, `id="sidebarUserAvatar"`) {
+		t.Fatal("sidebar footer should not show current user information")
+	}
+	keyModalStart := strings.Index(loginHTML, `id="keyModal"`)
+	if keyModalStart < 0 {
+		t.Fatal("API key result modal is missing")
+	}
+	keyModalEnd := strings.Index(loginHTML[keyModalStart:], `id="userModal"`)
+	if keyModalEnd < 0 {
+		t.Fatal("API key result modal boundary is missing")
+	}
+	keyModalHTML := loginHTML[keyModalStart : keyModalStart+keyModalEnd]
+	if strings.Contains(keyModalHTML, "我已保存") || !strings.Contains(keyModalHTML, ">关闭</button>") {
+		t.Fatal("API key result modal should use Close instead of Saved")
+	}
+	if strings.Count(keyModalHTML, "btn-primary") != 1 {
+		t.Fatal("API key result modal should have exactly one primary button")
+	}
+	if !strings.Contains(keyModalHTML, `class="key-export-actions"`) || !strings.Contains(keyModalHTML, `id="copyKeyButton"`) || !strings.Contains(keyModalHTML, `id="ccSwitchFromKeyModal"`) {
+		t.Fatal("API key result modal should place Copy and CC Switch in one action row")
+	}
 	if !strings.Contains(loginHTML, "排队超时") || !strings.Contains(loginHTML, "同时转发的最大请求数") || !strings.Contains(loginHTML, `name="accountEnabled"`) {
 		t.Fatal("account form missing queue timeout, concurrency hint, or status radios")
 	}
@@ -66,6 +106,9 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	}
 	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "setAuthJSON") || strings.Contains(js, "credentialSummaryHTML") {
 		t.Fatal("admin js should display OAuthCredential JSON as-is")
+	}
+	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "window.location.assign('/home')") || !strings.Contains(js, "function renderServerMeta") {
+		t.Fatal("admin js should navigate to /home after login and render server metadata")
 	}
 	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "function parseResponse") || !strings.Contains(js, "function errorText") || !strings.Contains(js, "body.error") {
 		t.Fatal("admin js should parse and translate JSON error responses centrally")

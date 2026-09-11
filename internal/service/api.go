@@ -83,7 +83,7 @@ func (m *APIModule) me(w http.ResponseWriter, r *http.Request) {
 		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": u.ID, "name": u.Name, "role": u.Role})
+	writeJSON(w, http.StatusOK, map[string]any{"id": u.ID, "name": u.Name, "role": u.Role, "server_version": Version})
 }
 
 func (m *APIModule) password(ctx ModuleContext, w http.ResponseWriter, r *http.Request) {

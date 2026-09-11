@@ -36,6 +36,10 @@ func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
 		s.Handler().ServeHTTP(w, r)
 		return w
 	}
+	me := request(http.MethodGet, "/api/me", "")
+	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"server_version":"`+Version+`"`) {
+		t.Fatalf("current user version: status=%d body=%s", me.Code, me.Body.String())
+	}
 
 	created := request(http.MethodPost, "/api/users", `{"name":"user","password":"new-password","role":"user"}`)
 	if created.Code != http.StatusCreated {
