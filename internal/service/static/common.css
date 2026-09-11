@@ -37,3 +37,9 @@
 #logModalBody>.log-block{order:4}
 #logModalBody>.log-block:nth-child(3){order:2}
 #logModalBody>.log-block:nth-child(2){order:3}
+.header-diff-line{display:block}
+.header-diff-line.added{color:#75e6a8}
+.header-diff-line.removed{color:#ff8494}
+.header-diff-line.changed{color:#ffc46b}
+#loginView{visibility:visible}
+html.home-auth-pending #loginView{display:none}

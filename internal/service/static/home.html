@@ -5,18 +5,10 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="dark">
   <title>UniSub · 控制台</title>
-  <link rel="stylesheet" href="/static/admin.css">
+  <script>if(location.pathname==='/home')document.documentElement.classList.add('home-auth-pending')</script>
+  <link rel="stylesheet" href="/static/common.css">
 </head>
 <body>
-  <section class="login-shell" id="loginView">
-    <div class="login-art">
-      <div class="brand"><span class="brand-mark">∪</span><span>UNISUB</span></div>
-      <div class="hero"><div class="eyebrow">Unified subscription gateway</div><h1>一个入口<br><span>连接所有模型</span></h1><p>将 Claude、Codex 与 Grok 订阅账号安全集成到你的服务器，在一个控制台管理凭据、访问密钥与用量。</p></div>
-      <div class="signal"><div><b>3</b>原生协议</div><div><b>多 Key</b>账号绑定</div><div><b>SSE</b>流式透传</div></div>
-    </div>
-    <div class="login-side"><form class="login-card" id="loginForm"><div class="eyebrow">控制台</div><h2>登录服务器</h2><p>使用账号密码进入 UniSub 控制台。</p><div class="field"><label for="username">用户名</label><input class="input" id="username" autocomplete="username" value="admin" required></div><div class="field"><label for="password">密码</label><input class="input" id="password" type="password" autocomplete="current-password" required></div><button class="btn btn-primary btn-block" id="loginButton" type="submit">安全登录</button><div class="login-error" id="loginError"></div><div class="secure-note"><span class="dot"></span><span>JWT 仅保存在当前浏览器会话，关闭页面后自动清除。</span></div></form></div>
-  </section>
-
   <div class="app" id="appView" hidden>
     <aside class="sidebar"><div class="brand"><span class="brand-mark">∪</span><span>UNISUB</span></div><nav class="nav">
       <button class="active" data-page="personal" title="个人总览"><svg data-icon="home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10M9 20v-6h6v6"/></svg><span>个人总览</span></button>
@@ -58,6 +50,6 @@
   <div class="toast-stack" id="toastStack"></div>
 
   <script>document.querySelector('#authType option[value="api_key"]')?.remove()</script>
-  <script src="/static/admin.js" defer></script>
+  <script src="/static/home.js" defer></script>
 </body>
 </html>

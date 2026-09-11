@@ -12,7 +12,7 @@ import (
 // The browser application is deliberately embedded in the binary.  Static
 // handlers must not read files from the process working directory.
 //
-//go:embed static/admin.html static/admin.css static/admin.js
+//go:embed static/login.html static/home.html static/common.css static/home.js static/login.js
 var staticFiles embed.FS
 
 // StaticModule serves the browser entry points and manages the Web Session
@@ -48,7 +48,7 @@ func (m *StaticModule) Init(ctx ModuleContext) error {
 				http.Redirect(w, r, "/home", http.StatusSeeOther)
 				return
 			}
-			m.page(w, r)
+			m.page(w, r, "login.html")
 		case http.MethodPost:
 			m.login(ctx, w, r)
 		default:
@@ -71,7 +71,7 @@ func (m *StaticModule) Init(ctx ModuleContext) error {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		m.page(w, r)
+		m.page(w, r, "home.html")
 	})
 	ctx.HandleFunc("/logout", RouteOptions{Auth: AuthNone, Name: "static.logout"}, func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -101,10 +101,10 @@ func (m *StaticModule) assets(w http.ResponseWriter, r *http.Request) {
 	m.files.ServeHTTP(w, r)
 }
 
-func (m *StaticModule) page(w http.ResponseWriter, r *http.Request) {
+func (m *StaticModule) page(w http.ResponseWriter, r *http.Request, name string) {
 	noStore(w)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	data, _ := staticFiles.ReadFile("static/admin.html")
+	data, _ := staticFiles.ReadFile("static/" + name)
 	_, _ = w.Write(data)
 }
 

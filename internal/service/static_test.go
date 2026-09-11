@@ -27,7 +27,7 @@ func newStaticTestService(t *testing.T) (*Service, string) {
 }
 
 func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
-	s, _ := newStaticTestService(t)
+	s, userID := newStaticTestService(t)
 	defer s.Close()
 
 	get := func(path string, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -48,41 +48,46 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	if got := get("/login", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "loginForm") {
 		t.Fatalf("login page: status=%d body=%q", got.Code, got.Body.String()[:min(80, got.Body.Len())])
 	}
-	if got := get("/login", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `id="apiKeyName"`) {
-		t.Fatalf("login page missing API key name field")
+	users, err := s.Database().ListUsers()
+	if err != nil || len(users) != 1 || users[0].ID != userID {
+		t.Fatalf("list test user: users=%#v err=%v", users, err)
 	}
-	loginHTML := get("/login", nil).Body.String()
-	if !strings.Contains(loginHTML, `id="serverVersion"`) || !strings.Contains(loginHTML, `id="serverCopyright"`) {
+	session, err := s.Auth().CreateSession(&users[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeHTML := get("/home", &http.Cookie{Name: "session", Value: session}).Body.String()
+	if !strings.Contains(homeHTML, `id="serverVersion"`) || !strings.Contains(homeHTML, `id="serverCopyright"`) {
 		t.Fatal("sidebar footer should show server metadata")
 	}
-	topbarStart := strings.Index(loginHTML, `<header class="topbar">`)
+	topbarStart := strings.Index(homeHTML, `<header class="topbar">`)
 	topbarEnd := -1
 	if topbarStart >= 0 {
-		topbarEnd = strings.Index(loginHTML[topbarStart:], `</header>`)
+		topbarEnd = strings.Index(homeHTML[topbarStart:], `</header>`)
 	}
 	if topbarStart < 0 || topbarEnd < 0 {
 		t.Fatal("top bar is missing")
 	}
-	topbarHTML := loginHTML[topbarStart : topbarStart+topbarEnd]
+	topbarHTML := homeHTML[topbarStart : topbarStart+topbarEnd]
 	if !strings.Contains(topbarHTML, `id="logoutButton"`) || !strings.Contains(topbarHTML, `class="btn btn-ghost icon-btn"`) || !strings.Contains(topbarHTML, `aria-label="退出登录"`) {
 		t.Fatal("top bar should contain an accessible icon-only logout button")
 	}
-	sidebarEnd := strings.Index(loginHTML, `</aside>`)
-	if sidebarEnd < 0 || strings.Contains(loginHTML[:sidebarEnd], `id="logoutButton"`) {
+	sidebarEnd := strings.Index(homeHTML, `</aside>`)
+	if sidebarEnd < 0 || strings.Contains(homeHTML[:sidebarEnd], `id="logoutButton"`) {
 		t.Fatal("sidebar should not contain the logout button")
 	}
-	if strings.Contains(loginHTML, `id="sidebarUserName"`) || strings.Contains(loginHTML, `id="sidebarUserRole"`) || strings.Contains(loginHTML, `id="sidebarUserAvatar"`) {
+	if strings.Contains(homeHTML, `id="sidebarUserName"`) || strings.Contains(homeHTML, `id="sidebarUserRole"`) || strings.Contains(homeHTML, `id="sidebarUserAvatar"`) {
 		t.Fatal("sidebar footer should not show current user information")
 	}
-	keyModalStart := strings.Index(loginHTML, `id="keyModal"`)
+	keyModalStart := strings.Index(homeHTML, `id="keyModal"`)
 	if keyModalStart < 0 {
 		t.Fatal("API key result modal is missing")
 	}
-	keyModalEnd := strings.Index(loginHTML[keyModalStart:], `id="userModal"`)
+	keyModalEnd := strings.Index(homeHTML[keyModalStart:], `id="userModal"`)
 	if keyModalEnd < 0 {
 		t.Fatal("API key result modal boundary is missing")
 	}
-	keyModalHTML := loginHTML[keyModalStart : keyModalStart+keyModalEnd]
+	keyModalHTML := homeHTML[keyModalStart : keyModalStart+keyModalEnd]
 	if strings.Contains(keyModalHTML, "我已保存") || !strings.Contains(keyModalHTML, ">关闭</button>") {
 		t.Fatal("API key result modal should use Close instead of Saved")
 	}
@@ -92,31 +97,31 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	if !strings.Contains(keyModalHTML, `class="key-export-actions"`) || !strings.Contains(keyModalHTML, `id="copyKeyButton"`) || !strings.Contains(keyModalHTML, `id="ccSwitchFromKeyModal"`) {
 		t.Fatal("API key result modal should place Copy and CC Switch in one action row")
 	}
-	if !strings.Contains(loginHTML, "排队超时") || !strings.Contains(loginHTML, "同时转发的最大请求数") || !strings.Contains(loginHTML, `name="accountEnabled"`) {
+	if !strings.Contains(homeHTML, "排队超时") || !strings.Contains(homeHTML, "同时转发的最大请求数") || !strings.Contains(homeHTML, `name="accountEnabled"`) {
 		t.Fatal("account form missing queue timeout, concurrency hint, or status radios")
 	}
-	if strings.Contains(loginHTML, "id=\"credentialHint\"") || strings.Contains(loginHTML, "id=\"clearProxy\"") {
+	if strings.Contains(homeHTML, "id=\"credentialHint\"") || strings.Contains(homeHTML, "id=\"clearProxy\"") {
 		t.Fatal("account form still has removed credential hint or clear-proxy control")
 	}
-	if got := get("/static/admin.js", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "copyAPIKey") || !strings.Contains(got.Body.String(), "launchCCSwitch") || !strings.Contains(got.Body.String(), "keySecret") || !strings.Contains(got.Body.String(), ">名称</th>") || !strings.Contains(got.Body.String(), ">过期时间</th>") {
-		t.Fatalf("admin js missing API key name/copy/CC Switch/expiry UI")
+	if got := get("/static/home.js", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "copyAPIKey") || !strings.Contains(got.Body.String(), "launchCCSwitch") || !strings.Contains(got.Body.String(), "keySecret") || !strings.Contains(got.Body.String(), ">名称</th>") || !strings.Contains(got.Body.String(), ">过期时间</th>") {
+		t.Fatalf("home js missing API key name/copy/CC Switch/expiry UI")
 	}
-	if js := get("/static/admin.js", nil).Body.String(); strings.Contains(js, "var id=Number(button.dataset.id)") {
+	if js := get("/static/home.js", nil).Body.String(); strings.Contains(js, "var id=Number(button.dataset.id)") {
 		t.Fatal("account action still coerces hex IDs to numbers")
 	}
-	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "setAuthJSON") || strings.Contains(js, "credentialSummaryHTML") {
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "setAuthJSON") || strings.Contains(js, "credentialSummaryHTML") {
 		t.Fatal("admin js should display OAuthCredential JSON as-is")
 	}
-	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "window.location.assign('/home')") || !strings.Contains(js, "function renderServerMeta") {
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "window.location.assign('/home')") || !strings.Contains(js, "function renderServerMeta") {
 		t.Fatal("admin js should navigate to /home after login and render server metadata")
 	}
-	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "function parseResponse") || !strings.Contains(js, "function errorText") || !strings.Contains(js, "body.error") {
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "function parseResponse") || !strings.Contains(js, "function errorText") || !strings.Contains(js, "body.error") {
 		t.Fatal("admin js should parse and translate JSON error responses centrally")
 	}
-	if got := get("/static/admin.css", nil); got.Code != http.StatusOK || got.Header().Get("Content-Type") == "" {
+	if got := get("/static/common.css", nil); got.Code != http.StatusOK || got.Header().Get("Content-Type") == "" {
 		t.Fatalf("static css: status=%d content-type=%q", got.Code, got.Header().Get("Content-Type"))
 	}
-	if got := get("/static/../admin.css", nil); got.Code != http.StatusNotFound {
+	if got := get("/static/../common.css", nil); got.Code != http.StatusNotFound {
 		t.Fatalf("path traversal: status=%d", got.Code)
 	}
 }
