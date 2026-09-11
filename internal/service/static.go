@@ -12,7 +12,7 @@ import (
 // The browser application is deliberately embedded in the binary.  Static
 // handlers must not read files from the process working directory.
 //
-//go:embed static/login.html static/home.html static/common.css static/home.js static/login.js
+//go:embed static/login.html static/home.html static/common.css static/home-data.js static/home.js static/login.js
 var staticFiles embed.FS
 
 // StaticModule serves the browser entry points and manages the Web Session

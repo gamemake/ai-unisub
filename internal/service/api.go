@@ -906,7 +906,7 @@ func (m *APIModule) calls(ctx ModuleContext, w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
-		if _, err := fmt.Sscan(raw, &pageSize); err != nil || pageSize < 20 || pageSize > 100 {
+		if _, err := fmt.Sscan(raw, &pageSize); err != nil || pageSize < 10 || pageSize > 100 {
 			common.WriteError(w, 400, common.MessagePageSizeRange)
 			return
 		}

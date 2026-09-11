@@ -90,10 +90,10 @@ func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
 	if changed.Code != http.StatusOK {
 		t.Fatalf("change password: status=%d body=%s", changed.Code, changed.Body.String())
 	}
-	if got := request(http.MethodGet, "/api/calls?page_size=10", ""); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodGet, "/api/calls?page_size=9", ""); got.Code != http.StatusBadRequest {
 		t.Fatalf("invalid call page size: status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := request(http.MethodGet, "/api/calls?page_size=20", ""); got.Code != http.StatusOK {
+	if got := request(http.MethodGet, "/api/calls?page_size=10", ""); got.Code != http.StatusOK {
 		t.Fatalf("valid call page size: status=%d body=%s", got.Code, got.Body.String())
 	}
 }

@@ -1,9 +1,9 @@
 (function(){
       'use strict';
       var token=sessionStorage.getItem('unisub_admin_token')||'';
-      var accounts=[];var keys=[];var users=[];var usage={};var currentUser=null;
+      var accounts=[];var keys=[];var users=[];var usage={};var currentUser=null;var homeStore=null;var homeStoreUnsubscribers=[];
       var grokOAuthFlowID='';var grokOAuthProvider='grok';var grokOAuthTimer=0;var pkceOAuthFlowID='';var pkceOAuthProvider='';var editingAccountID=0;var editingKeyID=0;var plaintextKeys={};var pendingCCSwitchKey=null;var oauthAuthorized=false;var pendingOAuthCredential=null;
-      var currentPage='personal';var logs=[];var logTotal=0;var logLimit=100;var logOffset=0;var logSearchTimer=0;var logCopyTexts=[];var personalRecentLogs=[];var landingResolved=false;
+      var currentPage='personal';var logs=[];var logTotal=0;var logLimit=10;var logOffset=0;var logSearchTimer=0;var logCopyTexts=[];var personalRecentLogs=[];var landingResolved=false;
       var names={personal:'个人总览',overview:'系统总览',accounts:'订阅管理',keys:'API Key',logs:'调用记录',users:'用户管理',security:'安全设置'};
       function $(id){return document.getElementById(id)||{addEventListener:function(){}}}
       function escapeHTML(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
@@ -12,7 +12,7 @@
       function pad2(n){return String(n).padStart(2,'0')}
       function formatDuration(ms){ms=Number(ms)||0;if(ms<0)ms=0;var seconds=ms/1000;if(seconds<10)return seconds.toFixed(1)+' 秒';if(seconds<60)return Math.min(59,Math.round(seconds))+' 秒';var totalSec=Math.round(seconds);var min=Math.floor(totalSec/60);var sec=totalSec%60;return sec?min+' 分 '+sec+' 秒':min+' 分钟'}
       function formatDateTime(value){if(!value)return'—';var d=new Date(value);if(isNaN(d))return'—';return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())+' '+pad2(d.getHours())+':'+pad2(d.getMinutes())+':'+pad2(d.getSeconds())}
-      function toast(message,error){var el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=message;$('toastStack').appendChild(el);setTimeout(function(){el.remove()},3200)}
+      function toast(message,error){var el=document.createElement('div');el.className='toast'+(error?' error':'');el.textContent=message;$('toastStack').appendChild(el);setTimeout(function(){el.remove()},5000)}
       var errorMessages={'unauthorized':'会话已过期，请重新登录','forbidden':'没有权限执行此操作','internal server error':'服务器内部错误','invalid password':'密码无效','old password is incorrect':'当前密码不正确','could not save password':'无法保存密码','could not list users':'无法读取用户列表','password must contain at least 8 characters':'密码至少需要 8 个字符','cannot reset current user password':'不能在这里重置当前用户密码','could not save user':'无法保存用户','user not found':'找不到用户','invalid user':'用户信息无效','user name already exists':'用户名已存在','could not generate user ID':'无法生成用户 ID','invalid role':'用户角色无效','cannot demote or disable current user':'不能降级或停用当前用户','cannot delete current user':'不能删除当前用户','could not delete user':'无法删除用户','could not list providers':'无法读取订阅列表','provider and config are required':'必须提供 Provider 和配置','invalid provider config':'Provider 配置无效','credential not found':'找不到权鉴凭据','could not generate credential ID':'无法生成凭据 ID','could not save credential':'无法保存权鉴凭据','could not generate provider ID':'无法生成 Provider ID','could not save provider':'无法保存 Provider','provider not found':'找不到 Provider','could not inspect provider references':'无法检查 Provider 引用','provider is still referenced by an API key':'Provider 仍被 API Key 引用','could not delete provider':'无法删除 Provider','provider type cannot be changed':'不能修改 Provider 类型','could not list API keys':'无法读取 API Key 列表','name is required and must be at most 64 characters':'名称不能为空且不能超过 64 个字符','account_id is required':'必须选择订阅账号','valid_seconds must not be negative':'有效期不能为负数','could not generate API key ID':'无法生成 API Key ID','could not generate API key':'无法生成 API Key','could not save API key':'无法保存 API Key','could not delete API key':'无法删除 API Key','API key not found':'找不到 API Key','invalid page':'页码无效','page_size must be between 20 and 100':'每页数量必须在 20 到 100 之间','could not query call records':'无法查询调用记录','invalid JSON body':'请求数据格式无效','unsupported OAuth service':'不支持此 OAuth 服务','invalid OAuth session':'OAuth Session 无效','invalid OAuth credential':'OAuth 权鉴凭据无效','could not store OAuth result':'无法保存 OAuth 结果','oauth result not found':'找不到 OAuth 结果','oauth session not found':'找不到 OAuth Session','invalid OAuth state':'OAuth state 无效','unsupported OAuth flow':'不支持此 OAuth 流程','OAuth upstream request failed':'OAuth 上游请求失败','method not allowed':'不支持此请求方法','username and password are required':'请输入用户名和密码','could not authenticate user':'无法验证用户','could not create session':'无法创建登录 Session','invalid username or password':'用户名或密码错误','invalid proxy':'代理地址无效','OAuth authorization failed; please restart authorization':'OAuth 授权失败，请重新开始授权','network request failed':'网络请求失败','invalid server response':'服务器返回了无效数据','request failed':'请求失败'}
       function errorText(message){message=String(message||'').trim();return errorMessages[message]||message||errorMessages['request failed']}
       async function parseResponse(response,logoutOnUnauthorized){if(response.status===204)return null;var body;try{body=await response.json()}catch(e){if(response.status===401&&logoutOnUnauthorized!==false)logout();if(!response.ok)throw new Error(errorText(response.statusText||'request failed'));throw new Error(errorText('invalid server response'))}if(!response.ok){var message=typeof body.error==='string'?body.error:(body.error&&body.error.message);if(response.status===401&&logoutOnUnauthorized!==false)logout();throw new Error(errorText(message||response.statusText||'request failed'))}return body}
@@ -107,7 +107,7 @@
       function formatTokens(log){if(log.input_tokens==null&&log.output_tokens==null&&log.cache_read_tokens==null&&log.cache_creation_tokens==null&&log.total_tokens==null)return'—';var total=log.total_tokens!=null?log.total_tokens:(Number(log.input_tokens)||0)+(Number(log.output_tokens)||0);return'<div class="subtle">输入 '+escapeHTML(formatNumber(log.input_tokens||0))+' · 输出 '+escapeHTML(formatNumber(log.output_tokens||0))+'</div><div class="subtle">缓存创建 '+escapeHTML(formatNumber(log.cache_creation_tokens||0))+' · 缓存读取 '+escapeHTML(formatNumber(log.cache_read_tokens||0))+'</div><div class="subtle">合计 '+escapeHTML(formatNumber(total))+'</div>'}
       function fillLogFilters(){}
       function pageSizeOptions(selected,sizes){return (sizes||[20,50,100,200]).map(function(size){return '<option value="'+size+'"'+(Number(selected)===size?' selected':'')+'>'+size+' 行/页</option>'}).join('')}
-      function pageSizeSelectHTML(id,selected){return '<select id="'+id+'" title="每页行数" aria-label="每页行数">'+pageSizeOptions(selected,[20,50,100])+'</select>'}
+      function pageSizeSelectHTML(id,selected){return '<select id="'+id+'" title="每页行数" aria-label="每页行数">'+pageSizeOptions(selected,[10,20,50,100])+'</select>'}
       function syncLogPageSize(){var select=$('logPageSize');if(!select)return;var selected=Number(select.value);if(selected>0){logLimit=selected;return}select.value=String(logLimit)}
       function logQueryParams(){syncLogPageSize();var params=new URLSearchParams({page:String(Math.floor(logOffset/logLimit)+1),page_size:String(logLimit)});if($('logSearch').value.trim())params.set('q',$('logSearch').value.trim());return params}
       async function loadLogs(){fillLogFilters();try{var result=await request('/api/calls?'+logQueryParams());logs=result.items||[];logTotal=Number(result.total)||logs.length;logOffset=Math.floor(logOffset/logLimit)*logLimit;renderLogs()}catch(e){toast(e.message,true)}}
@@ -171,6 +171,44 @@
       document.querySelectorAll('.nav button').forEach(function(el){el.addEventListener('click',function(){navigate(el.dataset.page)})});window.addEventListener('hashchange',function(){if(location.pathname==='/home')navigate(pageFromHash())});document.querySelectorAll('[data-close]').forEach(function(el){el.addEventListener('click',closeAccountModal)});document.querySelectorAll('[data-key-close]').forEach(function(el){el.addEventListener('click',function(){$('keyModal').hidden=true;$('newAPIKey').value=''})});document.querySelectorAll('[data-key-form-close]').forEach(function(el){el.addEventListener('click',closeAPIKeyForm)});document.querySelectorAll('[data-user-close]').forEach(function(el){el.addEventListener('click',closeUserModal)});document.querySelectorAll('[data-reset-password-close]').forEach(function(el){el.addEventListener('click',closeResetPasswordModal)});document.querySelectorAll('[data-log-close]').forEach(function(el){el.addEventListener('click',function(){$('logModal').hidden=true})});
       document.querySelectorAll('[data-grok-oauth-close]').forEach(function(el){el.addEventListener('click',cancelGrokOAuth)});
       document.querySelectorAll('[data-pkce-oauth-close]').forEach(function(el){el.addEventListener('click',cancelPKCEOAuth)});
+      function homeDataLoader(key, requestFn){
+        var paths={me:'/api/me',providers:'/api/providers',keys:'/api/keys',users:'/api/users',recentCalls:'/api/calls?page=1'};
+        if(!paths[key])return Promise.reject(new Error('Unknown home data key: '+key));
+        return requestFn(paths[key]).then(function(result){
+          if(key==='me')return result;
+          return result&&Array.isArray(result.items)?result.items:[];
+        });
+      }
+      function renderHomeLoadingState(){
+        ['accountTable','keyTable','userTable','personalKeyBars','personalRecentCalls'].forEach(function(id){var el=$(id);if(el&&el.innerHTML!==undefined)el.innerHTML='<div class="skeleton-row"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div><div class="skeleton-row"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div><div class="skeleton-row"><span class="skeleton"></span><span class="skeleton"></span><span class="skeleton"></span></div>'});
+      }
+      function setupHomeStore(){
+        if(homeStore)return;
+        homeStore=window.createHomeDataStore({request:request,load:homeDataLoader});
+        homeStoreUnsubscribers.push(homeStore.subscribe('me',function(snapshot){
+          if(snapshot.status==='ready'&&snapshot.data){var me=snapshot.data;currentUser=me.user||me;renderServerMeta(me);$('personalUserBadge').innerHTML='<span class="dot"></span> '+escapeHTML(currentUser.name||currentUser.username||'');var admin=isAdmin();$('overviewNav').hidden=!admin;$('accountsNav').hidden=!admin;$('usersNav').hidden=!admin;}
+        }));
+        homeStoreUnsubscribers.push(homeStore.subscribe('providers',function(snapshot){if(!isAdmin())return;accounts=snapshot.data||[];renderAccounts();renderAPIKeys();renderPersonalOverview();renderOverview()}));
+        homeStoreUnsubscribers.push(homeStore.subscribe('keys',function(snapshot){keys=snapshot.data||[];renderAPIKeys();renderPersonalOverview()}));
+        homeStoreUnsubscribers.push(homeStore.subscribe('users',function(snapshot){if(!isAdmin())return;users=snapshot.data||[];renderUsers()}));
+        homeStoreUnsubscribers.push(homeStore.subscribe('recentCalls',function(snapshot){personalRecentLogs=snapshot.data||[];renderPersonalOverview()}));
+      }
+      function safeHomeLoad(key){return homeStore.load(key).catch(function(error){if(key!=='me')toast(error.message,true);return null})}
+      async function loadData(){
+        setupHomeStore();
+        if(!landingResolved){landingResolved=true;navigate(pageFromHash());renderHomeLoadingState()}
+        var me=await safeHomeLoad('me');
+        if(!me||!currentUser)return;
+        var tasks=[safeHomeLoad('keys'),safeHomeLoad('recentCalls')];
+        if(isAdmin())tasks.push(safeHomeLoad('providers'),safeHomeLoad('users'));
+        await Promise.all(tasks);
+        renderPersonalOverview();renderOverview();renderAccounts();renderAPIKeys();renderUsers();
+        if(isAdmin()&&currentPage==='overview'){loadUsageBySubscription();loadUsageByUser()}
+        if(currentPage==='logs')fillLogFilters();
+      }
+      function showApp(){document.documentElement.classList.remove('home-auth-pending');$('loginView').hidden=true;$('appView').hidden=false;setupHomeStore();renderHomeLoadingState();loadData()}
       $('pkceOAuthSubmit').addEventListener('click',submitPKCEOAuth);
+      function updateLogPagerSummary(){var pager=$('logPager');var summary=pager.querySelector&&pager.querySelector('span');if(!summary||!logTotal)return;summary.textContent=(Math.floor(logOffset/logLimit)+1)+'/'+Math.max(1,Math.ceil(logTotal/logLimit))+' 页'}
+      var renderLogsWithRange=renderLogs;renderLogs=function(){renderLogsWithRange.apply(this,arguments);updateLogPagerSummary()};
       initializeUsageRanges();clearUsageRangeSelection();var loadUsageBySubscriptionBase=loadUsageBySubscription;loadUsageBySubscription=function(){if(!usageRange)return;return loadUsageBySubscriptionBase.apply(this,arguments)};var loadUsageByUserBase=loadUsageByUser;loadUsageByUser=function(){if(!userUsageRange)return;return loadUsageByUserBase.apply(this,arguments)};if(location.pathname==='/home')showApp();
     })();

@@ -143,10 +143,10 @@ Provider Account 规则：
 
 | Method | Path | Path 参数 | Query 参数 | 权限 | 作用 |
 | --- | --- | --- | --- | --- | --- |
-| `GET` | `/api/calls` | 无 | `q`：可选搜索条件；`page`：从 1 开始；`page_size`：20、50 或 100 | Session | 查询调用记录 |
+| `GET` | `/api/calls` | 无 | `q`：可选搜索条件；`page`：从 1 开始；`page_size`：10、20、50 或 100 | Session | 查询调用记录 |
 | `GET` | `/api/calls/{day}/{id}` | 无 | `day`：UTC 日期，格式为 `YYYYMMDD`；`id`：调用记录 ID | Session | 查询调用记录详情 |
 
-`page_size` 必须在 20 到 100 之间，否则返回 `400`。
+`page_size` 必须在 10 到 100 之间，否则返回 `400`。
 
 调用记录的查询范围由 `Principal` 决定：
 

@@ -50,7 +50,7 @@ const (
 	MessageCouldNotDeleteAPIKey         = "could not delete API key"
 	MessageAPIKeyNotFound               = "API key not found"
 	MessageInvalidPage                  = "invalid page"
-	MessagePageSizeRange                = "page_size must be between 20 and 100"
+	MessagePageSizeRange                = "page_size must be between 10 and 100"
 	MessageCouldNotQueryCallRecords     = "could not query call records"
 	MessageInvalidJSONBody              = "invalid JSON body"
 	MessageUnsupportedOAuthService      = "unsupported OAuth service"
