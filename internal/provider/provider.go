@@ -14,14 +14,35 @@ import (
 // request headers may be replaced or added; the request body, URL, method,
 // query, and all other headers must be forwarded unchanged.
 type ProviderConfig struct {
-	ID                       string   `json:"id"`
-	Name                     string   `json:"name"`
-	CredentialID             string   `json:"credential_id,omitempty"`
-	Labels                   []string `json:"labels"`
-	Proxy                    string   `json:"proxy"`
-	Enabled                  bool     `json:"enabled"`
-	MaxConcurrentConnections int      `json:"max_concurrent_connections"`
-	QueueTimeoutSeconds      int      `json:"queue_timeout_seconds"`
+	ID                       string         `json:"id"`
+	Name                     string         `json:"name"`
+	Labels                   []string       `json:"labels"`
+	Proxy                    string         `json:"proxy"`
+	APIEndpoint              string         `json:"api_endpoint"`
+	Enabled                  bool           `json:"enabled"`
+	MaxConcurrentConnections int            `json:"max_concurrent_connections"`
+	QueueTimeoutSeconds      int            `json:"queue_timeout_seconds"`
+	AuthType                 string         `json:"auth_type"`
+	CredentialID             string         `json:"credential_id,omitempty"`
+	APIKeys                  []APIKeyConfig `json:"api_keys,omitempty"`
+}
+
+// APIKeyConfig contains one upstream API key and its optional per-key
+// endpoint/proxy overrides. Empty overrides inherit the provider defaults.
+type APIKeyConfig struct {
+	APIKey      string `json:"api_key"`
+	APIEndpoint string `json:"api_endpoint,omitempty"`
+	Proxy       string `json:"proxy,omitempty"`
+}
+
+func (key APIKeyConfig) Resolved(defaultEndpoint, defaultProxy string) APIKeyConfig {
+	if key.APIEndpoint == "" {
+		key.APIEndpoint = defaultEndpoint
+	}
+	if key.Proxy == "" {
+		key.Proxy = defaultProxy
+	}
+	return key
 }
 
 // UsageItem is one ordered name/value pair returned by a provider.

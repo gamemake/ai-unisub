@@ -530,7 +530,7 @@ func (m *APIModule) providers(ctx ModuleContext, w http.ResponseWriter, r *http.
 }
 
 func publicAccount(db database.Database, a database.PersistedAccount) map[string]any {
-	item := map[string]any{"id": a.ID, "name": a.Name, "provider": a.Provider, "enabled": accountEnabled(a.Config), "config": sanitizeJSON(a.Config), "created_at": a.CreatedAt, "updated_at": a.UpdatedAt}
+	item := map[string]any{"id": a.ID, "name": a.Name, "provider": a.Provider, "auth_type": providerAuthType(a.Config), "enabled": accountEnabled(a.Config), "config": sanitizeJSON(a.Config), "created_at": a.CreatedAt, "updated_at": a.UpdatedAt}
 	if db != nil {
 		if id := credentialIDFromConfig(a.Config); id != "" {
 			if raw, err := db.LoadCredential(id); err == nil {
@@ -542,6 +542,17 @@ func publicAccount(db database.Database, a database.PersistedAccount) map[string
 		}
 	}
 	return item
+}
+
+func providerAuthType(raw json.RawMessage) string {
+	var fields map[string]any
+	if json.Unmarshal(raw, &fields) != nil {
+		return "oauth"
+	}
+	if value, ok := fields["auth_type"].(string); ok && strings.TrimSpace(value) != "" {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	return "oauth"
 }
 
 func accountEnabled(raw json.RawMessage) bool {

@@ -48,7 +48,6 @@
   <div class="modal-shell" id="pkceOAuthModal" hidden><div class="modal"><div class="modal-head"><h2 id="pkceOAuthTitle">网页登录</h2><button type="button" class="close" data-pkce-oauth-close>&times;</button></div><div class="modal-body"><div class="notice" id="pkceOAuthNotice">请在官方页面完成授权。UniSub 不会接触你的账号密码。</div><p class="subtle oauth-status" id="pkceOAuthStatus">正在生成授权链接…</p><a class="btn btn-primary oauth-open" id="pkceOAuthOpen" href="#" target="_blank" rel="noopener noreferrer">打开授权页面</a><div class="field oauth-paste"><label for="pkceOAuthCode">授权码或回调地址</label><textarea id="pkceOAuthCode" spellcheck="false" placeholder="粘贴授权码，或 Claude 的 code#state，或 Codex 回调 URL"></textarea><div class="subtle" id="pkceOAuthHint">授权完成后把页面显示的授权码粘贴到这里。</div></div></div><div class="modal-foot"><button type="button" class="btn btn-ghost" data-pkce-oauth-close>取消</button><button type="button" class="btn btn-primary" id="pkceOAuthSubmit">完成绑定</button></div></div></div>
   <div class="toast-stack" id="toastStack"></div>
 
-  <script>document.querySelector('#authType option[value="api_key"]')?.remove()</script>
   <script src="/static/home-data.js" defer></script>
   <script src="/static/home.js" defer></script>
 </body>

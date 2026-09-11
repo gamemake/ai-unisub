@@ -154,5 +154,6 @@ func (p *oauthProvider) reset(context.Context) error                { return nil
 
 func cloneProviderConfig(config ProviderConfig) ProviderConfig {
 	config.Labels = append([]string(nil), config.Labels...)
+	config.APIKeys = append([]APIKeyConfig(nil), config.APIKeys...)
 	return config
 }

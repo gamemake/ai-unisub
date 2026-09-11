@@ -10,7 +10,7 @@ func TestDecodeProviderConfigDefaultsAndProxy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !config.Enabled || config.MaxConcurrentConnections != 1 || config.ID != "p1" {
+	if !config.Enabled || config.MaxConcurrentConnections != 1 || config.ID != "p1" || config.AuthType != AuthTypeOAuth {
 		t.Fatalf("defaults: %+v", config)
 	}
 
@@ -24,5 +24,30 @@ func TestDecodeProviderConfigDefaultsAndProxy(t *testing.T) {
 
 	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"proxy":"ftp://127.0.0.1:21"}`)); err == nil {
 		t.Fatal("expected invalid proxy")
+	}
+}
+
+func TestDecodeProviderConfigAPIKeys(t *testing.T) {
+	config, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_endpoint":"https://api.default.test/v1","proxy":"http://default-proxy:8080","api_keys":[{"api_key":" key-one "},{"api_key":"key-two","api_endpoint":"https://api.key.test","proxy":"socks5://key-proxy:1080"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.AuthType != AuthTypeAPIKey || len(config.APIKeys) != 2 || config.APIKeys[0].APIKey != "key-one" {
+		t.Fatalf("api key config: %+v", config)
+	}
+	if resolved := config.APIKeys[0].Resolved(config.APIEndpoint, config.Proxy); resolved.APIEndpoint != config.APIEndpoint || resolved.Proxy != config.Proxy {
+		t.Fatalf("default API key settings: %+v", resolved)
+	}
+	if resolved := config.APIKeys[1].Resolved(config.APIEndpoint, config.Proxy); resolved.APIEndpoint != "https://api.key.test" || resolved.Proxy != "socks5://key-proxy:1080" {
+		t.Fatalf("per-key API key settings: %+v", resolved)
+	}
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key"}`)); err == nil {
+		t.Fatal("expected api keys to be required")
+	}
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"basic","api_keys":[{"api_key":"key"}]}`)); err == nil {
+		t.Fatal("expected invalid auth type")
+	}
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_keys":["key"]}`)); err == nil {
+		t.Fatal("expected object API key entries")
 	}
 }
