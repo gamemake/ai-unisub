@@ -10,6 +10,23 @@ import (
 	"ai-unisub/internal/oauth"
 )
 
+func TestClientWithProxyUsesConfiguredProxy(t *testing.T) {
+	ctx := oauth.WithHTTPProxy(context.Background(), "http://127.0.0.1:9050")
+	client := clientWithProxy(ctx, nil)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.Proxy == nil {
+		t.Fatal("expected proxied transport")
+	}
+	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	proxyURL, err := transport.Proxy(req)
+	if err != nil || proxyURL == nil || proxyURL.Host != "127.0.0.1:9050" {
+		t.Fatalf("proxy=%v err=%v", proxyURL, err)
+	}
+}
+
 func TestClaudeAuthorizationURLAndJSONExchange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Content-Type") != "application/json" {

@@ -110,7 +110,7 @@ func (p *oauthProvider) handle(service, credentialID string, req *http.Request, 
 		}
 		return
 	}
-	token, err := p.manager.GetValidAccessToken(req.Context(), service, credentialID)
+	token, err := p.manager.GetValidAccessToken(oauth.WithHTTPProxy(req.Context(), p.config.Proxy), service, credentialID)
 	if err != nil {
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		if recorder != nil {

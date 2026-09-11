@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +12,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"ai-unisub/internal/oauth"
 )
 
 func challenge(verifier string) string {
@@ -20,6 +23,23 @@ func challenge(verifier string) string {
 func nowPlus(minutes int) time.Time { return time.Now().Add(time.Duration(minutes) * time.Minute) }
 
 func defaultHTTPClient() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
+
+func clientWithProxy(ctx context.Context, base *http.Client) *http.Client {
+	if base == nil {
+		base = defaultHTTPClient()
+	}
+	proxy := oauth.HTTPProxyFrom(ctx)
+	if proxy == "" {
+		return base
+	}
+	proxyURL, err := oauth.ParseHTTPProxy(proxy)
+	if err != nil || proxyURL == nil {
+		return base
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.Proxy = http.ProxyURL(proxyURL)
+	return &http.Client{Timeout: base.Timeout, Transport: transport}
+}
 func readResponseDo(client *http.Client, req *http.Request, out any) ([]byte, error) {
 	started := time.Now()
 	log.Printf("[oauth] outbound request method=%s url=%s", req.Method, safeURL(req.URL))

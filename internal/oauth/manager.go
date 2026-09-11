@@ -58,7 +58,7 @@ func (m *OAuthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	if err != nil {
 		return nil, err
 	}
-	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, ExpiresAt: time.Now().Add(oauthSessionTTL)}
+	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, Proxy: HTTPProxyFrom(ctx), ExpiresAt: time.Now().Add(oauthSessionTTL)}
 	result := &StartResult{SessionID: session.ID, ExpiresAt: session.ExpiresAt}
 	switch adapter := a.(type) {
 	case PKCEAdapter:
@@ -129,7 +129,7 @@ func (m *OAuthManager) Complete(ctx context.Context, sessionID, code, state stri
 	if !ok {
 		return nil, ErrUnsupportedFlow
 	}
-	result, err := adapter.Exchange(ctx, code, state, s.CodeVerifier, s.RedirectURI)
+	result, err := adapter.Exchange(withSessionProxy(ctx, s.Proxy), code, state, s.CodeVerifier, s.RedirectURI)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +205,7 @@ func (m *OAuthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	if !ok {
 		return nil, ErrUnsupportedFlow
 	}
-	result, err := adapter.PollDeviceToken(ctx, s.DeviceCode)
+	result, err := adapter.PollDeviceToken(withSessionProxy(ctx, s.Proxy), s.DeviceCode)
 	if err != nil {
 		return nil, err
 	}

@@ -5,6 +5,7 @@
 *.out
 coverage.out
 coverage.html
+__debug_bin*
 
 # Local application data
 /data/

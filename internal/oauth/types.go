@@ -101,6 +101,7 @@ type OAuthSession struct {
 	State        string
 	CodeVerifier string
 	DeviceCode   string
+	Proxy        string
 	ExpiresAt    time.Time
 }
 

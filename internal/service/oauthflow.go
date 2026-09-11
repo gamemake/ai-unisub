@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -70,12 +71,38 @@ func (m *OAuthFlowModule) start(ctx ModuleContext, w http.ResponseWriter, r *htt
 		return
 	}
 	redirect := callbackURL(ctx.Config(), r, service)
-	result, err := ctx.OAuth().Start(r.Context(), service, p.User.ID, redirect)
+	var input struct {
+		Proxy string `json:"proxy"`
+	}
+	if err := decodeOptionalJSON(r, &input); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	reqCtx := r.Context()
+	if proxy := strings.TrimSpace(input.Proxy); proxy != "" {
+		if _, err := oauth.ParseHTTPProxy(proxy); err != nil {
+			WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		reqCtx = oauth.WithHTTPProxy(reqCtx, proxy)
+	}
+	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect)
 	if err != nil {
 		oauthAPIError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func decodeOptionalJSON(r *http.Request, dest any) error {
+	if r.Body == nil {
+		return nil
+	}
+	err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(dest)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
 }
 
 func (m *OAuthFlowModule) poll(ctx ModuleContext, w http.ResponseWriter, r *http.Request, service, sessionID string) {

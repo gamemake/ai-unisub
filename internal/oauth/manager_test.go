@@ -57,9 +57,13 @@ func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
 	if err := m.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	start, err := m.Start(context.Background(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback")
+	start, err := m.Start(WithHTTPProxy(context.Background(), "socks5://127.0.0.1:1080"), OAuthServiceClaude, "subject", "http://127.0.0.1/callback")
 	if err != nil {
 		t.Fatal(err)
+	}
+	session, err := m.session(start.SessionID, false)
+	if err != nil || session.Proxy != "socks5://127.0.0.1:1080" {
+		t.Fatalf("session proxy=%q err=%v", session.Proxy, err)
 	}
 	if _, err := m.Complete(context.Background(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
 		t.Fatalf("state error=%v", err)

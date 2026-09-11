@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -45,6 +46,40 @@ func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
 	second := request()
 	if second.Code != http.StatusNotFound {
 		t.Fatalf("second status=%d body=%s", second.Code, second.Body.String())
+	}
+}
+
+func TestOAuthStartUsesAndRejectsProxy(t *testing.T) {
+	db := database.NewMemoryDatabase()
+	user := &database.PersistedUser{ID: "user-1", Name: "one", Role: database.UserRoleAdmin, Enabled: true}
+	if err := db.SaveUser(user); err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewWithDependencies(Config{DatabaseURL: "sqlite::memory:"}, db, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if err := s.AddModule(NewOAuthFlowModule()); err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.Auth().CreateSession(user)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/oauth/dummy/start", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.AddCookie(&http.Cookie{Name: "session", Value: token})
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+	if got := request(`{"proxy":"ftp://127.0.0.1:21"}`); got.Code != http.StatusBadRequest {
+		t.Fatalf("invalid proxy: status=%d body=%s", got.Code, got.Body.String())
+	}
+	if got := request(`{"proxy":"socks5://127.0.0.1:1080"}`); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"session_id"`) {
+		t.Fatalf("valid proxy: status=%d body=%s", got.Code, got.Body.String())
 	}
 }
 

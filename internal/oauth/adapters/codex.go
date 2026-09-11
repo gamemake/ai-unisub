@@ -55,7 +55,7 @@ func (a *CodexAdapter) token(ctx context.Context, values url.Values) (*oauth.OAu
 	req.Header.Set("User-Agent", "codex-tui/0.146.0")
 	req.Header.Set("originator", "codex-tui")
 	var token tokenResponse
-	if _, err := readResponseDo(a.config.HTTPClient, req, &token); err != nil {
+	if _, err := readResponseDo(clientWithProxy(ctx, a.config.HTTPClient), req, &token); err != nil {
 		return nil, err
 	}
 	result, err := credential(token)
