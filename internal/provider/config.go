@@ -25,6 +25,9 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 		if _, ok := fields["enabled"]; !ok {
 			config.Enabled = true
 		}
+		if _, ok := fields["api_keys"]; ok {
+			return ProviderConfig{}, errors.New("provider api_keys is no longer supported")
+		}
 	}
 	if id != "" {
 		config.ID = id
@@ -45,24 +48,12 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 	if err := validateProxy(config.Proxy); err != nil {
 		return ProviderConfig{}, err
 	}
-	for i := range config.APIKeys {
-		config.APIKeys[i].APIKey = strings.TrimSpace(config.APIKeys[i].APIKey)
-		config.APIKeys[i].APIEndpoint = strings.TrimSpace(config.APIKeys[i].APIEndpoint)
-		config.APIKeys[i].Proxy = strings.TrimSpace(config.APIKeys[i].Proxy)
-		if config.APIKeys[i].APIKey == "" {
-			return ProviderConfig{}, errors.New("provider api_keys must not contain empty values")
-		}
-		if config.APIKeys[i].APIEndpoint != "" {
-			if err := validateEndpoint(config.APIKeys[i].APIEndpoint); err != nil {
-				return ProviderConfig{}, err
-			}
-		}
+	config.APIKey = strings.TrimSpace(config.APIKey)
+	if config.AuthType == AuthTypeAPIKey && config.APIKey == "" {
+		return ProviderConfig{}, errors.New("provider api_key is required for api_key auth")
 	}
-	if config.AuthType == AuthTypeAPIKey && len(config.APIKeys) == 0 {
-		return ProviderConfig{}, errors.New("provider api_keys are required for api_key auth")
-	}
-	if config.AuthType == AuthTypeOAuth && len(config.APIKeys) > 0 {
-		return ProviderConfig{}, errors.New("provider api_keys require api_key auth")
+	if config.AuthType == AuthTypeOAuth && config.APIKey != "" {
+		return ProviderConfig{}, errors.New("provider api_key requires api_key auth")
 	}
 	if config.MaxConcurrentConnections < 0 {
 		return ProviderConfig{}, errors.New("max_concurrent_connections must not be negative")
@@ -72,9 +63,6 @@ func decodeProviderConfig(id string, raw json.RawMessage) (ProviderConfig, error
 	}
 	if config.QueueTimeoutSeconds < 0 {
 		return ProviderConfig{}, errors.New("queue_timeout_seconds must not be negative")
-	}
-	for i := range config.APIKeys {
-		config.APIKeys[i] = config.APIKeys[i].Resolved(config.APIEndpoint, config.Proxy)
 	}
 	return config, nil
 }

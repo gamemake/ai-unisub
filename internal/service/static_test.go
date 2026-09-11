@@ -100,6 +100,33 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	if !strings.Contains(homeHTML, "排队超时") || !strings.Contains(homeHTML, "同时转发的最大请求数") || !strings.Contains(homeHTML, `name="accountEnabled"`) {
 		t.Fatal("account form missing queue timeout, concurrency hint, or status radios")
 	}
+	accountModalStart := strings.Index(homeHTML, `id="accountModal"`)
+	accountModalEnd := -1
+	if accountModalStart >= 0 {
+		accountModalEnd = strings.Index(homeHTML[accountModalStart:], `id="apiKeyFormModal"`)
+	}
+	if accountModalStart < 0 || accountModalEnd < 0 {
+		t.Fatal("account modal is missing")
+	}
+	accountModalHTML := homeHTML[accountModalStart : accountModalStart+accountModalEnd]
+	if !strings.Contains(accountModalHTML, `id="proxyField"`) || !strings.Contains(accountModalHTML, `<label>代理</label><select id="proxyGroupID">`) {
+		t.Fatal("account form proxy field should use the labeled proxy selector")
+	}
+	if strings.Contains(accountModalHTML, `<div class="subtle">同时转发的最大请求数</div>`) || strings.Contains(accountModalHTML, `<div class="subtle">进入队列后最多等待多久`) {
+		t.Fatal("account form helper text should live inside the original inputs")
+	}
+	if !strings.Contains(accountModalHTML, `class="input-fill-hint"`) {
+		t.Fatal("account form should show helper text inside the input")
+	}
+	if !strings.Contains(accountModalHTML, `id="accountAPIKeyField"`) || !strings.Contains(accountModalHTML, `id="accountAPIKey"`) || !strings.Contains(accountModalHTML, `id="apiEndpointField"`) {
+		t.Fatal("account form should place a single API Key field beside the endpoint")
+	}
+	if strings.Contains(accountModalHTML, `btn-primary credential-auth`) || !strings.Contains(accountModalHTML, `class="btn credential-auth"`) {
+		t.Fatal("authorize button should be a normal button, not a primary button")
+	}
+	if !strings.Contains(accountModalHTML, `id="credentialsBlockedHint"`) {
+		t.Fatal("account form should explain why the credential JSON is blocked for API Key auth")
+	}
 	if strings.Contains(homeHTML, "id=\"credentialHint\"") || strings.Contains(homeHTML, "id=\"clearProxy\"") {
 		t.Fatal("account form still has removed credential hint or clear-proxy control")
 	}
@@ -114,6 +141,62 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	}
 	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "window.location.assign('/home')") || !strings.Contains(js, "function renderServerMeta") {
 		t.Fatal("admin js should navigate to /home after login and render server metadata")
+	}
+	if js := get("/static/home.js", nil).Body.String(); strings.Contains(js, "old.parentNode.parentNode.insertBefore(select,old.parentNode.nextSibling)") || strings.Contains(js, "old.parentNode.style.display='none'") {
+		t.Fatal("proxy selector should keep the labeled proxy field visible and place the select inside it")
+	}
+	if js := get("/static/home.js", nil).Body.String(); strings.Contains(js, "config.api_keys") || strings.Contains(js, "parsed.api_keys") || !strings.Contains(js, "config.api_key=key") {
+		t.Fatal("account form should save a single api_key and reject the old api_keys array")
+	}
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "function bindSelectControl") || !strings.Contains(js, "label.textContent='代理'") {
+		t.Fatal("account form selects should use the endpoint-style dropdown and the proxy label 代理")
+	}
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "function placeFloatingMenu") || !strings.Contains(js, "document.body.appendChild(menu)") {
+		t.Fatal("dropdown menus should render in a floating layer so overflow parents cannot clip them")
+	}
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "bindPageSizeSelect('logPageSize')") || !strings.Contains(js, "'pager-select'") || !strings.Contains(js, "'providerFilter'") || !strings.Contains(js, "'userRole'") || !strings.Contains(js, "'keyAccountFilter'") || !strings.Contains(js, "'userUsageSubscriptionFilter'") {
+		t.Fatal("subscription, user, API key, overview, and log page-size selects should use the styled dropdowns")
+	}
+	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, `class="pager-summary"`) || !strings.Contains(js, `pager.querySelector('.pager-summary')`) {
+		t.Fatal("log and usage pagers should render a fixed-width page summary")
+	}
+	if css := get("/static/common.css", nil).Body.String(); !strings.Contains(css, ".table-pager .pager-summary") || !strings.Contains(css, "text-align:right") || !strings.Contains(css, ".pager-select{width:108px") || !strings.Contains(css, "height:26px") {
+		t.Fatal("pager row should stay close to the page-label height with a right-aligned page summary")
+	}
+	if css := get("/static/common.css", nil).Body.String(); !strings.Contains(css, "grid-template-columns:minmax(3.25rem,1fr) auto 1.75rem") || !strings.Contains(css, "::-webkit-inner-spin-button") {
+		t.Fatal("account concurrency hint should sit left of the number spinner gutter")
+	}
+	userModalStart := strings.Index(homeHTML, `id="userModal"`)
+	userModalEnd := -1
+	if userModalStart >= 0 {
+		userModalEnd = strings.Index(homeHTML[userModalStart:], `id="logModal"`)
+	}
+	if userModalStart < 0 || userModalEnd < 0 {
+		t.Fatal("user modal is missing")
+	}
+	userModalHTML := homeHTML[userModalStart : userModalStart+userModalEnd]
+	nameIdx := strings.Index(userModalHTML, `id="userName"`)
+	passwordIdx := strings.Index(userModalHTML, `id="userPassword"`)
+	roleIdx := strings.Index(userModalHTML, `id="userRole"`)
+	if nameIdx < 0 || passwordIdx < 0 || roleIdx < 0 || !(nameIdx < passwordIdx && passwordIdx < roleIdx) {
+		t.Fatal("user form should place password to the right of username, with role below")
+	}
+	securityStart := strings.Index(homeHTML, `id="page-security"`)
+	securityEnd := -1
+	if securityStart >= 0 {
+		securityEnd = strings.Index(homeHTML[securityStart:], `id="accountModal"`)
+	}
+	if securityStart < 0 || securityEnd < 0 {
+		t.Fatal("security page is missing")
+	}
+	securityHTML := homeHTML[securityStart : securityStart+securityEnd]
+	if !strings.Contains(securityHTML, `id="passwordFields"`) {
+		t.Fatal("security page should keep password fields in one equal-width grid")
+	}
+	currentIdx := strings.Index(securityHTML, `id="currentPassword"`)
+	newIdx := strings.Index(securityHTML, `id="newPassword"`)
+	if currentIdx < 0 || newIdx < 0 || currentIdx > newIdx {
+		t.Fatal("security page should place the new password to the right of the current password")
 	}
 	if js := get("/static/home.js", nil).Body.String(); !strings.Contains(js, "function parseResponse") || !strings.Contains(js, "function errorText") || !strings.Contains(js, "body.error") {
 		t.Fatal("admin js should parse and translate JSON error responses centrally")

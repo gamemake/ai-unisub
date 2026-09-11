@@ -30,27 +30,9 @@ type ProviderConfig struct {
 	Enabled                  bool           `json:"enabled"`
 	MaxConcurrentConnections int            `json:"max_concurrent_connections"`
 	QueueTimeoutSeconds      int            `json:"queue_timeout_seconds"`
-	AuthType                 string         `json:"auth_type"`
-	CredentialID             string         `json:"credential_id,omitempty"`
-	APIKeys                  []APIKeyConfig `json:"api_keys,omitempty"`
-}
-
-// APIKeyConfig contains one upstream API key and its optional per-key
-// endpoint/proxy overrides. Empty overrides inherit the provider defaults.
-type APIKeyConfig struct {
-	APIKey      string `json:"api_key"`
-	APIEndpoint string `json:"api_endpoint,omitempty"`
-	Proxy       string `json:"proxy,omitempty"`
-}
-
-func (key APIKeyConfig) Resolved(defaultEndpoint, defaultProxy string) APIKeyConfig {
-	if key.APIEndpoint == "" {
-		key.APIEndpoint = defaultEndpoint
-	}
-	if key.Proxy == "" {
-		key.Proxy = defaultProxy
-	}
-	return key
+	AuthType                 string `json:"auth_type"`
+	CredentialID             string `json:"credential_id,omitempty"`
+	APIKey                   string `json:"api_key,omitempty"`
 }
 
 // UsageItem is one ordered name/value pair returned by a provider.

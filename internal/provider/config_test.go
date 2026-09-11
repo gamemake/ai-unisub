@@ -27,27 +27,24 @@ func TestDecodeProviderConfigDefaultsAndProxy(t *testing.T) {
 	}
 }
 
-func TestDecodeProviderConfigAPIKeys(t *testing.T) {
-	config, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_endpoint":"https://api.default.test/v1","proxy":"http://default-proxy:8080","api_keys":[{"api_key":" key-one "},{"api_key":"key-two","api_endpoint":"https://api.key.test","proxy":"socks5://key-proxy:1080"}]}`))
+func TestDecodeProviderConfigAPIKey(t *testing.T) {
+	config, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_endpoint":"https://api.default.test/v1","api_key":" key-one "}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.AuthType != AuthTypeAPIKey || len(config.APIKeys) != 2 || config.APIKeys[0].APIKey != "key-one" {
+	if config.AuthType != AuthTypeAPIKey || config.APIKey != "key-one" || config.APIEndpoint != "https://api.default.test/v1" {
 		t.Fatalf("api key config: %+v", config)
 	}
-	if resolved := config.APIKeys[0].Resolved(config.APIEndpoint, config.Proxy); resolved.APIEndpoint != config.APIEndpoint || resolved.Proxy != config.Proxy {
-		t.Fatalf("default API key settings: %+v", resolved)
-	}
-	if resolved := config.APIKeys[1].Resolved(config.APIEndpoint, config.Proxy); resolved.APIEndpoint != "https://api.key.test" || resolved.Proxy != "socks5://key-proxy:1080" {
-		t.Fatalf("per-key API key settings: %+v", resolved)
-	}
 	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key"}`)); err == nil {
-		t.Fatal("expected api keys to be required")
+		t.Fatal("expected api key to be required")
 	}
-	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"basic","api_keys":[{"api_key":"key"}]}`)); err == nil {
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"basic","api_key":"key"}`)); err == nil {
 		t.Fatal("expected invalid auth type")
 	}
-	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_keys":["key"]}`)); err == nil {
-		t.Fatal("expected object API key entries")
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"api_key","api_key":"key","api_keys":[{"api_key":"old"}]}`)); err == nil {
+		t.Fatal("expected legacy api_keys to be rejected")
+	}
+	if _, err := decodeProviderConfig("p1", json.RawMessage(`{"auth_type":"oauth","api_key":"key"}`)); err == nil {
+		t.Fatal("expected oauth configs to reject api_key")
 	}
 }
