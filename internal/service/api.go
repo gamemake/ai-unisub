@@ -67,8 +67,194 @@ func (m *APIModule) handle(ctx ModuleContext, w http.ResponseWriter, r *http.Req
 			m.callDetail(ctx, w, r, parts[1], parts[2])
 			return
 		}
+	case "usage":
+		if len(parts) == 2 && r.Method == http.MethodGet && isAdmin(r) {
+			m.usage(ctx, w, r, parts[1])
+			return
+		}
 	}
 	http.NotFound(w, r)
+}
+
+type usageTotals struct {
+	Requests            int `json:"requests"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
+	CacheReadTokens     int `json:"cache_read_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+}
+
+func (t *usageTotals) add(trace database.PersistedCallTraceSummary) {
+	t.Requests++
+	t.InputTokens += trace.InputTokens
+	t.OutputTokens += trace.OutputTokens
+	t.CacheCreationTokens += trace.CacheCreationTokens
+	t.CacheReadTokens += trace.CacheReadTokens
+	t.TotalTokens += trace.InputTokens + trace.OutputTokens + trace.CacheCreationTokens + trace.CacheReadTokens
+}
+
+func usageTimeRange(r *http.Request) (*database.TimeRange, error) {
+	query := r.URL.Query()
+	start, end := time.Now().UTC(), time.Now().UTC()
+	switch query.Get("range") {
+	case "1d", "":
+		start = end.Add(-24 * time.Hour)
+	case "1w":
+		start = end.Add(-7 * 24 * time.Hour)
+	case "1m":
+		start = end.Add(-30 * 24 * time.Hour)
+	case "custom":
+		var err error
+		start, err = time.ParseInLocation("2006-01-02", query.Get("from"), time.UTC)
+		if err != nil {
+			return nil, errors.New("invalid usage start date")
+		}
+		endDate, err := time.ParseInLocation("2006-01-02", query.Get("to"), time.UTC)
+		if err != nil {
+			return nil, errors.New("invalid usage end date")
+		}
+		end = endDate.Add(24*time.Hour - time.Nanosecond)
+	default:
+		return nil, errors.New("invalid usage range")
+	}
+	if start.After(end) {
+		return nil, errors.New("usage start date must not be after end date")
+	}
+	return &database.TimeRange{Start: start, End: end}, nil
+}
+
+func (m *APIModule) usage(ctx ModuleContext, w http.ResponseWriter, r *http.Request, kind string) {
+	timeRange, err := usageTimeRange(r)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	traces, _, err := ctx.Database().QueryCallTraces("", "", nil, 1, 1000000, timeRange)
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
+		return
+	}
+	accounts, err := ctx.Database().ListAccounts()
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListProviders)
+		return
+	}
+	accountByID := make(map[string]database.PersistedAccount, len(accounts))
+	for _, account := range accounts {
+		accountByID[account.ID] = account
+	}
+	keys, err := ctx.Database().ListAPIKeys("")
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListAPIKeys)
+		return
+	}
+	keyBySecret := make(map[string]database.PersistedAPIKey, len(keys))
+	for _, key := range keys {
+		keyBySecret[key.Key] = key
+	}
+
+	if kind == "subscriptions" {
+		groups := map[string]*struct {
+			SubscriptionID   string      `json:"subscription_id"`
+			SubscriptionName string      `json:"subscription_name"`
+			Provider         string      `json:"provider"`
+			Usage            usageTotals `json:"usage"`
+		}{}
+		for _, trace := range traces {
+			account, ok := accountByID[trace.AccountID]
+			if !ok {
+				continue
+			}
+			row := groups[account.ID]
+			if row == nil {
+				row = &struct {
+					SubscriptionID   string      `json:"subscription_id"`
+					SubscriptionName string      `json:"subscription_name"`
+					Provider         string      `json:"provider"`
+					Usage            usageTotals `json:"usage"`
+				}{SubscriptionID: account.ID, SubscriptionName: account.Name, Provider: account.Provider}
+				groups[account.ID] = row
+			}
+			row.Usage.add(trace)
+		}
+		items := make([]any, 0, len(groups))
+		totals := usageTotals{}
+		for _, row := range groups {
+			totals.Requests += row.Usage.Requests
+			totals.InputTokens += row.Usage.InputTokens
+			totals.OutputTokens += row.Usage.OutputTokens
+			totals.CacheCreationTokens += row.Usage.CacheCreationTokens
+			totals.CacheReadTokens += row.Usage.CacheReadTokens
+			totals.TotalTokens += row.Usage.TotalTokens
+			items = append(items, row)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": len(traces) > 0})
+		return
+	}
+	if kind != "users" {
+		http.NotFound(w, r)
+		return
+	}
+	if subscriptionID := strings.TrimSpace(r.URL.Query().Get("subscription_id")); subscriptionID != "" {
+		filtered := traces[:0]
+		for _, trace := range traces {
+			if trace.AccountID == subscriptionID {
+				filtered = append(filtered, trace)
+			}
+		}
+		traces = filtered
+	}
+	users, err := ctx.Database().ListUsers()
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListUsers)
+		return
+	}
+	userByID := make(map[string]database.PersistedUser, len(users))
+	for _, user := range users {
+		userByID[user.ID] = user
+	}
+	type userUsageRow struct {
+		UserID   string      `json:"user_id,omitempty"`
+		Username string      `json:"username,omitempty"`
+		Role     string      `json:"role,omitempty"`
+		Enabled  bool        `json:"enabled"`
+		Usage    usageTotals `json:"usage"`
+	}
+	groups := map[string]*userUsageRow{}
+	for _, trace := range traces {
+		key, ok := keyBySecret[trace.APIKey]
+		id, name, role := "", "", ""
+		if ok {
+			id = key.UserID
+		}
+		enabled := true
+		if user, found := userByID[id]; found {
+			name, role, enabled = user.Name, string(user.Role), user.Enabled
+		}
+		groupID := id
+		if groupID == "" {
+			groupID = "__unassigned__"
+		}
+		row := groups[groupID]
+		if row == nil {
+			row = &userUsageRow{UserID: id, Username: name, Role: role, Enabled: enabled}
+			groups[groupID] = row
+		}
+		row.Usage.add(trace)
+	}
+	items := make([]any, 0, len(groups))
+	totals := usageTotals{}
+	for _, row := range groups {
+		totals.Requests += row.Usage.Requests
+		totals.InputTokens += row.Usage.InputTokens
+		totals.OutputTokens += row.Usage.OutputTokens
+		totals.CacheCreationTokens += row.Usage.CacheCreationTokens
+		totals.CacheReadTokens += row.Usage.CacheReadTokens
+		totals.TotalTokens += row.Usage.TotalTokens
+		items = append(items, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": len(traces) > 0})
 }
 
 func currentUser(r *http.Request) (*database.PersistedUser, bool) {
