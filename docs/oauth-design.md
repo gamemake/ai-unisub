@@ -392,14 +392,14 @@ callback 完成后重定向：
 ### 5.1 命令设计
 
 ```bash
-app oauth login grok
-app oauth login codex
-app oauth login claude
-app oauth login claude --output ./oauth/claude.json
-app oauth status --file ./oauth/claude.json
-app oauth refresh --file ./oauth/claude.json
-app oauth revoke --file ./oauth/claude.json
-app oauth logout --file ./oauth/claude.json
+oauth login grok
+oauth login codex
+oauth login claude
+oauth login claude --output ./oauth/claude.json
+oauth status --file ./oauth/claude.json
+oauth refresh --file ./oauth/claude.json
+oauth revoke --file ./oauth/claude.json
+oauth logout --file ./oauth/claude.json
 ```
 
 CLI 不写服务器数据库，但可以在用户明确指定的本地文件中保存和管理 OAuth 结果。`--file` 指定凭据文件；`--output` 是 `login` 的别名语义，用于保存本次登录结果。没有指定文件时，`login` 只向 stdout 输出结果。
@@ -422,13 +422,13 @@ CLI 不写服务器数据库，但可以在用户明确指定的本地文件中�
 用户可以选择写入文件：
 
 ```bash
-app oauth login claude --output ./oauth/claude.json
+oauth login claude --output ./oauth/claude.json
 ```
 
 也可以使用 shell 重定向，但推荐使用 `--output`，因为 CLI 可以在写入时执行格式校验、权限设置和原子替换：
 
 ```bash
-app oauth login claude > oauth-result.json
+oauth login claude > oauth-result.json
 ```
 
 如果 CLI 需要将结果提交给服务器创建 Provider，可以增加显式的 stdin 模式：
@@ -444,7 +444,7 @@ app provider config --id <provider-id>
 ### 5.2 CLI 流程
 
 ```text
-app oauth login claude
+oauth login claude
         ↓
 CLI 监听 127.0.0.1:随机端口
         ↓
@@ -499,7 +499,7 @@ CLI 的本地文件是显式的文件型存储，不属于服务器数据库。�
 建议使用显式文件参数，不依赖隐含的默认位置：
 
 ```bash
-app oauth login claude --output ./oauth/claude.json
+oauth login claude --output ./oauth/claude.json
 ```
 
 文件操作要求：
@@ -874,7 +874,7 @@ Provider 只保存 Credential 引用。
 
 CLI 验收通过的标准：
 
-1. `app oauth login grok`、`app oauth login codex` 和 `app oauth login claude` 均可以通过浏览器或对应的 Device Flow 完成 OAuth。
+1. `oauth login grok`、`oauth login codex` 和 `oauth login claude` 均可以通过浏览器或对应的 Device Flow 完成 OAuth。
 2. CLI 使用 `127.0.0.1` 临时 callback server 接收 localhost 回调；始终打印授权地址，并尝试自动打开浏览器，自动打开失败时不影响用户手动访问。
 3. OAuth 成功后，默认只向 stdout 输出完整 OAuth JSON；日志、提示和错误全部写入 stderr，且不包含 Access Token 或 Refresh Token。
 4. `state`、PKCE、Session 过期时间、一次性 callback 消费和 Token Exchange 校验有效；Grok 的 Device Flow 轮询状态和过期行为正确。

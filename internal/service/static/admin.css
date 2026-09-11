@@ -30,3 +30,10 @@
 .usage-sort:focus-visible{outline:1px solid var(--cyan);outline-offset:3px;border-radius:3px}
 .usage-sort-mark{font-size:10px;opacity:.55}
 .usage-sort.active .usage-sort-mark{color:var(--green);opacity:1}
+#logTable tbody tr{cursor:pointer}
+#logTable tbody tr:hover td{background:#151d2d}
+#logModalBody{display:flex;flex-direction:column}
+#logModalBody>.log-meta{order:1}
+#logModalBody>.log-block{order:4}
+#logModalBody>.log-block:nth-child(3){order:2}
+#logModalBody>.log-block:nth-child(2){order:3}

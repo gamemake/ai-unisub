@@ -12,7 +12,7 @@ __debug_bin*
 *.db
 *.db-shm
 *.db-wal
-cmd/app/*.json
+cmd/oauth/*.json
 
 # Local environment configuration
 .env

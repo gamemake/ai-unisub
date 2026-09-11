@@ -63,6 +63,10 @@ func (m *APIModule) handle(ctx ModuleContext, w http.ResponseWriter, r *http.Req
 			m.calls(ctx, w, r)
 			return
 		}
+		if len(parts) == 3 && r.Method == http.MethodGet {
+			m.callDetail(ctx, w, r, parts[1], parts[2])
+			return
+		}
 	}
 	http.NotFound(w, r)
 }
@@ -739,6 +743,47 @@ func (m *APIModule) calls(ctx ModuleContext, w http.ResponseWriter, r *http.Requ
 		items[i].APIKey = ""
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": total})
+}
+
+func (m *APIModule) callDetail(ctx ModuleContext, w http.ResponseWriter, r *http.Request, day, id string) {
+	startedAt, err := time.ParseInLocation("20060102", day, time.UTC)
+	if err != nil || id == "" {
+		common.WriteError(w, http.StatusBadRequest, "invalid call record")
+		return
+	}
+	trace, err := ctx.Database().GetCallTrace(startedAt, id)
+	if errors.Is(err, database.ErrCallTraceNotFound) {
+		common.WriteError(w, http.StatusNotFound, "call trace not found")
+		return
+	}
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, "could not get call record")
+		return
+	}
+	if !isAdmin(r) {
+		u, ok := currentUser(r)
+		if !ok || !apiKeyBelongsToUser(ctx, u.ID, trace.APIKey) {
+			common.WriteError(w, http.StatusNotFound, "call trace not found")
+			return
+		}
+	}
+	// The key value is only needed for ownership checks and must not be sent
+	// back to the browser as part of the detail response.
+	trace.APIKey = ""
+	writeJSON(w, http.StatusOK, trace)
+}
+
+func apiKeyBelongsToUser(ctx ModuleContext, userID, value string) bool {
+	keys, err := ctx.Database().ListAPIKeys(userID)
+	if err != nil {
+		return false
+	}
+	for _, key := range keys {
+		if key.Key == value {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {

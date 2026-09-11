@@ -20,12 +20,11 @@ import (
 var errUsage = errors.New("invalid command usage")
 
 const usageText = `Usage:
-  app oauth login <provider> [--output <file>]
-  app login <provider> [--output <file>]
-  app oauth status --file <file>
-  app oauth refresh --file <file>
-  app oauth revoke --file <file>
-  app oauth logout --file <file>
+  oauth login <provider> [--output <file>]
+  oauth status --file <file>
+  oauth refresh --file <file>
+  oauth revoke --file <file>
+  oauth logout --file <file>
 
 Providers:
   grok       Use Grok Device OAuth
@@ -33,8 +32,8 @@ Providers:
   claude     Use Claude PKCE OAuth
 
 Examples:
-  app oauth login grok --output .\oauth\grok.json
-  app status --file .\oauth\grok.json
+  oauth login grok --output .\oauth\grok.json
+  oauth status --file .\oauth\grok.json
 `
 
 func main() {
@@ -57,9 +56,6 @@ func newManager(store oauth.CredentialStore) *oauth.OAuthManager {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	if len(args) > 0 && args[0] == "oauth" {
-		args = args[1:]
-	}
 	if len(args) < 1 {
 		return errUsage
 	}
