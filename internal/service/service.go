@@ -2,10 +2,10 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
-	"ai-unisub2/internal/oauth"
-	"ai-unisub2/internal/oauth/adapters"
-	"ai-unisub2/internal/provider"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/oauth"
+	"ai-unisub/internal/oauth/adapters"
+	"ai-unisub/internal/provider"
 	"encoding/json"
 	"errors"
 	"fmt"

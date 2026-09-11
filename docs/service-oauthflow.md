@@ -146,13 +146,13 @@ callback 只返回固定的最小 HTML 页面：
 
 - 成功：`授权成功，可以关闭此窗口`；
 - 失败：`授权失败，请重新开始授权`；
-- 不显示 `code`、`state`、Access Token、Refresh Token、Raw、result ID 或其他 OAuth 数据；
+- 不显示 `code`、`state`、Access Token、Refresh Token、result ID 或其他 OAuth 数据；
 - 不自动跳转到 `/home` 或其他页面；
 - 不把 callback 页面当作 OAuth JSON API。
 
 result ID 应通过前端已拥有的流程状态、约定的安全交接机制或后续 API 流程传递，不能放入 callback HTML 页面、日志或 URL 查询参数中。若产品流程要求浏览器 callback 直接把结果交给前端，需要另外定义安全的、短期的交接机制，并保持 result API 的用户归属和一次性消费约束。
 
-OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 result 时返回完整的 `OAuthCredential`，包括 Access Token、Refresh Token、`Raw` 和其他标准化字段。完整 Credential 只允许出现在这个一次性 result API 中，不得出现在 Provider 列表、调用记录、普通管理 API、callback 页面或日志中。
+OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 result 时返回完整的 `OAuthCredential`，包括 Access Token、Refresh Token 和其他标准化字段。完整 Credential 只允许出现在这个一次性 result API 中，不得出现在 Provider 列表、调用记录、普通管理 API、callback 页面或日志中。
 
 ## 7. 错误、日志与安全要求
 
@@ -170,7 +170,7 @@ OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 re
 实现和日志必须满足：
 
 - state 必须使用密码学安全随机值，并与唯一 Session 绑定；
-- PKCE verifier、authorization code、device code、Access Token、Refresh Token 和完整 Raw 不得写入日志；
+- PKCE verifier、authorization code、device code、Access Token 和 Refresh Token 不得写入日志；
 - 上游错误返回用户前必须限制长度并清理内容，不得原样暴露内部请求细节；
 - callback 请求不能通过 service、subjectID 或 redirect URI 参数改变 Session 归属；
 - result API 应禁止缓存，成功消费后不得再次返回 Credential；

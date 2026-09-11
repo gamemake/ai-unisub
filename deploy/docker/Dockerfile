@@ -9,7 +9,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ai-unisub2 ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/ai-unisub ./cmd/server
 
 FROM alpine:3.22
 
@@ -18,13 +18,13 @@ RUN addgroup -S app && adduser -S -G app app \
     && chown -R app:app /data
 
 WORKDIR /app
-COPY --from=builder /out/ai-unisub2 /app/ai-unisub2
+COPY --from=builder /out/ai-unisub /app/ai-unisub
 
 USER app
 VOLUME ["/data"]
 EXPOSE 8080
 
-ENV DATABASE_URL=sqlite:///data/ai-unisub2.db \
+ENV DATABASE_URL=sqlite:///data/ai-unisub.db \
     LISTEN_ADDR=:8080
 
-ENTRYPOINT ["/app/ai-unisub2"]
+ENTRYPOINT ["/app/ai-unisub"]

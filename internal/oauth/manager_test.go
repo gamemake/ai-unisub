@@ -27,7 +27,7 @@ func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential) (*OAuthCr
 	a.mu.Lock()
 	a.refresh++
 	a.mu.Unlock()
-	return &OAuthCredential{Service: a.service, AccessToken: "refreshed", RefreshToken: old.RefreshToken, ExpiresAt: time.Now().Add(a.expires)}, nil
+	return &OAuthCredential{AccessToken: "refreshed", RefreshToken: old.RefreshToken, ExpiresAt: time.Now().Add(a.expires)}, nil
 }
 
 type testStore struct {
@@ -104,7 +104,7 @@ func TestManagerSessionLookupBindsStateAndSubject(t *testing.T) {
 
 func TestManagerRefreshesCredentialOnceConcurrently(t *testing.T) {
 	store := &testStore{}
-	encoded, _ := json.Marshal(&OAuthCredential{Service: OAuthServiceClaude, AccessToken: "old", RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Minute)})
+	encoded, _ := json.Marshal(&OAuthCredential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Minute)})
 	_ = store.SaveCredential("id", encoded)
 	adapter := &testAdapter{service: OAuthServiceClaude, expires: time.Hour}
 	m := NewManager(store)
@@ -114,7 +114,7 @@ func TestManagerRefreshesCredentialOnceConcurrently(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			token, err := m.GetValidAccessToken(context.Background(), "id")
+			token, err := m.GetValidAccessToken(context.Background(), OAuthServiceClaude, "id")
 			if err != nil || token != "refreshed" {
 				t.Errorf("token=%q err=%v", token, err)
 			}

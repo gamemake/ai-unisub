@@ -449,7 +449,7 @@ type Config struct {
 
 | 配置项 | 命令行参数 | 环境变量 | 默认值 | 使用方 |
 | --- | --- | --- | --- | --- |
-| 数据库地址 | `--database-url` | `DATABASE_URL` | `sqlite://./data/ai-unisub2.db` | Service |
+| 数据库地址 | `--database-url` | `DATABASE_URL` | `sqlite://./data/ai-unisub.db` | Service |
 | 初始管理员用户名 | `--admin-username` | `ADMIN_USERNAME` | `admin` | Service |
 | 初始管理员密码 | `--admin-password` | `ADMIN_PASSWORD` | `admin12345` | Service |
 | Gateway 请求队列上限 | `--gateway-queue-limit` | `GATEWAY_QUEUE_LIMIT` | `100` | Gateway Module |

@@ -1,8 +1,8 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/oauth"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -27,7 +27,7 @@ func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.OAuthResults().Put(OAuthResult{SubjectID: user.ID, Service: oauth.OAuthServiceClaude, Credential: oauth.OAuthCredential{Service: oauth.OAuthServiceClaude, AccessToken: "access", RefreshToken: "refresh"}})
+	id, err := s.OAuthResults().Put(OAuthResult{SubjectID: user.ID, Service: oauth.OAuthServiceClaude, Credential: oauth.OAuthCredential{AccessToken: "access", RefreshToken: "refresh"}})
 	if err != nil {
 		t.Fatal(err)
 	}

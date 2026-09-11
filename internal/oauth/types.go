@@ -26,17 +26,14 @@ var (
 // OAuthCredential contains the normalized OAuth result and provider-specific
 // fields returned by the upstream service.
 type OAuthCredential struct {
-	Service string `json:"service,omitempty"`
-
 	AccessToken  string    `json:"access_token,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	TokenType    string    `json:"token_type,omitempty"`
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 
-	AccountID   string         `json:"account_id,omitempty"`
-	AccountName string         `json:"account_name,omitempty"`
-	Email       string         `json:"email,omitempty"`
-	Raw         map[string]any `json:"raw,omitempty"`
+	AccountID   string `json:"account_id,omitempty"`
+	AccountName string `json:"account_name,omitempty"`
+	Email       string `json:"email,omitempty"`
 }
 
 // CredentialStore persists the JSON representation of an OAuth credential.

@@ -1,7 +1,7 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
+	"ai-unisub/internal/database"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -47,6 +47,25 @@ func TestStaticModulePagesAssetsAndRedirects(t *testing.T) {
 	}
 	if got := get("/login", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "loginForm") {
 		t.Fatalf("login page: status=%d body=%q", got.Code, got.Body.String()[:min(80, got.Body.Len())])
+	}
+	if got := get("/login", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `id="apiKeyName"`) {
+		t.Fatalf("login page missing API key name field")
+	}
+	loginHTML := get("/login", nil).Body.String()
+	if !strings.Contains(loginHTML, "排队超时") || !strings.Contains(loginHTML, "同时转发的最大请求数") || !strings.Contains(loginHTML, `name="accountEnabled"`) {
+		t.Fatal("account form missing queue timeout, concurrency hint, or status radios")
+	}
+	if strings.Contains(loginHTML, "id=\"credentialHint\"") || strings.Contains(loginHTML, "id=\"clearProxy\"") {
+		t.Fatal("account form still has removed credential hint or clear-proxy control")
+	}
+	if got := get("/static/admin.js", nil); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "copyAPIKey") || !strings.Contains(got.Body.String(), "launchCCSwitch") || !strings.Contains(got.Body.String(), "keySecret") || !strings.Contains(got.Body.String(), ">名称</th>") || !strings.Contains(got.Body.String(), ">过期时间</th>") {
+		t.Fatalf("admin js missing API key name/copy/CC Switch/expiry UI")
+	}
+	if js := get("/static/admin.js", nil).Body.String(); strings.Contains(js, "var id=Number(button.dataset.id)") {
+		t.Fatal("account action still coerces hex IDs to numbers")
+	}
+	if js := get("/static/admin.js", nil).Body.String(); !strings.Contains(js, "setAuthJSON") || strings.Contains(js, "credentialSummaryHTML") {
+		t.Fatal("admin js should display OAuthCredential JSON as-is")
 	}
 	if got := get("/static/admin.css", nil); got.Code != http.StatusOK || got.Header().Get("Content-Type") == "" {
 		t.Fatalf("static css: status=%d content-type=%q", got.Code, got.Header().Get("Content-Type"))

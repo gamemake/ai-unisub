@@ -21,6 +21,7 @@ type ProviderConfig struct {
 	Proxy                    string   `json:"proxy"`
 	Enabled                  bool     `json:"enabled"`
 	MaxConcurrentConnections int      `json:"max_concurrent_connections"`
+	QueueTimeoutSeconds      int      `json:"queue_timeout_seconds"`
 }
 
 // UsageItem is one ordered name/value pair returned by a provider.

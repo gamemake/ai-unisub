@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"ai-unisub2/internal/oauth"
-	"ai-unisub2/internal/oauth/adapters"
+	"ai-unisub/internal/oauth"
+	"ai-unisub/internal/oauth/adapters"
 )
 
 var errUsage = errors.New("invalid command usage")
@@ -82,7 +82,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stderr, "Missing --file for %s.\n", command)
 			return errUsage
 		}
-		return operate(command, path, stdout, stderr)
+		return operate(command, path, args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "Unknown OAuth command %q.\n", command)
 		return errUsage
@@ -148,7 +148,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 			credential, err := manager.Poll(ctx, start.SessionID)
 			if err == nil {
 				logCLI(stderr, "device authorization completed")
-				return finishCredential(credential, output, stdout, stderr)
+				return finishCredential(credential, provider, output, stdout, stderr)
 			}
 			if !errors.Is(err, oauth.ErrAuthorizationPending) && !errors.Is(err, oauth.ErrSlowDown) {
 				logCLI(stderr, "device authorization failed: %v", err)
@@ -201,7 +201,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 			return err
 		}
 		logCLI(stderr, "OAuth login completed")
-		return finishCredential(credential, output, stdout, stderr)
+		return finishCredential(credential, provider, output, stdout, stderr)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
@@ -211,9 +211,13 @@ func logCLI(stderr io.Writer, format string, values ...any) {
 	fmt.Fprintf(stderr, "[oauth] "+format+"\n", values...)
 }
 
-func finishCredential(credential *oauth.OAuthCredential, output string, stdout, stderr io.Writer) error {
+func finishCredential(credential *oauth.OAuthCredential, provider, output string, stdout, stderr io.Writer) error {
+	payload, err := credentialPayload(credential, provider)
+	if err != nil {
+		return err
+	}
 	if output != "" {
-		raw, err := json.MarshalIndent(credential, "", "  ")
+		raw, err := json.MarshalIndent(payload, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -225,10 +229,40 @@ func finishCredential(credential *oauth.OAuthCredential, output string, stdout, 
 	}
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(credential)
+	return encoder.Encode(payload)
 }
 
-func operate(command, path string, stdout, stderr io.Writer) error {
+func credentialPayload(credential *oauth.OAuthCredential, provider string) (map[string]any, error) {
+	raw, err := json.Marshal(credential)
+	if err != nil {
+		return nil, err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	if provider != "" {
+		payload["provider"] = provider
+	}
+	return payload, nil
+}
+
+func credentialFileService(raw []byte) string {
+	var extra struct {
+		Provider string `json:"provider"`
+		Service  string `json:"service"`
+	}
+	_ = json.Unmarshal(raw, &extra)
+	if extra.Provider != "" {
+		return extra.Provider
+	}
+	return extra.Service
+}
+
+func operate(command, path string, args []string, stdout, stderr io.Writer) error {
 	store := oauth.FileCredentialStore{}
 	raw, err := store.LoadCredential(path)
 	if err != nil {
@@ -238,8 +272,12 @@ func operate(command, path string, stdout, stderr io.Writer) error {
 	if err := json.Unmarshal(raw, &credential); err != nil {
 		return err
 	}
-	if credential.Service == "" {
-		return errors.New("credential file has no service")
+	service := option(args, "provider")
+	if service == "" {
+		service = credentialFileService(raw)
+	}
+	if command != "status" && service == "" {
+		return errors.New("credential file has no provider; pass --provider")
 	}
 	if command == "status" {
 		state := "valid"
@@ -258,19 +296,19 @@ func operate(command, path string, stdout, stderr io.Writer) error {
 	defer cancel()
 	switch command {
 	case "refresh":
-		refreshed, err := manager.Refresh(ctx, credential.Service, &credential)
+		refreshed, err := manager.Refresh(ctx, service, &credential)
 		if err != nil {
 			return err
 		}
 		value, _ := json.MarshalIndent(refreshed, "", "  ")
 		return store.SaveCredential(path, value)
 	case "revoke":
-		if err := manager.Revoke(ctx, credential.Service, &credential); err != nil {
+		if err := manager.Revoke(ctx, service, &credential); err != nil {
 			return err
 		}
 		return store.DeleteCredential(path)
 	case "logout":
-		if err := manager.Revoke(ctx, credential.Service, &credential); err != nil && !strings.Contains(err.Error(), "does not support") {
+		if err := manager.Revoke(ctx, service, &credential); err != nil && !strings.Contains(err.Error(), "does not support") {
 			return err
 		}
 		return store.DeleteCredential(path)

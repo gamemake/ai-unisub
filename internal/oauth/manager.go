@@ -136,7 +136,6 @@ func (m *OAuthManager) Complete(ctx context.Context, sessionID, code, state stri
 	if result == nil || result.AccessToken == "" {
 		return nil, errors.New("oauth exchange returned no access token")
 	}
-	result.Service = s.Service
 	return result, nil
 }
 
@@ -210,7 +209,6 @@ func (m *OAuthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	if err != nil {
 		return nil, err
 	}
-	result.Service = s.Service
 	_, _ = m.session(sessionID, true)
 	return result, nil
 }
@@ -223,7 +221,6 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	if credential == nil {
 		return nil, errors.New("credential is nil")
 	}
-	credential.Service = service
 	refreshed, err := a.Refresh(ctx, credential)
 	if err != nil {
 		return nil, err
@@ -231,7 +228,6 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	if refreshed == nil || refreshed.AccessToken == "" {
 		return nil, errors.New("oauth refresh returned no access token")
 	}
-	refreshed.Service = service
 	if refreshed.RefreshToken == "" {
 		refreshed.RefreshToken = credential.RefreshToken
 	}
@@ -250,7 +246,7 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	return refreshed, nil
 }
 
-func (m *OAuthManager) GetValidAccessToken(ctx context.Context, credentialID string) (string, error) {
+func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credentialID string) (string, error) {
 	if m == nil || m.store == nil {
 		return "", errors.New("credential store is not configured")
 	}
@@ -287,7 +283,7 @@ func (m *OAuthManager) GetValidAccessToken(ctx context.Context, credentialID str
 	if time.Now().Before(credential.ExpiresAt.Add(-60 * time.Second)) {
 		return credential.AccessToken, nil
 	}
-	refreshed, err := m.Refresh(ctx, credential.Service, &credential)
+	refreshed, err := m.Refresh(ctx, service, &credential)
 	if err != nil {
 		return "", err
 	}

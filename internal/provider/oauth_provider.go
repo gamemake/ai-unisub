@@ -10,7 +10,7 @@ import (
 	"net/url"
 	"sync"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type oauthProvider struct {
@@ -27,17 +27,14 @@ func newOAuthProvider(id string, raw json.RawMessage, manager *oauth.OAuthManage
 	if manager == nil {
 		return oauthProvider{}, errors.New("oauth manager is required")
 	}
-	var config ProviderConfig
-	if len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return oauthProvider{}, err
-		}
+	config, err := decodeProviderConfig(id, raw)
+	if err != nil {
+		return oauthProvider{}, err
 	}
-	config.ID, config.Enabled = id, true
 	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 	if config.Proxy != "" {
 		proxyURL, err := url.Parse(config.Proxy)
-		if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+		if err != nil {
 			return oauthProvider{}, errors.New("invalid provider proxy")
 		}
 		client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
@@ -58,21 +55,26 @@ func (p *oauthProvider) update(raw json.RawMessage) error {
 	if p == nil {
 		return errors.New("provider is nil")
 	}
-	var next ProviderConfig
-	if err := json.Unmarshal(raw, &next); err != nil {
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return err
+	}
+	if probe.ID != "" && probe.ID != p.config.ID {
+		return errors.New("provider config ID cannot be changed")
+	}
+	next, err := decodeProviderConfig(p.config.ID, raw)
+	if err != nil {
 		return err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if next.ID != "" && next.ID != p.config.ID {
-		return errors.New("provider config ID cannot be changed")
-	}
-	next.ID, next.Enabled = p.config.ID, true
 	if next.Proxy != p.config.Proxy {
 		client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 		if next.Proxy != "" {
 			proxyURL, err := url.Parse(next.Proxy)
-			if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
+			if err != nil {
 				return errors.New("invalid provider proxy")
 			}
 			client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
@@ -108,7 +110,7 @@ func (p *oauthProvider) handle(service, credentialID string, req *http.Request, 
 		}
 		return
 	}
-	token, err := p.manager.GetValidAccessToken(req.Context(), credentialID)
+	token, err := p.manager.GetValidAccessToken(req.Context(), service, credentialID)
 	if err != nil {
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		if recorder != nil {

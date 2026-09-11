@@ -60,16 +60,6 @@ func (s *SQLiteDatabase) Open() error {
 		db.Close()
 		return err
 	}
-	// Keep databases created before the user enabled flag was introduced
-	// readable and writable.
-	if _, err = db.Exec(`ALTER TABLE users ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
-	if _, err = db.Exec(`ALTER TABLE api_keys ADD COLUMN valid_seconds INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
 	s.db = db
 	if err = s.loadMemory(); err != nil {
 		db.Close()
@@ -215,13 +205,13 @@ func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT INTO api_keys(id, user_id, account_id, key_value, valid_seconds, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?)
+	_, err := s.db.Exec(`INSERT INTO api_keys(id, user_id, account_id, name, key_value, valid_seconds, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,
-		account_id=excluded.account_id, key_value=excluded.key_value,
+		account_id=excluded.account_id, name=excluded.name, key_value=excluded.key_value,
 		valid_seconds=excluded.valid_seconds,
 		created_at=excluded.created_at, updated_at=excluded.updated_at`,
-		value.ID, value.UserID, value.AccountID, value.Key, value.ValidSeconds, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+		value.ID, value.UserID, value.AccountID, value.Name, value.Key, value.ValidSeconds, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
@@ -454,13 +444,13 @@ func (s *SQLiteDatabase) loadMemory() error {
 		return err
 	}
 	users.Close()
-	keys, err := s.db.Query(`SELECT id, user_id, account_id, key_value, valid_seconds, created_at, updated_at FROM api_keys`)
+	keys, err := s.db.Query(`SELECT id, user_id, account_id, name, key_value, valid_seconds, created_at, updated_at FROM api_keys`)
 	if err != nil {
 		return err
 	}
 	for keys.Next() {
 		var v PersistedAPIKey
-		if err = keys.Scan(&v.ID, &v.UserID, &v.AccountID, &v.Key, &v.ValidSeconds, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err = keys.Scan(&v.ID, &v.UserID, &v.AccountID, &v.Name, &v.Key, &v.ValidSeconds, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			keys.Close()
 			return err
 		}
@@ -658,7 +648,7 @@ CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name);
 CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider);
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, labels BLOB NOT NULL, role TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, password_hash TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
-CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, key_value TEXT NOT NULL, valid_seconds INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', key_value TEXT NOT NULL, valid_seconds INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys(account_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);`

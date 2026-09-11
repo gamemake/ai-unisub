@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type OAuthResult struct {

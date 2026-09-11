@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 	"context"
 	"encoding/json"
 	"net/http"

@@ -1,9 +1,9 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
-	"ai-unisub2/internal/oauth"
-	"ai-unisub2/internal/provider"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/oauth"
+	"ai-unisub/internal/provider"
 	"net/http"
 )
 

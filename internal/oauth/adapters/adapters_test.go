@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 func TestClaudeAuthorizationURLAndJSONExchange(t *testing.T) {

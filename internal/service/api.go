@@ -1,7 +1,7 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
+	"ai-unisub/internal/database"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // APIModule exposes the authenticated management JSON API described by
@@ -313,7 +314,7 @@ func (m *APIModule) providers(ctx ModuleContext, w http.ResponseWriter, r *http.
 		}
 		items := make([]map[string]any, 0, len(accounts))
 		for _, a := range accounts {
-			items = append(items, publicAccount(a))
+			items = append(items, publicAccount(ctx.Database(), a))
 		}
 		writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 		return
@@ -337,8 +338,35 @@ func (m *APIModule) providers(ctx ModuleContext, w http.ResponseWriter, r *http.
 	http.NotFound(w, r)
 }
 
-func publicAccount(a database.PersistedAccount) map[string]any {
-	return map[string]any{"id": a.ID, "name": a.Name, "provider": a.Provider, "config": sanitizeJSON(a.Config), "created_at": a.CreatedAt, "updated_at": a.UpdatedAt}
+func publicAccount(db database.Database, a database.PersistedAccount) map[string]any {
+	item := map[string]any{"id": a.ID, "name": a.Name, "provider": a.Provider, "enabled": accountEnabled(a.Config), "config": sanitizeJSON(a.Config), "created_at": a.CreatedAt, "updated_at": a.UpdatedAt}
+	if db != nil {
+		if id := credentialIDFromConfig(a.Config); id != "" {
+			if raw, err := db.LoadCredential(id); err == nil {
+				var credential any
+				if json.Unmarshal(raw, &credential) == nil {
+					item["credential"] = credential
+				}
+			}
+		}
+	}
+	return item
+}
+
+func accountEnabled(raw json.RawMessage) bool {
+	var fields map[string]any
+	if json.Unmarshal(raw, &fields) != nil {
+		return true
+	}
+	value, ok := fields["enabled"]
+	if !ok {
+		return true
+	}
+	enabled, ok := value.(bool)
+	if !ok {
+		return true
+	}
+	return enabled
 }
 
 func (m *APIModule) createProvider(ctx ModuleContext, w http.ResponseWriter, r *http.Request) {
@@ -406,7 +434,7 @@ func (m *APIModule) createProvider(ctx ModuleContext, w http.ResponseWriter, r *
 		WriteError(w, 500, "could not save provider")
 		return
 	}
-	writeJSON(w, 201, publicAccount(*account))
+	writeJSON(w, 201, publicAccount(ctx.Database(), *account))
 }
 
 func (m *APIModule) deleteProvider(ctx ModuleContext, w http.ResponseWriter, r *http.Request, id string) {
@@ -528,7 +556,7 @@ func (m *APIModule) updateProvider(ctx ModuleContext, w http.ResponseWriter, r *
 		WriteError(w, 500, "could not save provider")
 		return
 	}
-	writeJSON(w, 200, publicAccount(*account))
+	writeJSON(w, 200, publicAccount(ctx.Database(), *account))
 }
 
 func credentialReferenced(accounts []database.PersistedAccount, deletedID, credentialID string) bool {
@@ -546,90 +574,131 @@ func (m *APIModule) keys(ctx ModuleContext, w http.ResponseWriter, r *http.Reque
 		WriteError(w, 401, "unauthorized")
 		return
 	}
-	if len(parts) == 1 && r.Method == http.MethodGet {
-		keys, err := ctx.Database().ListAPIKeys(u.ID)
-		if err != nil {
-			WriteError(w, 500, "could not list API keys")
-			return
-		}
-		items := make([]map[string]any, 0, len(keys))
-		for _, k := range keys {
-			items = append(items, map[string]any{"id": k.ID, "account_id": k.AccountID, "valid_seconds": k.ValidSeconds, "created_at": k.CreatedAt, "updated_at": k.UpdatedAt})
-		}
-		writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+	switch {
+	case len(parts) == 1 && r.Method == http.MethodGet:
+		m.listKeys(ctx, w, u.ID)
+	case len(parts) == 1 && r.Method == http.MethodPost:
+		m.createKey(ctx, w, r, u)
+	case len(parts) == 2 && r.Method == http.MethodGet:
+		m.getKey(ctx, w, u.ID, parts[1])
+	case len(parts) == 2 && r.Method == http.MethodDelete:
+		m.deleteKey(ctx, w, u.ID, parts[1])
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (m *APIModule) listKeys(ctx ModuleContext, w http.ResponseWriter, userID string) {
+	keys, err := ctx.Database().ListAPIKeys(userID)
+	if err != nil {
+		WriteError(w, 500, "could not list API keys")
 		return
 	}
-	if len(parts) == 1 && r.Method == http.MethodPost {
-		var input struct {
-			AccountID    string `json:"account_id"`
-			ValidSeconds int64  `json:"valid_seconds"`
-		}
-		if !decodeJSON(w, r, &input) {
-			return
-		}
-		if input.AccountID == "" {
-			WriteError(w, 400, "account_id is required")
-			return
-		}
-		if input.ValidSeconds < 0 {
-			WriteError(w, 400, "valid_seconds must not be negative")
-			return
-		}
-		accounts, err := ctx.Database().ListAccounts()
-		if err != nil {
-			WriteError(w, 500, "could not list providers")
-			return
-		}
-		found := false
-		for _, a := range accounts {
-			if a.ID == input.AccountID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			WriteError(w, 404, "provider not found")
-			return
-		}
-		id, err := randomID(16)
-		if err != nil {
-			WriteError(w, 500, "could not generate API key ID")
-			return
-		}
-		secret, err := randomID(32)
-		if err != nil {
-			WriteError(w, 500, "could not generate API key")
-			return
-		}
-		now := time.Now().UTC()
-		key := &database.PersistedAPIKey{ID: id, UserID: u.ID, AccountID: input.AccountID, Key: secret, ValidSeconds: input.ValidSeconds, CreatedAt: now, UpdatedAt: now}
-		if err := ctx.Database().SaveAPIKey(key); err != nil {
-			WriteError(w, 500, "could not save API key")
-			return
-		}
-		writeJSON(w, 201, map[string]any{"id": id, "account_id": input.AccountID, "valid_seconds": input.ValidSeconds, "key": secret, "created_at": now})
+	items := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		items = append(items, publicAPIKey(k))
+	}
+	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+}
+
+func (m *APIModule) createKey(ctx ModuleContext, w http.ResponseWriter, r *http.Request, u *database.PersistedUser) {
+	var input struct {
+		Name         string `json:"name"`
+		AccountID    string `json:"account_id"`
+		ValidSeconds int64  `json:"valid_seconds"`
+	}
+	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if len(parts) == 2 && r.Method == http.MethodDelete {
-		keys, err := ctx.Database().ListAPIKeys(u.ID)
-		if err != nil {
-			WriteError(w, 500, "could not list API keys")
-			return
-		}
-		for _, k := range keys {
-			if k.ID == parts[1] {
-				if err := ctx.Database().DeleteAPIKey(k.ID); err != nil {
-					WriteError(w, 500, "could not delete API key")
-					return
-				}
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-		}
-		WriteError(w, 404, "API key not found")
+	name := strings.TrimSpace(input.Name)
+	if name == "" || utf8.RuneCountInString(name) > 64 {
+		WriteError(w, 400, "name is required and must be at most 64 characters")
 		return
 	}
-	http.NotFound(w, r)
+	if input.AccountID == "" {
+		WriteError(w, 400, "account_id is required")
+		return
+	}
+	if input.ValidSeconds < 0 {
+		WriteError(w, 400, "valid_seconds must not be negative")
+		return
+	}
+	accounts, err := ctx.Database().ListAccounts()
+	if err != nil {
+		WriteError(w, 500, "could not list providers")
+		return
+	}
+	found := false
+	for _, a := range accounts {
+		if a.ID == input.AccountID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		WriteError(w, 404, "provider not found")
+		return
+	}
+	id, err := randomID(16)
+	if err != nil {
+		WriteError(w, 500, "could not generate API key ID")
+		return
+	}
+	secret, err := randomID(32)
+	if err != nil {
+		WriteError(w, 500, "could not generate API key")
+		return
+	}
+	now := time.Now().UTC()
+	key := &database.PersistedAPIKey{ID: id, Name: name, UserID: u.ID, AccountID: input.AccountID, Key: secret, ValidSeconds: input.ValidSeconds, CreatedAt: now, UpdatedAt: now}
+	if err := ctx.Database().SaveAPIKey(key); err != nil {
+		WriteError(w, 500, "could not save API key")
+		return
+	}
+	writeJSON(w, 201, publicAPIKey(*key))
+}
+
+func (m *APIModule) getKey(ctx ModuleContext, w http.ResponseWriter, userID, id string) {
+	key, ok := ownedAPIKey(ctx, w, userID, id)
+	if !ok {
+		return
+	}
+	writeJSON(w, 200, publicAPIKey(*key))
+}
+
+func (m *APIModule) deleteKey(ctx ModuleContext, w http.ResponseWriter, userID, id string) {
+	key, ok := ownedAPIKey(ctx, w, userID, id)
+	if !ok {
+		return
+	}
+	if err := ctx.Database().DeleteAPIKey(key.ID); err != nil {
+		WriteError(w, 500, "could not delete API key")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func ownedAPIKey(ctx ModuleContext, w http.ResponseWriter, userID, id string) (*database.PersistedAPIKey, bool) {
+	keys, err := ctx.Database().ListAPIKeys(userID)
+	if err != nil {
+		WriteError(w, 500, "could not list API keys")
+		return nil, false
+	}
+	for i := range keys {
+		if keys[i].ID == id {
+			return &keys[i], true
+		}
+	}
+	WriteError(w, 404, "API key not found")
+	return nil, false
+}
+
+func publicAPIKey(k database.PersistedAPIKey) map[string]any {
+	item := map[string]any{"id": k.ID, "name": k.Name, "account_id": k.AccountID, "key": k.Key, "valid_seconds": k.ValidSeconds, "created_at": k.CreatedAt, "updated_at": k.UpdatedAt}
+	if k.ValidSeconds > 0 {
+		item["expires_at"] = k.CreatedAt.Add(time.Duration(k.ValidSeconds) * time.Second)
+	}
+	return item
 }
 
 func (m *APIModule) calls(ctx ModuleContext, w http.ResponseWriter, r *http.Request) {

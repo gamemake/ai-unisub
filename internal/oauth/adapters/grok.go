@@ -2,14 +2,13 @@ package adapters
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type GrokConfig struct {
@@ -97,7 +96,7 @@ func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string) (*
 	req.Header.Set("x-grok-client-version", a.config.ClientVersion)
 	req.Header.Set("x-grok-client-surface", "ui")
 	var token tokenResponse
-	raw, err := readResponseDo(a.config.HTTPClient, req, &token)
+	_, err = readResponseDo(a.config.HTTPClient, req, &token)
 	if err != nil {
 		if strings.Contains(err.Error(), "authorization_pending") {
 			return nil, oauth.ErrAuthorizationPending
@@ -107,9 +106,7 @@ func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string) (*
 		}
 		return nil, err
 	}
-	var original map[string]any
-	_ = json.Unmarshal(raw, &original)
-	return credential(a.Service(), token, original)
+	return credential(token)
 }
 func (a *GrokAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential) (*oauth.OAuthCredential, error) {
 	v := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {old.RefreshToken}, "client_id": {a.config.ClientID}}
@@ -122,11 +119,8 @@ func (a *GrokAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential) (
 	req.Header.Set("x-grok-client-version", a.config.ClientVersion)
 	req.Header.Set("x-grok-client-surface", "ui")
 	var token tokenResponse
-	raw, err := readResponseDo(a.config.HTTPClient, req, &token)
-	if err != nil {
+	if _, err := readResponseDo(a.config.HTTPClient, req, &token); err != nil {
 		return nil, err
 	}
-	var original map[string]any
-	_ = json.Unmarshal(raw, &original)
-	return credential(a.Service(), token, original)
+	return credential(token)
 }

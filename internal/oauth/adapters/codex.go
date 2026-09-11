@@ -2,12 +2,11 @@ package adapters
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"strings"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type CodexConfig struct {
@@ -56,13 +55,10 @@ func (a *CodexAdapter) token(ctx context.Context, values url.Values) (*oauth.OAu
 	req.Header.Set("User-Agent", "codex-tui/0.146.0")
 	req.Header.Set("originator", "codex-tui")
 	var token tokenResponse
-	raw, err := readResponseDo(a.config.HTTPClient, req, &token)
-	if err != nil {
+	if _, err := readResponseDo(a.config.HTTPClient, req, &token); err != nil {
 		return nil, err
 	}
-	var original map[string]any
-	_ = json.Unmarshal(raw, &original)
-	result, err := credential(a.Service(), token, original)
+	result, err := credential(token)
 	if err != nil {
 		return nil, err
 	}
@@ -77,9 +73,6 @@ func (a *CodexAdapter) token(ctx context.Context, values url.Values) (*oauth.OAu
 	}
 	if result.AccountID == "" {
 		result.AccountID = claimString(claims, "organization_id")
-	}
-	if result.Raw == nil {
-		result.Raw = map[string]any{}
 	}
 	return result, nil
 }

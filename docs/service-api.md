@@ -118,14 +118,16 @@ Provider Account 规则：
 
 | Method | Path | Path 参数 | Query 参数 | Body | 权限 | 作用 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GET` | `/api/keys` | 无 | 无 | 无 | Session | 返回当前用户拥有的 API Key |
-| `POST` | `/api/keys` | 无 | 无 | `account_id`、`valid_seconds` | Session | 创建 API Key，并返回一次明文 Key；`valid_seconds=0` 表示永久有效 |
+| `GET` | `/api/keys` | 无 | 无 | 无 | Session | 返回当前用户拥有的 API Key，包含明文 `key` |
+| `POST` | `/api/keys` | 无 | 无 | `name`、`account_id`、`valid_seconds` | Session | 创建 API Key，并返回明文 Key；`name` 必填；`valid_seconds=0` 表示永久有效 |
+| `GET` | `/api/keys/{id}` | `id`：API Key ID | 无 | 无 | Session | 返回当前用户拥有的一把 API Key，包含明文 |
 | `DELETE` | `/api/keys/{id}` | `id`：API Key ID | 无 | 无 | Session | 删除当前用户拥有的 API Key |
 
 `POST /api/keys` 请求示例：
 
 ```json
 {
+  "name": "claude-code",
   "account_id": "account-id"
 }
 ```
@@ -133,9 +135,9 @@ Provider Account 规则：
 安全规则：
 
 - API Key 必须绑定到当前用户有权使用的 Account；
-- 明文 Key 只在创建成功的响应中返回一次；
-- 后续列表接口不能再次返回明文 Key；
-- 删除操作必须校验 Key 所属用户。
+- `name` 必填，最多 64 个字符，用于控制台展示，不能用 ID 代替；
+- 明文 Key 在列表、按 ID 读取和创建成功的响应中返回；
+- 删除和按 ID 读取必须校验 Key 所属用户。
 
 ## 6. 调用记录
 

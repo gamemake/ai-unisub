@@ -1,7 +1,7 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
+	"ai-unisub/internal/database"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -79,7 +79,7 @@ func (a *authService) EnsureAdmin(n, p string) error {
 		return err
 	}
 	now := time.Now().UTC()
-	return a.s.db.SaveUser(&database.PersistedUser{ID: hex.EncodeToString(id[:]), Name: n, Role: database.UserRoleAdmin, PasswordHash: hashPassword(p), CreatedAt: now, UpdatedAt: now})
+	return a.s.db.SaveUser(&database.PersistedUser{ID: hex.EncodeToString(id[:]), Name: n, Role: database.UserRoleAdmin, Enabled: true, PasswordHash: hashPassword(p), CreatedAt: now, UpdatedAt: now})
 }
 func (a *authService) CreateSession(user *database.PersistedUser) (string, error) {
 	if user == nil || user.ID == "" {

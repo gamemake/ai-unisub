@@ -209,21 +209,18 @@ GetValidAccessToken(ctx context.Context, credentialID string) (string, error)
 
 ### 3.3 OAuthCredential
 
-页面要求显示完整 OAuth 结果，因此既保留标准字段，也保留上游原始字段：
+OAuth 结果只保留标准化字段，不保存上游原始响应：
 
 ```go
 type OAuthCredential struct {
-    Service string
+    AccessToken  string    `json:"access_token,omitempty"`
+    RefreshToken string    `json:"refresh_token,omitempty"`
+    TokenType    string    `json:"token_type,omitempty"`
+    ExpiresAt    time.Time `json:"expires_at,omitempty"`
 
-    AccessToken  string         `json:"access_token,omitempty"`
-    RefreshToken string         `json:"refresh_token,omitempty"`
-    TokenType    string         `json:"token_type,omitempty"`
-    ExpiresAt    time.Time      `json:"expires_at,omitempty"`
-
-    AccountID   string         `json:"account_id,omitempty"`
-    AccountName string         `json:"account_name,omitempty"`
-    Email       string         `json:"email,omitempty"`
-    Raw         map[string]any `json:"raw,omitempty"`
+    AccountID   string `json:"account_id,omitempty"`
+    AccountName string `json:"account_name,omitempty"`
+    Email       string `json:"email,omitempty"`
 }
 ```
 
@@ -235,10 +232,7 @@ type OAuthCredential struct {
   "refresh_token": "...",
   "token_type": "Bearer",
   "account_id": "account_xxx",
-  "email": "user@example.com",
-  "raw": {
-    "organization_id": "org_xxx"
-  }
+  "email": "user@example.com"
 }
 ```
 
@@ -276,8 +270,7 @@ OAuth 完整结果
 │   "refresh_token": "...",                 │
 │   "token_type": "Bearer",                 │
 │   "account_id": "account_xxx",            │
-│   "email": "user@example.com",             │
-│   "raw": { "organization_id": "org_xxx" } │
+│   "email": "user@example.com"              │
 │ }                                          │
 └────────────────────────────────────────────┘
 
@@ -336,8 +329,7 @@ GET /api/oauth/results/{result_id}
     "refresh_token": "...",
     "token_type": "Bearer",
     "account_id": "account_xxx",
-    "email": "user@example.com",
-    "raw": {}
+    "email": "user@example.com"
   }
 }
 ```
@@ -360,8 +352,7 @@ POST /api/providers
       "refresh_token": "...",
       "token_type": "Bearer",
       "account_id": "account_xxx",
-      "email": "user@example.com",
-      "raw": { "organization_id": "org_xxx" }
+      "email": "user@example.com"
     },
     "max_concurrent_connections": 4
   }
@@ -424,8 +415,7 @@ CLI 不写服务器数据库，但可以在用户明确指定的本地文件中�
   "refresh_token": "...",
   "token_type": "Bearer",
   "account_id": "account_xxx",
-  "email": "user@example.com",
-  "raw": {}
+  "email": "user@example.com"
 }
 ```
 
@@ -502,8 +492,7 @@ CLI 的本地文件是显式的文件型存储，不属于服务器数据库。�
   "access_token": "...",
   "refresh_token": "...",
   "token_type": "Bearer",
-  "expires_at": "2026-09-10T14:00:00Z",
-  "raw": {}
+  "expires_at": "2026-09-10T14:00:00Z"
 }
 ```
 
@@ -703,7 +692,7 @@ request.Header.Set("Authorization", "Bearer "+accessToken)
 
 ## 10. 当前实现对比和迁移结论
 
-### 10.1 `ai-unisub2` 当前状态
+### 10.1 `ai-unisub` 当前状态
 
 当前项目已经完成独立的 `internal/oauth` 核心模块、Grok Device Flow、Codex/Claude
 PKCE Adapter、CLI OAuth 命令，以及阶段 6 所需的 Web OAuth 启动、回调、临时结果和
@@ -757,7 +746,7 @@ Claude 当前使用 PKCE Authorization Code Flow：
 
 ### 10.4 本项目的实现决策
 
-`ai-unisub2` 后续应保留本文件前面定义的独立 OAuth 边界，但协议代码需要覆盖参考实现已经验证过的行为。推荐分层如下：
+`ai-unisub` 后续应保留本文件前面定义的独立 OAuth 边界，但协议代码需要覆盖参考实现已经验证过的行为。推荐分层如下：
 
 ```text
 internal/oauth/

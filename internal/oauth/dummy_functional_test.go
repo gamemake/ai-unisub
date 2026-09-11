@@ -57,7 +57,7 @@ func TestDummyDeviceOAuthFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.Service != adapter.Service() || credential.AccessToken != "dummy-access-token" {
+	if credential.AccessToken != "dummy-access-token" {
 		t.Fatalf("unexpected dummy credential: %+v", credential)
 	}
 	if _, err := manager.Poll(context.Background(), started.SessionID); !errors.Is(err, ErrSessionNotFound) {

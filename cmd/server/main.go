@@ -5,13 +5,13 @@ import (
 	"net/http"
 	"os"
 
-	"ai-unisub2/internal/service"
+	"ai-unisub/internal/service"
 )
 
 func main() {
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		dbURL = "sqlite://./data/ai-unisub2.db"
+		dbURL = "sqlite://./data/ai-unisub.db"
 	}
 	adminUsername := os.Getenv("ADMIN_USERNAME")
 	if adminUsername == "" {

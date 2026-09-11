@@ -28,5 +28,5 @@ func (a *DummyAdapter) PollDeviceToken(_ context.Context, deviceCode string) (*O
 	if a.polls[deviceCode] == 1 {
 		return nil, ErrAuthorizationPending
 	}
-	return &OAuthCredential{Service: OAuthServiceDummy, AccessToken: "dummy-access-token", RefreshToken: "dummy-refresh-token", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour), AccountID: "dummy-account", AccountName: "Dummy OAuth User", Email: "dummy@example.test", Raw: map[string]any{"issuer": "dummy", "subject": "dummy-account"}}, nil
+	return &OAuthCredential{AccessToken: "dummy-access-token", RefreshToken: "dummy-refresh-token", TokenType: "Bearer", ExpiresAt: time.Now().Add(time.Hour), AccountID: "dummy-account", AccountName: "Dummy OAuth User", Email: "dummy@example.test"}, nil
 }

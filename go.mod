@@ -1,4 +1,4 @@
-module ai-unisub2
+module ai-unisub
 
 go 1.26
 

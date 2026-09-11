@@ -1,7 +1,7 @@
 package service
 
 import (
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,7 +111,7 @@ func (m *OAuthFlowModule) poll(ctx ModuleContext, w http.ResponseWriter, r *http
 		oauthAPIError(w, err)
 		return
 	}
-	if credential == nil || credential.Service != service {
+	if credential == nil || credential.AccessToken == "" {
 		WriteError(w, http.StatusBadGateway, "invalid OAuth credential")
 		return
 	}

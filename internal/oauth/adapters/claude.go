@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type ClaudeConfig struct {
@@ -71,11 +71,8 @@ func (a *ClaudeAdapter) token(ctx context.Context, fields map[string]string) (*o
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "claude-cli/2.1.220 (external, cli)")
 	var token tokenResponse
-	raw, err := readResponseDo(a.config.HTTPClient, req, &token)
-	if err != nil {
+	if _, err := readResponseDo(a.config.HTTPClient, req, &token); err != nil {
 		return nil, err
 	}
-	var original map[string]any
-	_ = json.Unmarshal(raw, &original)
-	return credential(a.Service(), token, original)
+	return credential(token)
 }

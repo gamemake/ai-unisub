@@ -102,6 +102,7 @@ const (
 // instance. Key stores the actual API key value.
 type PersistedAPIKey struct {
 	ID           string    `json:"id"`
+	Name         string    `json:"name"`
 	UserID       string    `json:"user_id"`
 	AccountID    string    `json:"account_id"`
 	Key          string    `json:"key"`

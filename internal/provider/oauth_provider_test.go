@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"ai-unisub2/internal/database"
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/oauth"
 )
 
 func TestOAuthProvidersHandleAPICalls(t *testing.T) {
@@ -30,7 +30,7 @@ func TestOAuthProvidersHandleAPICalls(t *testing.T) {
 	defer server.Close()
 
 	db := database.NewMemoryDatabase()
-	credential, _ := json.Marshal(oauth.OAuthCredential{Service: oauth.OAuthServiceClaude, AccessToken: "access-token"})
+	credential, _ := json.Marshal(oauth.OAuthCredential{AccessToken: "access-token"})
 	if err := db.SaveCredential("credential-1", credential); err != nil {
 		t.Fatal(err)
 	}

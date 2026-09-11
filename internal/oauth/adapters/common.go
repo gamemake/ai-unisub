@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"ai-unisub2/internal/oauth"
+	"ai-unisub/internal/oauth"
 )
 
 type tokenResponse struct {
@@ -19,11 +19,11 @@ type tokenResponse struct {
 	IDToken      string `json:"id_token"`
 }
 
-func credential(service string, token tokenResponse, raw map[string]any) (*oauth.OAuthCredential, error) {
+func credential(token tokenResponse) (*oauth.OAuthCredential, error) {
 	if token.AccessToken == "" {
 		return nil, errors.New("oauth response has no access token")
 	}
-	result := &oauth.OAuthCredential{Service: service, AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, TokenType: token.TokenType, Raw: raw}
+	result := &oauth.OAuthCredential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, TokenType: token.TokenType}
 	if result.TokenType == "" {
 		result.TokenType = "Bearer"
 	}

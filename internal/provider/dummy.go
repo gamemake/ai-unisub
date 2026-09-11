@@ -12,13 +12,10 @@ import (
 type DummyProvider struct{ config ProviderConfig }
 
 func NewDummyProvider(id string, raw json.RawMessage) (*DummyProvider, error) {
-	var config ProviderConfig
-	if len(raw) > 0 && string(raw) != "null" {
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return nil, err
-		}
+	config, err := decodeProviderConfig(id, raw)
+	if err != nil {
+		return nil, err
 	}
-	config.ID, config.Enabled = id, true
 	return &DummyProvider{config: config}, nil
 }
 func DummyProviderFactory(_ any) ProviderFactory {
@@ -26,11 +23,10 @@ func DummyProviderFactory(_ any) ProviderFactory {
 }
 func (p *DummyProvider) Config() ProviderConfig { return p.config }
 func (p *DummyProvider) UpdateConfig(raw json.RawMessage) error {
-	var config ProviderConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
+	config, err := decodeProviderConfig(p.config.ID, raw)
+	if err != nil {
 		return err
 	}
-	config.ID, config.Enabled = p.config.ID, true
 	p.config = config
 	return nil
 }

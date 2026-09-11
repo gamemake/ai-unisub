@@ -1,8 +1,8 @@
 package service
 
 import (
-	"ai-unisub2/internal/database"
-	"ai-unisub2/internal/provider"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/provider"
 	"context"
 	"encoding/json"
 	"io"
@@ -111,7 +111,7 @@ func TestDummyUserProviderAndAPIKeyFlow(t *testing.T) {
 	if updated.Code != http.StatusOK || created.Config().Name != "updated" {
 		t.Fatalf("update dummy provider: status=%d config=%+v body=%s", updated.Code, created.Config(), updated.Body.String())
 	}
-	key := request(http.MethodPost, "/api/keys", `{"account_id":"`+account.ID+`"}`)
+	key := request(http.MethodPost, "/api/keys", `{"name":"dummy-key","account_id":"`+account.ID+`"}`)
 	if key.Code != http.StatusCreated || !strings.Contains(key.Body.String(), `"key"`) {
 		t.Fatalf("create dummy API key: status=%d body=%s", key.Code, key.Body.String())
 	}

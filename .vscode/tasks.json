@@ -8,7 +8,7 @@
             "args": [
                 "build",
                 "-o",
-                "${workspaceFolder}/bin/ai-unisub2",
+                "${workspaceFolder}/bin/ai-unisub",
                 "./cmd/server"
             ],
             "options": {
@@ -29,7 +29,7 @@
             "args": [
                 "build",
                 "-o",
-                "${workspaceFolder}/bin/ai-unisub2-app.exe",
+                "${workspaceFolder}/bin/ai-unisub-app.exe",
                 "./cmd/app"
             ],
             "options": {
