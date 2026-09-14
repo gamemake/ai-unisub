@@ -5,7 +5,14 @@
 *.out
 coverage.out
 coverage.html
-__debug_bin*
+
+# User build
+/dummy*
+/oauth*
+/server*
+/cmd/*/**
+!/cmd/*/*.go
+!/cmd/*/*.md
 
 # Local application data
 /data/
