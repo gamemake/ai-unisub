@@ -41,25 +41,27 @@ func loginTestApp(t *testing.T, s *service.Service) *http.Cookie {
 }
 func TestStaticRoutesSessionAndAssets(t *testing.T) {
 	s := testApp(t)
-	for _, path := range []string{"/", "/home"} {
-		out := appRequest(s, "GET", path, "", nil)
-		if out.Code != 303 || out.Header().Get("Location") != "/login" {
-			t.Fatalf("anonymous %s: %d", path, out.Code)
-		}
-	}
-	out := appRequest(s, "GET", "/login", "", nil)
-	if out.Code != 200 || !strings.Contains(out.Body.String(), `id="root"`) || out.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("React entry: %d %s", out.Code, out.Body.String())
+	anonymous := appRequest(s, "GET", "/", "", nil)
+	if anonymous.Code != 200 || !strings.Contains(anonymous.Body.String(), `id="root"`) {
+		t.Fatal("root must serve the app")
 	}
 	cookie := loginTestApp(t, s)
-	if !cookie.HttpOnly {
-		t.Fatal("session cookie must be HttpOnly")
+	for _, c := range []*http.Cookie{nil, cookie, {Name: "session", Value: "expired"}} {
+		out := appRequest(s, "GET", "/", "", c)
+		if out.Code != 200 || out.Body.String() != anonymous.Body.String() || out.Header().Get("Location") != "" {
+			t.Fatal("static entry depends on session")
+		}
+		head := appRequest(s, "HEAD", "/", "", c)
+		if head.Code != 200 || head.Body.Len() != 0 || head.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("invalid HEAD")
+		}
 	}
-	if out := appRequest(s, "GET", "/home", "", cookie); out.Code != 200 {
-		t.Fatalf("home: %d", out.Code)
-	}
-	if out := appRequest(s, "GET", "/login", "", cookie); out.Code != 303 || out.Header().Get("Location") != "/home" {
-		t.Fatalf("authenticated login: %d", out.Code)
+	for _, path := range []string{"/login", "/home", "/logout"} {
+		for _, method := range []string{"GET", "POST", "HEAD"} {
+			if out := appRequest(s, method, path, "", cookie); out.Code != 404 {
+				t.Fatalf("legacy route %s %s: %d", method, path, out.Code)
+			}
+		}
 	}
 	if out := appRequest(s, "GET", "/favicon.svg", "", nil); out.Code != 200 || !strings.Contains(out.Header().Get("Content-Type"), "svg") {
 		t.Fatalf("favicon: %d", out.Code)
@@ -69,12 +71,12 @@ func TestStaticRoutesSessionAndAssets(t *testing.T) {
 			t.Fatalf("unexpected file exposure %s: %d", path, out.Code)
 		}
 	}
-	for _, test := range []struct{ method, path string }{{"POST", "/home"}, {"DELETE", "/login"}, {"POST", "/favicon.svg"}} {
+	for _, test := range []struct{ method, path string }{{"POST", "/"}, {"DELETE", "/"}, {"POST", "/favicon.svg"}} {
 		if out := appRequest(s, test.method, test.path, "", cookie); out.Code != 405 {
 			t.Fatalf("method %s %s: %d", test.method, test.path, out.Code)
 		}
 	}
-	if out := appRequest(s, "POST", "/logout", "", cookie); out.Code != 303 {
+	if out := appRequest(s, "POST", "/api/logout", "", cookie); out.Code != 200 {
 		t.Fatal("logout failed")
 	}
 	if out := appRequest(s, "GET", "/api/me", "", cookie); out.Code != 401 {

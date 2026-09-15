@@ -23,7 +23,11 @@ const navigation = [
   { id: 'users', label: '用户管理', icon: UsersIcon, admin: true }, { id: 'proxies', label: '代理管理', icon: Network, admin: true },
 ]
 function pageFromHash() { const raw = location.hash.slice(1); return (raw === 'accounts' || raw === 'providers') ? 'ai-providers' : raw || 'personal' }
-export default function App() { return location.pathname === '/login' ? <Login /> : <Dashboard /> }
+export default function App() {
+  const me = useMe()
+  if (me.data === null) return <Login />
+  return <QueryState query={me}>{me.data && <Dashboard />}</QueryState>
+}
 function Dashboard() {
   const me = useMe(), [page, setPage] = useState(pageFromHash), [mobileOpen, setMobileOpen] = useState(false), logout = useAction(actions.logout)
   useEffect(() => { const update = () => setPage(pageFromHash()); addEventListener('hashchange', update); return () => removeEventListener('hashchange', update) }, [])

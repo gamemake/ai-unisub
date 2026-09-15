@@ -6,6 +6,7 @@ import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
 	"ai-unisub/internal/oauth/adapters"
+	"ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ type Config struct {
 	SessionTTL            time.Duration
 	OAuthCallbackBaseURL  string
 	ListenAddr            string
+	ProxyPolicy           *proxy.Policy
 }
 type Module interface {
 	Name() string
@@ -34,7 +36,7 @@ type Service struct {
 	cfg         Config
 	db          database.Database
 	aiProviders *aiprovider.AIProviderManager
-	proxy       *ProxyManager
+	proxy       *proxy.Manager
 	oauth       *oauth.OAuthManager
 	router      *router
 	results     *OAuthResultStore
@@ -42,6 +44,8 @@ type Service struct {
 	authSvc     *authService
 	mu          sync.Mutex
 	closed      bool
+	closeMu     sync.Mutex
+	closeDone   bool
 }
 
 func New(cfg Config) (*Service, error) {
@@ -64,7 +68,11 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	if p == nil {
 		p = aiprovider.NewAIProviderManager()
 	}
-	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: NewProxyManager(db), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
+	policy := proxy.DefaultPolicy()
+	if cfg.ProxyPolicy != nil {
+		policy = *cfg.ProxyPolicy
+	}
+	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxy.NewManager(db, policy), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
 	s.authSvc = &authService{s: s, sessions: map[string]session{}}
 	for _, adapter := range []oauth.OAuthAdapter{adapters.NewGrok(adapters.GrokConfig{}), adapters.NewCodex(adapters.CodexConfig{}), adapters.NewClaude(adapters.ClaudeConfig{}), oauth.NewDummyAdapter()} {
@@ -114,13 +122,15 @@ func (s *Service) Handler() http.Handler                      { return s.router.
 func (s *Service) Config() Config                             { return s.cfg }
 func (s *Service) Database() database.Database                { return s.db }
 func (s *Service) AIProviders() *aiprovider.AIProviderManager { return s.aiProviders }
-func (s *Service) Proxy() *ProxyManager                       { return s.proxy }
+func (s *Service) Proxy() *proxy.Manager                      { return s.proxy }
 func (s *Service) OAuth() *oauth.OAuthManager                 { return s.oauth }
 func (s *Service) Auth() AuthService                          { return s.authSvc }
 func (s *Service) OAuthResults() *OAuthResultStore            { return s.results }
 func (s *Service) Close() error {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	s.mu.Lock()
-	if s.closed {
+	if s.closeDone {
 		s.mu.Unlock()
 		return nil
 	}
@@ -133,8 +143,16 @@ func (s *Service) Close() error {
 			first = e
 		}
 	}
+	if e := s.proxy.Close(); e != nil {
+		return e
+	}
 	if e := s.db.Close(); e != nil && first == nil {
 		first = e
+	}
+	if first == nil {
+		s.mu.Lock()
+		s.closeDone = true
+		s.mu.Unlock()
 	}
 	return first
 }

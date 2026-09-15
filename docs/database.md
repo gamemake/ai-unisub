@@ -43,7 +43,7 @@ Database 提供 Open、Close 以及各实体读写，应用模块不绕过接口
 | PersistedAccount | ID、name、provider、JSON config 和时间 |
 | PersistedAPIKey | 所属用户、绑定账号、明文 Key、有效秒数和时间 |
 | Credential | 按不透明 ID 保存 JSON；结构由 OAuth 定义 |
-| PersistedProxyGroup / PersistedProxy | 代理组内嵌代理地址、状态和错误桶 |
+| PersistedProxyGroup / PersistedProxy | 代理组内嵌有序代理引用；兼容旧健康字段，实时状态由 Proxy 持有 |
 | PersistedCallTrace | 调用账号、关联 Key、请求／响应、模型、用量与时间 |
 | PersistedCallTraceSummary | 列表摘要，不带大体积 Body/Header |
 
@@ -57,16 +57,18 @@ OAuth Session、Web 一次性结果和浏览器 Session 不存入数据库，重
 
 ## 调用查询
 
+PersistedCallTrace 和 PersistedCallTraceSummary 包含 `SessionID`（JSON 为 session_id）。SQLite 启动时为旧日表新增默认空字符串的 session_id 列及索引，新日表直接创建该字段；不会为历史记录猜测会话标识。
+
+`QueryCallTracesFiltered` 接收 CallTraceFilter，支持账号 ID、原始 HTTPErrorCode 精确匹配、时间范围及精确文本搜索。只有应用层授权后才启用 SearchUsernames；归属条件独立于文本 OR 条件，不能通过搜索跨用户读取记录。原 QueryCallTraces 保留给统计与现有调用方，并增加 session_id 精确匹配。
+
 QueryCallTraces 提供分页、筛选与时间范围，列表返回摘要；GetCallTrace 使用日期与记录 ID 获取详情。CleanupCallTrace 只清理调用数据，不删除用户、账号或 Key。
 
 记录包含用于用户关联的 APIKey 信息，管理 API 返回前清空；最终权限由 API Handler 和查询范围共同决定。不存在的详情使用 ErrCallTraceNotFound。
 
-## 独立 Proxy 包的目标存储边界
+## 独立 Proxy 包的存储边界
 
-当前代理组、状态和错误桶均通过 Database 的组读写接口保存。目标 `internal/proxy` 定义自身模型与最小 Store 接口，数据库层提供适配与模型转换；代理包不依赖整套 Database 或具体驱动。
+`PersistedProxyGroup`、`PersistedProxy` 和 `ProxyErrorRecord` 使用 Proxy 领域模型的类型别名，保留原 JSON 格式和组读写接口。Database 满足 `proxy.Store`，Proxy 不导入 Database。
 
-目标要求地址全局去重、应用维度状态、1 分钟内存桶和 10 分钟持久化聚合，尚不是现有数据库结构。领域语义集中在 [Proxy](proxy.md)，本次文档更新不改变表结构或数据。
+SQLite 的 `proxy_groups` 新增 `enabled` 列，旧数据库迁移时默认为启用。`proxy_stats` 以 address/application/start_at/source 为主键，保存 requests/failures；start_at 对齐 10 分钟。写入整批事务并用绝对计数覆盖同键快照，重试不重复累计；查询按桶合并不同进程来源。实时 1 分钟桶与健康状态不从历史表读取。
 
-## 数据与验证
-
-默认 data 目录、数据库与凭据不提交到 Git。数据库测试覆盖实体契约、调用归属等；应用重启恢复行为在 `internal/unisub/restart_test.go` 验证。字段兼容与管理响应见 [AIProvider](aiprovider.md) 和 [UniSub API](unisub-api.md)。
+`MemoryDatabase` 对同一 Store 契约提供内部内存表示；正式服务仍使用 SQLite。代理状态、容量与错误策略见 [Proxy](proxy.md)。

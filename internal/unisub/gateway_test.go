@@ -60,6 +60,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			}
 			req := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
+			req.Header.Set("Session-Id", "conversation-test")
 			req.AddCookie(cookie)
 			result := httptest.NewRecorder()
 			s.Handler().ServeHTTP(result, req)
@@ -67,7 +68,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 				t.Fatalf("forward: %d %s", result.Code, result.Body.String())
 			}
 			traces, count, err := s.Database().QueryCallTraces("", "", nil, 1, 10, nil)
-			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 {
+			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "conversation-test" {
 				t.Fatalf("trace: %#v count=%d err=%v", traces, count, err)
 			}
 			trace, err := s.Database().GetCallTrace(traces[0].StartedAt, traces[0].ID)

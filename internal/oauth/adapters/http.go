@@ -1,8 +1,7 @@
 package adapters
 
 import (
-	"ai-unisub/internal/common"
-	"context"
+	"ai-unisub/internal/proxy"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -23,21 +22,14 @@ func nowPlus(minutes int) time.Time { return time.Now().Add(time.Duration(minute
 
 func defaultHTTPClient() *http.Client { return &http.Client{Timeout: 30 * time.Second} }
 
-func clientWithProxy(ctx context.Context, base *http.Client) *http.Client {
+func clientWithProxy(base *http.Client, endpoints ...*proxy.Endpoint) *http.Client {
 	if base == nil {
 		base = defaultHTTPClient()
 	}
-	proxy := common.HTTPProxyFrom(ctx)
-	if proxy == "" {
+	if len(endpoints) == 0 {
 		return base
 	}
-	proxyURL, err := common.ParseHTTPProxy(proxy)
-	if err != nil || proxyURL == nil {
-		return base
-	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = http.ProxyURL(proxyURL)
-	return &http.Client{Timeout: base.Timeout, Transport: transport}
+	return proxy.Client(base, endpoints[0])
 }
 func readResponseDo(client *http.Client, req *http.Request, out any) ([]byte, error) {
 	started := time.Now()
@@ -45,6 +37,7 @@ func readResponseDo(client *http.Client, req *http.Request, out any) ([]byte, er
 	if client == nil {
 		client = http.DefaultClient
 	}
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Printf("[oauth] outbound response method=%s url=%s error=%v duration=%s", req.Method, safeURL(req.URL), err, time.Since(started))

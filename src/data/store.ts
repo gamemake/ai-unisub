@@ -1,9 +1,9 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { json, queryClient, request } from './client'
+import { clearSession, json, queryClient, request } from './client'
 import type { Account, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, User } from './types'
 const id = encodeURIComponent
-export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User>('/api/me', { signal }) })
+export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
 export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }) => request<List<APIKey>>('/api/keys', { signal }) })
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: ({ signal }) => request<List<User>>('/api/users', { signal }) })
@@ -14,8 +14,8 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
   return useMutation({ mutationFn: action, onSuccess: async () => { await Promise.all(invalidate.map(key => queryClient.invalidateQueries({ queryKey: [key] }))) } })
 }
 export const actions = {
-  login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); queryClient.clear() },
-  logout: async () => { await fetch('/logout', { method: 'POST', credentials: 'same-origin' }); await queryClient.cancelQueries(); queryClient.clear(); location.assign('/login') },
+  login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
+  logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: string; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
   deleteAIProvider: (key: string) => request('/api/ai-providers/' + id(key), json('DELETE')),
   createKey: (input: { name: string; account_id: string; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),

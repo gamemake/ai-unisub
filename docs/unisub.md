@@ -14,29 +14,29 @@
 
 模块通过 `service.ModuleContext` 获取共享能力。框架不导入应用层，AIProvider 不导入数据库或 Web 页面。四个模块均属于 `internal/unisub`，文档使用 unisub-* 命名；Service 只提供模块机制。
 
-下文的页面入口与登录／登出归属采用目标契约：Static 只返回静态网页和资源，API 负责登录与登出；当前代码尚未同步，本次文档调整不改变实际运行行为。
+页面入口统一为 `/`：Static 只返回静态网页和资源，API 负责登录与登出。
 
 ## 模块职责
 
 | 模块 | 实现文件 | 职责 | 文档 |
 | --- | --- | --- | --- |
-| static | `internal/unisub/static.go` | 目标为仅返回根路径静态网页与构建资源 | [Static](unisub-static.md) |
-| api | `internal/unisub/api.go` | 登录／登出目标接口、普通管理 JSON API、用量与代理组 | [API](unisub-api.md) |
+| static | `internal/unisub/static.go` | 仅返回根路径静态网页与构建资源 | [Static](unisub-static.md) |
+| api | `internal/unisub/api.go` | 登录／登出接口、普通管理 JSON API、用量与代理组 | [API](unisub-api.md) |
 | oauthflow | `internal/unisub/oauthflow.go` | OAuth JSON API、公开回调和结果交接 | [OAuthFlow](unisub-oauthflow.md) |
 | gateway | `internal/unisub/gateway.go` | 基于 Key 绑定账号的 /v1/ 转发 | [Gateway](unisub-gateway.md) |
 
-路由采用最长匹配：目标中的 /api/login、/api/logout 精确路径与 /api/oauth/ 前缀优先于 /api/，各业务前缀优先于静态模块的 /。登录与登出由 API 模块注册为 AuthNone；方法和资源权限在具体 Handler 内检查。
+路由采用最长匹配：/api/login、/api/logout 精确路径与 /api/oauth/ 前缀优先于 /api/，各业务前缀优先于静态模块的 /。登录与登出由 API 模块注册为 AuthNone；方法和资源权限在具体 Handler 内检查。
 
 ## API 模块接口索引
 
 共享认证接口与实现见 [Service](service.md)，各接口的业务授权由对应应用模块文档维护。
 
-除目标登录／登出接口外，以下接口均先要求 Session；管理员标记表示额外角色限制。Body、响应和边界行为以 [API](unisub-api.md) 为准。
+除登录／登出接口外，以下接口均先要求 Session；管理员标记表示额外角色限制。Body、响应和边界行为以 [API](unisub-api.md) 为准。
 
 | 方法 | 路径 | 用途 | 额外权限 |
 | --- | --- | --- | --- |
-| POST | `/api/login` | 登录，创建 Session 并返回 JSON（目标） | AuthNone |
-| POST | `/api/logout` | 幂等登出，清除 Session 并返回 JSON（目标） | AuthNone，无有效会话也成功 |
+| POST | `/api/login` | 登录，创建 Session 并返回 JSON | AuthNone |
+| POST | `/api/logout` | 幂等登出，清除 Session 并返回 JSON | AuthNone，无有效会话也成功 |
 | GET | `/api/me` | 当前用户及服务版本 | 本人 |
 | POST | `/api/password` | 修改密码 | 本人 |
 | GET、POST | `/api/users` | 列出／创建用户 | 管理员 |
@@ -84,12 +84,12 @@
 
 ## 代理领域边界
 
-**目标设计采用独立 `internal/proxy` 包**：代理包拥有代理组、调度、探测和状态统计；Service 负责构造与注入；API 模块只处理 HTTP 与管理员权限；AIProvider 使用窄接口选择代理和报告结果。
+**采用独立 `internal/proxy` 包**：代理包拥有代理组、调度、探测和状态统计；Service 负责构造与注入；API 模块只处理 HTTP 与管理员权限；AIProvider 使用窄接口选择代理和报告结果。
 
-当前管理实现仍在 `internal/service/proxy.go`，独立包尚不存在。优先级调度、全局地址状态及应用维度统计属于 [Proxy 设计](proxy.md) 的目标契约，不是当前应用已实现的能力。
+代理优先级、全局地址状态、应用维度与历史统计由 [Proxy](proxy.md) 定义并实现。
 
 ## 前端与持久化
 
-React 页面通过 `src/data/` 访问接口和订阅缓存，shadcn/ui Base UI 组件承载交互。目标页面入口统一为 `/`，前端通过 `/api/me` 判断会话，在同一页面显示登录界面或 Dashboard；登录、登出和会话失效不跳转到独立页面路径。Static 不依赖认证与数据库；API、OAuthFlow 和 Gateway 按各自契约使用共享能力。
+React 页面通过 `src/data/` 访问接口和订阅缓存，shadcn/ui Base UI 组件承载交互。页面入口统一为 `/`，前端通过 `/api/me` 判断会话，在同一页面显示登录界面或 Dashboard；登录、登出和会话失效不跳转到独立页面路径。Static 不依赖认证与数据库；API、OAuthFlow 和 Gateway 按各自契约使用共享能力。
 
 用户、账号、Key、Credential 和调用记录由 Database 保存；浏览器 Session、OAuth Session、OAuth 临时结果及账号队列是内存状态。配置和启动命令见 [README](../README.md)，框架生命周期见 [Service](service.md)。

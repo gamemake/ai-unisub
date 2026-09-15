@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"io"
@@ -58,6 +59,6 @@ func TestOAuthAIProvidersHandleAPICalls(t *testing.T) {
 type testOAuthAdapter struct{ service string }
 
 func (a *testOAuthAdapter) Service() string { return a.service }
-func (a *testOAuthAdapter) Refresh(_ context.Context, credential *oauth.OAuthCredential) (*oauth.OAuthCredential, error) {
+func (a *testOAuthAdapter) Refresh(_ context.Context, credential *oauth.OAuthCredential, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
 	return credential, nil
 }

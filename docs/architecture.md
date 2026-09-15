@@ -1,6 +1,6 @@
 # 系统结构
 
-本文描述 Go 包、Service 框架和 UniSub 应用模块之间的关系。以已确定的目标边界组织结构，并单独列出当前实现差异；不表示目标结构已经落地。各包的接口细节由对应文档维护。
+本文描述 Go 包、Service 框架和 UniSub 应用模块之间的关系。按当前实现的依赖与职责边界组织结构。各包的接口细节由对应文档维护。
 
 ## 包与应用模块
 
@@ -14,7 +14,7 @@
 
 ## 分层与包依赖
 
-下图表示目标中的主要代码依赖方向，箭头从使用方指向被依赖方，不表示请求流向，也不枚举每一条工具函数依赖。
+下图表示主要代码依赖方向，箭头从使用方指向被依赖方，不表示请求流向，也不枚举每一条工具函数依赖。
 
 ```mermaid
 flowchart TD
@@ -29,17 +29,17 @@ flowchart TD
     AI --> OAuth
     AI --> Proxy
     OAuth --> Proxy
-    DB -->|目标 Store 适配| Proxy
+    DB -->|Store 契约| Proxy
     Framework --> Common[internal/common]
     Proxy --> Common
     CLI[cmd/oauth] --> OAuth
 ```
 
-应用层可以使用上下文返回的领域类型完成数据转换，但底层包不因此反向依赖应用。数据库对 Proxy 的目标依赖用于实现其 Store 契约；Proxy 不导入 Database。OAuth 的 CredentialStore 由接口结构匹配注入，不要求 OAuth 导入具体数据库包。
+应用层可以使用上下文返回的领域类型完成数据转换，但底层包不因此反向依赖应用。数据库对 Proxy 的依赖用于实现其 Store 契约；Proxy 不导入 Database。OAuth 的 CredentialStore 由接口结构匹配注入，不要求 OAuth 导入具体数据库包。
 
 | 包 | 职责 | 关键边界 | 文档 |
 | --- | --- | --- | --- |
-| common | 公共错误消息与 JSON 错误输出 | 不承担代理职责，不包含目标 proxy.go | [Common](common.md) |
+| common | 公共错误消息与 JSON 错误输出 | 不承担代理职责，不包含 proxy.go | [Common](common.md) |
 | database | 统一数据库接口、SQLite 持久化与内部缓存 | MemoryDatabase 是内部缓存数据结构，不是并列数据库后端 | [Database](database.md) |
 | proxy | 代理对象、内部 URL 校验、HTTP 传输、代理组、调度与统计 | 不依赖 OAuth、AIProvider、Service 或应用；通过自身 Store 接口使用持久化 | [Proxy](proxy.md) |
 | oauth | 授权协议、Session、Credential、刷新与撤销 | 显式依赖 Proxy，不感知应用路由、用户角色、页面或具体数据库 | [OAuth](oauth.md) |
@@ -68,7 +68,7 @@ Service.Handler：匹配路由 → 按 AuthMode 认证 → 调用模块 Handler
 Service.Close：逆序关闭已注册模块 → 关闭数据库
 ```
 
-以下为目标职责；特别是 Static 与登录／登出归属尚未同步到代码。
+以下职责由对应应用模块实现。
 
 | 模块 | HTTP 职责 | 使用的共享能力 | 不负责 |
 | --- | --- | --- | --- |
@@ -85,7 +85,7 @@ Service.Close：逆序关闭已注册模块 → 关闭数据库
 | --- | --- | --- |
 | Service → 应用模块 | Init 时提供 ModuleContext | Service 持有共享实例，模块只使用所需能力 |
 | Database → OAuth | 注入满足 CredentialStore 的对象 | OAuth 定义凭据结构与刷新逻辑，存储实现管理持久化 |
-| Database → Proxy | 目标为实现 Proxy 定义的 Store 接口 | Proxy 定义代理模型、状态与统计，Database 负责落盘及表示转换 |
+| Database → Proxy | 实现 Proxy 定义的 Store 接口 | Proxy 定义代理模型、状态与统计，Database 负责落盘及表示转换 |
 | Proxy → OAuth | 显式传入已校验的 Endpoint 或相应请求选项 | Proxy 封装传输配置，OAuth Session 绑定本次选择 |
 | Proxy → AIProvider | 注入 resolver/reporter 能力并使用代理对象 | Proxy 管理调度，AIProvider 管理实际请求与结果反馈 |
 | AIProvider → Gateway | 通过 Recorder 返回调用结果 | Gateway 转为数据库记录并补充调用主体信息 |
@@ -93,7 +93,7 @@ Service.Close：逆序关闭已注册模块 → 关闭数据库
 
 依赖注入方向不等于 Go import 方向。例如数据库实例传给 OAuthManager，并不要求 OAuth 导入 Database；相反，接口契约应由使用方定义，具体实现由组装层提供。
 
-代理配置通过显式参数传递，不放入 Context；Context 保留取消与超时用途。目标公共接口不保留 WithHTTPProxy、HTTPProxyFrom、ParseHTTPProxy，URL 校验收进代理对象构造过程。
+代理配置通过显式参数传递，不放入 Context；Context 保留取消与超时用途。公共接口不保留 WithHTTPProxy、HTTPProxyFrom、ParseHTTPProxy，URL 校验收进代理对象构造过程。
 
 ## 主要调用链
 
@@ -127,21 +127,15 @@ API 校验管理员权限并解析输入 → Proxy Manager 管理组、状态和
 | 授权 Session、凭据刷新锁 | OAuthManager | 进程内存 |
 | Web OAuth 一次性结果 | Service OAuthResultStore | 进程内存 |
 | 账号并发计数与等待队列 | AIProvider Account | 进程内存 |
-| 代理状态、实时统计与历史聚合 | 目标 Proxy Manager + Store | 按 Proxy 契约分别保留内存状态和持久化统计 |
+| 代理状态、实时统计与历史聚合 | Proxy Manager + Store | 按 Proxy 契约分别保留内存状态和持久化统计 |
 
 这些状态不能因都使用内存而合并为同一种缓存。特别是 MemoryDatabase 只统一数据库内部缓存，不承担 Session、账号队列或代理领域实时调度的所有权。
 
-## 当前实现与目标边界
+## 实现边界
 
-| 项目 | 当前实现 | 已确定的目标 |
-| --- | --- | --- |
-| 代理管理 | service/proxy.go | 独立 internal/proxy |
-| 代理输入与传递 | common/proxy.go 的公开解析函数及 Context 字符串 | Proxy 对象构造时校验，OAuth 显式依赖 Proxy 并传参 |
-| 页面入口 | 存在独立登录／主页路径与会话跳转 | `/` 仅返回静态网页，前端按 API 会话状态切换界面 |
-| 登录与登出 | Static 持有相关 Handler | API 持有 `/api/login`、`/api/logout` |
-| 代理状态与统计 | 组内状态、轮询、组内错误桶 | 独立包维护全局地址状态、应用维度、优先级和分层统计 |
+代理对象、全局网络状态、按应用状态和优先级调度位于 `internal/proxy`。Service 注入 Manager，并在关闭数据库前停止代理任务、取消探测及刷新统计；统计写入失败可再次关闭重试。根页面为静态入口，登录和登出由 API 持有。
 
-数据库内部 MemoryDatabase 缓存、Service 的共享认证以及四个应用模块的代码归属已有实现基础；不能将尚未实现的目标包或路由写成当前可调用能力。
+代理实时状态属于进程内存，不将旧代理组 JSON 中的健康字段当作实时状态。数据库保留组配置，历史统计按代理地址、应用、10 分钟时间桶和写入来源幂等保存。
 
 ## 文档导航
 

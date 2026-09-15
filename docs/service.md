@@ -35,7 +35,7 @@ UniSub 使用四个应用模块：[Static](unisub-static.md)、[API](unisub-api.
 
 - 路径必须以 `/` 开头，Handler 不能为空；同一路径重复注册报错。
 - 以 `/` 结尾的注册路径按前缀匹配，其余为精确匹配；多个匹配项取最长路径。
-- 精确认证入口和更长业务前缀优先于 `/api/`，`/api/` 与 `/v1/` 优先于静态模块的 `/`。UniSub 目标中 `/api/login`、`/api/logout` 由 API 模块注册为 AuthNone，普通 `/api/` 仍为 AuthSession；`/api/oauth/` 保持 OAuthFlow 归属。
+- 精确认证入口和更长业务前缀优先于 `/api/`，`/api/` 与 `/v1/` 优先于静态模块的 `/`。UniSub 中 `/api/login`、`/api/logout` 由 API 模块注册为 AuthNone，普通 `/api/` 仍为 AuthSession；`/api/oauth/` 保持 OAuthFlow 归属。
 - HTTP 方法由各 Handler 判断，路由层不区分方法。未匹配路径和部分不支持的方法使用 `http.NotFound`，不能假定所有错误均为 JSON 或所有方法错误均为 `405`。
 - 请求包装层提供 `X-Request-ID`、Context 中的请求 ID、访问日志及 panic 恢复。已有请求 ID 直接沿用，否则生成新值。
 - panic 时若尚未写响应，返回通用 `500`；已经开始发送的响应不再覆盖状态。响应包装器保留 Flush 等接口，但这不表示网关支持 WebSocket。
@@ -147,7 +147,7 @@ SetSessionCookie 只写响应 Cookie。ClearSessionCookie 在 token 非空时先
 - AuthAPIKey 失败或路径以 `/api/` 开头的认证失败，输出 JSON 错误，沿用 401、403 或 500 状态。
 - 当前非 API 路径的会话认证失败会 303 重定向到 `/login`；这是现有中间件行为，不是应用目标页面入口。
 - 内部 writeError 转发给 common.WriteError，使用 unauthorized、forbidden 或 internal server error 等公共消息。
-- UniSub 目标中的 `/` 为 AuthNone 静态页面，因此不进入会话失败重定向分支；前端通过 API 判断会话。该应用契约尚未同步到代码。
+- UniSub 中的 `/` 为 AuthNone 静态页面，因此不进入会话失败重定向分支；前端通过 API 判断会话。该应用契约由 Static、API 和前端实现。
 
 框架认证验证应覆盖主体读取、Session 生命周期、Cookie、用户状态变化、Key 有效期与绑定、管理员角色限制、密码格式和失败响应；登录请求参数及页面交互属于应用层验证范围。
 
@@ -158,17 +158,17 @@ SetSessionCookie 只写响应 Cookie。ClearSessionCookie 在 token 非空时先
 | `database.Database` | 用户、账号、Key、调用记录、凭据和代理组持久化；同时满足 `oauth.CredentialStore` |
 | `oauth.OAuthManager` | Adapter 注册、短期 Session、协议执行与凭据刷新 |
 | `aiprovider.AIProviderManager` | 工厂、AIProvider 实例及每账号唯一的运行时 Account |
-| `service.ProxyManager` | 当前代理管理实现，位于 `proxy.go` |
+| `proxy.Manager` | 独立代理管理实现，位于 `internal/proxy` |
 | `AuthService` | 主体查询、初始管理员、Session 创建与清除 |
 | `OAuthResultStore` | 有效期 10 分钟的一次性 Web OAuth 结果 |
 
 OAuth Result 的 `Put` 生成随机 ID，`Take` 原子校验归属、有效期并删除；`FindSession` 只向原主体返回匹配 service/session 的结果 ID。结果及未完成 Session 均不入库。详见 [OAuthFlow](unisub-oauthflow.md)。
 
-### 独立 Proxy 包的目标边界
+### 独立 Proxy 包边界
 
-目标架构中，代理领域由 `internal/proxy` 独立拥有，Service 只负责构造、注入和生命周期管理，`ModuleContext.Proxy()` 暴露代理包能力。代理领域通过小型 Store 接口访问持久化，不反向依赖 Service、Web 模块或具体 AIProvider。
+代理领域由 `internal/proxy` 独立拥有，Service 只负责构造、注入和生命周期管理，`ModuleContext.Proxy()` 暴露代理包能力。代理领域通过小型 Store 接口访问持久化，不反向依赖 Service、Web 模块或具体 AIProvider。
 
-当前 `Proxy()` 返回 `*service.ProxyManager`，独立包尚未实现。目标类型、存储适配与调度规则以 [Proxy 设计](proxy.md) 为准，不把目标签名混入当前接口示例。
+`Proxy()` 返回 `*proxy.Manager`。Service 使用 `proxy.DefaultPolicy()`，可通过 `Config.ProxyPolicy` 注入完整策略。关闭时先关闭模块，再关闭代理 Manager，统计持久化成功后才关闭数据库。
 
 ## 配置
 

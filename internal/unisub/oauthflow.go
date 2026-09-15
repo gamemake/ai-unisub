@@ -3,6 +3,7 @@ package unisub
 import (
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/oauth"
+	"ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
 	"encoding/json"
 	"errors"
@@ -150,14 +151,17 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 		return
 	}
 	reqCtx := r.Context()
-	if proxy := strings.TrimSpace(input.Proxy); proxy != "" {
-		if _, err := common.ParseHTTPProxy(proxy); err != nil {
+	var endpoint *proxy.Endpoint
+	if strings.TrimSpace(input.Proxy) != "" {
+		var err error
+		endpoint, err = proxy.NewEndpoint(input.Proxy)
+		if err != nil {
 			common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
 			return
 		}
-		reqCtx = common.WithHTTPProxy(reqCtx, proxy)
 	}
-	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect)
+
+	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect, endpoint)
 	if err != nil {
 		oauthAPIError(w, err)
 		return

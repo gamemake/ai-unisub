@@ -10,7 +10,6 @@
 | `internal/oauth/manager.go` | Adapter 注册、授权流程、Session 与凭据刷新 |
 | `internal/oauth/adapters/` | Codex、Claude、Grok 的协议实现 |
 | `internal/oauth/file_store.go` | CLI 的单文件凭据存储 |
-| `internal/oauth/proxy.go` | 当前代理工具兼容入口；目标改为显式依赖 Proxy 对象，不保留原工具函数的转发包装 |
 | `internal/oauth/dummy.go` | 本地模拟适配器 |
 | `cmd/oauth/main.go` | 独立 CLI，直接调用 OAuthManager |
 
@@ -21,23 +20,23 @@ OAuthAdapter 只负责上游授权协议，由 OAuthManager 注册和调用；�
 ```go
 type OAuthAdapter interface {
     Service() string
-    Refresh(context.Context, *OAuthCredential) (*OAuthCredential, error)
+    Refresh(context.Context, *OAuthCredential, ...*proxy.Endpoint) (*OAuthCredential, error)
 }
 
 type PKCEAdapter interface {
     OAuthAdapter
     BuildAuthorizationURL(context.Context, AuthorizationInput) (AuthorizationResult, error)
-    Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string) (*OAuthCredential, error)
+    Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
 }
 
 type DeviceAdapter interface {
     OAuthAdapter
     StartDeviceAuthorization(context.Context, DeviceStartInput) (DeviceAuthorizationResult, error)
-    PollDeviceToken(ctx context.Context, deviceCode string) (*OAuthCredential, error)
+    PollDeviceToken(ctx context.Context, deviceCode string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
 }
 
 type RevocableAdapter interface {
-    Revoke(context.Context, *OAuthCredential) error
+    Revoke(context.Context, *OAuthCredential, ...*proxy.Endpoint) error
 }
 ```
 
@@ -58,16 +57,16 @@ type RevocableAdapter interface {
 NewManager(store CredentialStore) *OAuthManager
 NewOAuthManager(store CredentialStore) *OAuthManager
 Register(adapter OAuthAdapter) error
-Start(ctx context.Context, service, subjectID, redirectURI string) (*StartResult, error)
+Start(ctx context.Context, service, subjectID, redirectURI string, endpoints ...*proxy.Endpoint) (*StartResult, error)
 Complete(ctx context.Context, sessionID, code, state string) (*OAuthCredential, error)
 Poll(ctx context.Context, sessionID string) (*OAuthCredential, error)
 SessionForState(state string) (OAuthSession, error)
 SessionForSubjectState(service, subjectID, state string) (string, error)
 SessionForSubject(sessionID, service, subjectID string) (OAuthSession, error)
 DiscardSession(sessionID string) error
-Refresh(ctx context.Context, service string, credential *OAuthCredential) (*OAuthCredential, error)
-GetValidAccessToken(ctx context.Context, service, credentialID string) (string, error)
-Revoke(ctx context.Context, service string, credential *OAuthCredential) error
+Refresh(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
+GetValidAccessToken(ctx context.Context, service, credentialID string, endpoints ...*proxy.Endpoint) (string, error)
+Revoke(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) error
 ```
 
 以上省略方法接收者和重复的 func 关键字，仅列出当前调用签名。Start、Complete、Poll 返回结果，不自动长期保存 Credential；GetValidAccessToken 才通过 Store 读取并保存刷新结果。
@@ -152,25 +151,12 @@ FileCredentialStore 校验 JSON，通过同目录临时文件、Sync 和 Rename 
 
 ## 代理边界
 
-目标依赖方向为 `oauth -> proxy`，Proxy 不导入 OAuth。OAuth 通过显式参数接收已校验的代理对象，不从 Context 读取代理地址；Common 不保留代理能力。本文前面的 Manager 与 Adapter 签名描述当前实现，下面是尚未落地的目标调用契约。
+依赖方向为 `oauth -> proxy`。Start、Refresh、GetValidAccessToken 和 Revoke 接收可选的显式 Endpoint 参数（只传一个，省略或 nil 表示不指定代理）。Start 将 Endpoint 保存在 Session；AuthorizationInput 和 DeviceStartInput 同样包含 Proxy 字段。
 
-目标参数示意：
+Complete/Poll 使用 Session 的 Endpoint 和当前 Context 调用适配器，不能覆盖本次授权的代理选择。Exchange、PollDeviceToken、Refresh 和 Revoke 显式传递 Endpoint；代理包构造专用 Client/Transport，不修改共享客户端。Context 仅承载取消与超时，Endpoint 不进入凭据序列化。
 
-```go
-type RequestOptions struct {
-    Proxy *proxy.Endpoint // nil 表示不指定代理
-}
-```
-
-- 调用方将输入地址交给 `proxy.NewEndpoint` 构造对象，构造失败在开始授权前返回；未配置地址时显式传 nil。
-- Start 通过 RequestOptions 接收代理对象，Session 保存本次授权选定的不可变 Endpoint；Session 不持有原请求的 Context。
-- Complete/Poll 使用 Session 中的代理对象和当前请求的 Context，调用方不能用新的代理参数覆盖授权会话绑定。
-- Refresh、GetValidAccessToken 和 Revoke 没有授权 Session，使用显式 RequestOptions；内部触发刷新时继续传递相同选项。
-- Manager 向 Adapter 显式传递代理选项或已配置的专用 HTTP Client，不再让 Adapter 从 Context 读取代理；客户端配置由 Proxy 包封装，不能修改共享 Client/Transport 导致并发串用代理。
-- Context 只控制取消和超时，代理对象不参与 Credential 序列化或长期凭据保存。
-
-OAuth 不负责代理组优先级或健康状态。代理对象、输入校验与传输配置统一由 [Proxy](proxy.md) 定义。当前代码仍使用 Common 的代理 Context 工具，本次只更新文档，不表示实现已改变。
+OAuth 不负责代理组调度或健康判定；输入校验及传输配置见 [Proxy](proxy.md)。Common 与 OAuth 均不保留旧 Context 代理工具或解析函数包装。
 
 ## 验证范围
 
-协议层测试位于 `internal/oauth/manager_test.go`、`file_store_test.go`、`adapters/adapters_test.go` 与 `dummy_functional_test.go`。目标验证覆盖 state、过期、主体匹配、单次回调、刷新互斥、文件读写、显式代理参数、Session 代理绑定和并发隔离，不依赖具体应用的 Handler、页面或业务账号。现有测试不代表目标契约已验证，模拟结果也不等同于真实平台授权成功。
+协议层测试位于 `internal/oauth/manager_test.go`、`file_store_test.go`、`adapters/adapters_test.go` 与 `dummy_functional_test.go`。验证覆盖 state、过期、主体匹配、单次回调、刷新互斥、文件读写、显式代理参数、Session 代理绑定和并发隔离，不依赖具体应用的 Handler、页面或业务账号。`proxy_session_test.go` 覆盖并发 Session 代理绑定；模拟结果不等同于真实平台授权成功。

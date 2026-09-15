@@ -13,7 +13,7 @@ export default defineConfig({
   },
   webServer: {
     command: 'go run ./cmd/unisub',
-    url: 'http://127.0.0.1:28080/login',
+    url: 'http://127.0.0.1:28080/',
     reuseExistingServer: false,
     timeout: 60_000,
     env: { DATABASE_URL: 'sqlite::memory:', LISTEN_ADDR: '127.0.0.1:28080', UNISUB_MODE: 'PRD', ADMIN_USERNAME: 'e2e-admin', ADMIN_PASSWORD: 'e2e-admin-password' },

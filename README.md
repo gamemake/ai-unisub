@@ -76,7 +76,8 @@ internal/common/ 通用 JSON 错误与公共错误消息
 internal/database/ 统一数据库契约、SQLite 持久化与内部内存缓存
 internal/oauth/  OAuth 会话、刷新和适配器
 internal/aiprovider/ AI Provider、运行时账号和并发队列
-internal/service/ 模块框架、路由、身份认证与共享服务（含当前代理管理实现）
+internal/proxy/  代理对象、优先级调度、探测与统计
+internal/service/ 模块框架、路由、身份认证与共享服务
 internal/unisub/ 应用组装、静态文件、管理 API、OAuth 流程、网关
 internal/web/    Vite 产物的 go:embed 入口
 src/data/        请求、缓存、查询订阅和变更操作
@@ -87,13 +88,13 @@ public/          公共静态资源
 
 AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/aiprovider.md)。
 
-代理能力的目标架构是独立的 `internal/proxy` 包，统一包含代理对象构造与内部 URL 校验、HTTP 传输配置和代理管理；`oauth` 显式依赖代理包，通过参数接收代理对象，不用 Context 隐式传递代理，`common` 不保留代理文件或工具。Service 注入代理管理能力，UniSub API 提供管理入口，AIProvider 通过窄接口调用。当前代理代码仍分布于 `internal/service/proxy.go` 和 `internal/common/proxy.go`；目标契约见 [Proxy 设计](docs/proxy.md)，不表示已经实现。
+代理能力位于独立的 `internal/proxy` 包，统一包含代理对象构造与内部 URL 校验、HTTP 传输配置和代理管理；`oauth` 显式依赖代理包，通过参数接收代理对象，不用 Context 隐式传递代理，`common` 不保留代理文件或工具。Service 注入代理管理能力，UniSub API 提供管理入口，AIProvider 通过窄接口调用。代理组配置沿用原存储表示，新增 `proxy_stats` 保存幂等的 10 分钟聚合；策略与接口见 [Proxy 设计](docs/proxy.md)。
 
 四个业务模块均位于 `internal/unisub`：[Static](docs/unisub-static.md)、[API](docs/unisub-api.md)、[OAuthFlow](docs/unisub-oauthflow.md)、[Gateway](docs/unisub-gateway.md)。`service` 提供模块框架，不承载这些模块的业务归属。
 
 `internal/service/auth.go` 的共享认证接口与实现行为见 [Service](docs/service.md)；登录、登出及管理接口的业务授权见 [UniSub API](docs/unisub-api.md)。
 
-页面与认证的目标契约：`/` 仅返回静态网页，前端在同一入口按会话状态显示登录界面或 Dashboard；登录、登出分别使用 API 模块的 `POST /api/login`、`POST /api/logout`，返回 JSON，不做页面重定向。这些路由职责目前仅更新到文档，代码尚未同步。
+页面与认证契约：`/` 仅返回静态网页，前端在同一入口按会话状态显示登录界面或 Dashboard；登录、登出分别使用 API 模块的 `POST /api/login`、`POST /api/logout`，返回 JSON，不做页面重定向。旧 `/login`、`/home`、`/logout` 路径返回 404。
 
 ## 验证
 

@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"errors"
 	"testing"
@@ -12,7 +13,7 @@ type dummyDeviceAdapter struct {
 }
 
 func (a *dummyDeviceAdapter) Service() string { return "dummy-device" }
-func (a *dummyDeviceAdapter) Refresh(_ context.Context, credential *OAuthCredential) (*OAuthCredential, error) {
+func (a *dummyDeviceAdapter) Refresh(_ context.Context, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
 	return credential, nil
 }
 func (a *dummyDeviceAdapter) StartDeviceAuthorization(context.Context, DeviceStartInput) (DeviceAuthorizationResult, error) {
@@ -24,7 +25,7 @@ func (a *dummyDeviceAdapter) StartDeviceAuthorization(context.Context, DeviceSta
 		Interval:        time.Second,
 	}, nil
 }
-func (a *dummyDeviceAdapter) PollDeviceToken(context.Context, string) (*OAuthCredential, error) {
+func (a *dummyDeviceAdapter) PollDeviceToken(context.Context, string, ...*proxy.Endpoint) (*OAuthCredential, error) {
 	a.polls++
 	if a.polls == 1 {
 		return nil, ErrAuthorizationPending

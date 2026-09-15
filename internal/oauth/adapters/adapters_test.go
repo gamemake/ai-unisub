@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -11,8 +12,8 @@ import (
 )
 
 func TestClientWithProxyUsesConfiguredProxy(t *testing.T) {
-	ctx := oauth.WithHTTPProxy(context.Background(), "http://127.0.0.1:9050")
-	client := clientWithProxy(ctx, nil)
+	endpoint, _ := proxy.NewEndpoint("http://127.0.0.1:9050")
+	client := clientWithProxy(nil, endpoint)
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok || transport.Proxy == nil {
 		t.Fatal("expected proxied transport")

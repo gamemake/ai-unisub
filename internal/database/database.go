@@ -1,6 +1,7 @@
 package database
 
 import (
+	"ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -78,34 +79,10 @@ type PersistedAccount struct {
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
-// PersistedProxyGroup is a named pool of outbound proxy addresses.
-type PersistedProxyGroup struct {
-	ID         string           `json:"id"`
-	Name       string           `json:"name"`
-	Remark     string           `json:"remark"`
-	MaxRetries int              `json:"max_retries"`
-	Proxies    []PersistedProxy `json:"proxies"`
-	CreatedAt  time.Time        `json:"created_at"`
-	UpdatedAt  time.Time        `json:"updated_at"`
-}
-
-type PersistedProxy struct {
-	ID            string             `json:"id"`
-	Name          string             `json:"name"`
-	URL           string             `json:"url"`
-	Remark        string             `json:"remark"`
-	Enabled       bool               `json:"enabled"`
-	Status        string             `json:"status"`
-	Available     bool               `json:"available"`
-	LastAvailable *time.Time         `json:"last_available,omitempty"`
-	LastErrorAt   *time.Time         `json:"last_error_at,omitempty"`
-	ErrorRecords  []ProxyErrorRecord `json:"error_records,omitempty"`
-}
-
-type ProxyErrorRecord struct {
-	StartAt time.Time `json:"start_at"`
-	Count   int       `json:"count"`
-}
+// Proxy persistence uses the proxy domain's stable JSON representation.
+type PersistedProxyGroup = proxy.Group
+type PersistedProxy = proxy.Entry
+type ProxyErrorRecord = proxy.ErrorRecord
 
 // PersistedUser represents a user who can create API keys.
 type PersistedUser struct {
@@ -156,6 +133,7 @@ type PersistedCallTrace struct {
 	AIProviderType string `json:"provider_type"`
 	AccountID      string `json:"account_id"`
 	RequestID      string `json:"request_id"`
+	SessionID      string `json:"session_id"`
 	SourceIP       string `json:"source_ip"`
 
 	URL                    string      `json:"url"`
@@ -186,6 +164,7 @@ type PersistedCallTraceSummary struct {
 	AIProviderType      string    `json:"provider_type"`
 	AccountID           string    `json:"account_id"`
 	RequestID           string    `json:"request_id"`
+	SessionID           string    `json:"session_id"`
 	SourceIP            string    `json:"source_ip"`
 	URL                 string    `json:"url"`
 	HTTPErrorCode       int       `json:"http_error_code"`
@@ -199,6 +178,17 @@ type PersistedCallTraceSummary struct {
 	FinishedAt          time.Time `json:"finished_at"`
 }
 
+// CallTraceFilter combines exact search and structured filters. SearchUsernames
+// is set only by the authenticated application layer, never by query input.
+type CallTraceFilter struct {
+	UserName        string
+	AccountID       string
+	Code            *int
+	Search          string
+	SearchUsernames bool
+	TimeRange       *TimeRange
+}
+
 // TimeRange is an inclusive range of time values.
 type TimeRange struct {
 	Start time.Time
@@ -209,6 +199,8 @@ type TimeRange struct {
 // Postgres, or an in-memory store used by tests. AIProvider configurations are
 // instance records, not configuration records for a provider type.
 type Database interface {
+	SaveProxyStats([]proxy.Bucket) error
+	ListProxyStats(string, string, time.Time, time.Time) ([]proxy.Bucket, error)
 	Open() error
 	Close() error
 
@@ -243,8 +235,9 @@ type Database interface {
 	// maximum number of traces returned. A nil timeRange means that the time
 	// range is unbounded. The returned count is the total
 	// number of matching traces before pagination. A trace matches when its
-	// source IP, model, or request ID equals any value in values.
+	// source IP, model, session ID, or request ID equals any value in values.
 	QueryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, values ...string) ([]PersistedCallTraceSummary, int, error)
+	QueryCallTracesFiltered(CallTraceFilter, int, int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
 	GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error)

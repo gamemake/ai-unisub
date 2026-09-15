@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,10 +21,10 @@ func (a *testAdapter) Service() string { return a.service }
 func (a *testAdapter) BuildAuthorizationURL(_ context.Context, in AuthorizationInput) (AuthorizationResult, error) {
 	return AuthorizationResult{AuthorizationURL: "https://example.test/authorize?state=" + in.State}, nil
 }
-func (a *testAdapter) Exchange(_ context.Context, _, _, _, _ string) (*OAuthCredential, error) {
+func (a *testAdapter) Exchange(_ context.Context, _, _, _, _ string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
 	return &OAuthCredential{AccessToken: "access", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
-func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential) (*OAuthCredential, error) {
+func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
 	a.mu.Lock()
 	a.refresh++
 	a.mu.Unlock()
@@ -57,12 +58,13 @@ func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
 	if err := m.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	start, err := m.Start(WithHTTPProxy(context.Background(), "socks5://127.0.0.1:1080"), OAuthServiceClaude, "subject", "http://127.0.0.1/callback")
+	endpoint, _ := proxy.NewEndpoint("socks5://127.0.0.1:1080")
+	start, err := m.Start(context.Background(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session, err := m.session(start.SessionID, false)
-	if err != nil || session.Proxy != "socks5://127.0.0.1:1080" {
+	if err != nil || session.Proxy.String() != "socks5://127.0.0.1:1080" {
 		t.Fatalf("session proxy=%q err=%v", session.Proxy, err)
 	}
 	if _, err := m.Complete(context.Background(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {

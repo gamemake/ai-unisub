@@ -3,10 +3,32 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { PropsWithChildren } from 'react'
 import { actions, useAIProviders } from './store'
-import { request } from './client'
+import { queryClient, request } from './client'
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals() })
+afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals() })
 describe('server data boundary', () => {
+  it('clears protected data on session expiry without changing the page URL', async () => {
+    queryClient.setQueryData(['me'], { id: 'old' })
+    queryClient.setQueryData(['keys'], { items: [{ key: 'secret' }] })
+    const original = location.href
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"unauthorized"}', { status: 401 })))
+    await expect(request('/api/keys')).rejects.toThrow('登录已过期')
+    expect(queryClient.getQueryData(['me'])).toBeNull()
+    expect(queryClient.getQueryData(['keys'])).toBeUndefined()
+    expect(location.href).toBe(original)
+  })
+  it('does not report logout success or clear the session on server failure', async () => {
+    queryClient.setQueryData(['me'], { id: 'current' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{"error":"failed"}', { status: 500 })))
+    await expect(actions.logout()).rejects.toThrow('failed')
+    expect(queryClient.getQueryData(['me'])).toEqual({ id: 'current' })
+  })
+  it('does not treat malformed responses as a missing session', async () => {
+    queryClient.setQueryData(['me'], { id: 'current' })
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('<html>broken</html>', { status: 401 })))
+    await expect(request('/api/me')).rejects.toThrow('无法解析')
+    expect(queryClient.getQueryData(['me'])).toEqual({ id: 'current' })
+  })
   it('shares requests between views and refreshes subscribers after invalidation', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: '1', name: 'first' }], total: 1 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ id: '1', name: 'updated' }], total: 1 }), { status: 200 }))

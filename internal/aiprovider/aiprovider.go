@@ -2,15 +2,16 @@
 package aiprovider
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"net/http"
 )
 
 type ProxyResolver interface {
-	ResolveProxy(context.Context, string) (string, error)
+	ResolveProxy(context.Context, string, string, []string) (*proxy.Endpoint, error)
 	ProxyRetryLimit(string) int
-	ReportProxy(string, string, bool)
+	ReportProxy(*proxy.Endpoint, string, proxy.ErrorClass) error
 }
 
 // AIProviderConfig is the configuration of one concrete provider instance.

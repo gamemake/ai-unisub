@@ -1,14 +1,13 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/common"
+	"ai-unisub/internal/proxy"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -42,11 +41,11 @@ func newOAuthAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthMana
 	}
 	client := upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
 	if config.Proxy != "" {
-		proxyURL, err := url.Parse(config.Proxy)
+		endpoint, err := proxy.NewEndpoint(config.Proxy)
 		if err != nil {
 			return nil, errors.New("invalid provider proxy")
 		}
-		client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
+		client = proxy.Client(client, endpoint)
 	}
 	return &oauthAIProvider{config: cloneAIProviderConfig(config), manager: manager, client: client}, nil
 }
@@ -87,11 +86,11 @@ func (p *oauthAIProvider) update(raw json.RawMessage) error {
 	if next.Proxy != p.config.Proxy && next.ProxyGroupID == "" {
 		client := upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
 		if next.Proxy != "" {
-			u, e := url.Parse(next.Proxy)
+			endpoint, e := proxy.NewEndpoint(next.Proxy)
 			if e != nil {
 				return e
 			}
-			client.Transport.(*http.Transport).Proxy = http.ProxyURL(u)
+			client = proxy.Client(client, endpoint)
 		}
 		p.client = client
 	}
@@ -129,9 +128,10 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	p.mu.RLock()
 	groupID, resolver := p.config.ProxyGroupID, p.resolver
 	p.mu.RUnlock()
-	proxyURL := ""
+	var endpoint *proxy.Endpoint
+	tried := []string{}
 	if resolver != nil && groupID != "" {
-		proxyURL, err = resolver.ResolveProxy(req.Context(), groupID)
+		endpoint, err = resolver.ResolveProxy(req.Context(), groupID, service, tried)
 		if err != nil {
 			trace.HTTPErrorInfo = err.Error()
 			if recorder != nil {
@@ -141,11 +141,24 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		}
 	}
 	config := p.Config()
+	if groupID != "" && resolver == nil {
+		trace.HTTPErrorInfo = "proxy resolver is unavailable"
+		if recorder != nil {
+			recorder(trace)
+		}
+		return
+	}
+	if groupID == "" && config.Proxy != "" {
+		endpoint, err = proxy.NewEndpoint(config.Proxy)
+	}
 	token := config.APIKey
 	if config.AuthType != AuthTypeAPIKey {
-		token, err = p.manager.GetValidAccessToken(common.WithHTTPProxy(req.Context(), proxyURL), service, credentialID)
+		token, err = p.manager.GetValidAccessToken(req.Context(), service, credentialID, endpoint)
 	}
 	if err != nil {
+		if resolver != nil && groupID != "" {
+			_ = resolver.ReportProxy(endpoint, service, proxy.Canceled)
+		}
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		if recorder != nil {
 			recorder(trace)
@@ -164,29 +177,15 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	} else {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	var client *http.Client
-	if proxyURL != "" {
-		parsed, parseErr := url.Parse(proxyURL)
-		if parseErr != nil {
-			trace.HTTPErrorInfo = parseErr.Error()
-			if recorder != nil {
-				recorder(trace)
-			}
-			return
-		}
-		req = req.Clone(req.Context())
-		p.mu.RLock()
-		client = p.client
-		p.mu.RUnlock()
-		transport := client.Transport.(*http.Transport).Clone()
-		transport.Proxy = http.ProxyURL(parsed)
-		client = upstreamClient(transport)
-	}
 	p.mu.RLock()
-	if client == nil {
-		client = p.client
-	}
+	baseClient := p.client
 	p.mu.RUnlock()
+	client := proxy.Client(baseClient, endpoint)
+	defer func() {
+		if client != baseClient {
+			client.CloseIdleConnections()
+		}
+	}()
 	maxRetries := 0
 	if resolver != nil && groupID != "" {
 		maxRetries = resolver.ProxyRetryLimit(groupID)
@@ -197,7 +196,19 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		response, err = client.Do(req)
 		retryable := err != nil || (response != nil && response.StatusCode >= 500)
 		if resolver != nil && groupID != "" {
-			resolver.ReportProxy(groupID, proxyURL, !retryable)
+			class := proxy.Success
+			if err != nil {
+				class = proxy.NetworkError
+			} else if response.StatusCode >= 500 || response.StatusCode == 401 || response.StatusCode == 403 {
+				class = proxy.ApplicationError
+			}
+			if req.Context().Err() != nil {
+				class = proxy.Canceled
+			}
+			if reportErr := resolver.ReportProxy(endpoint, service, class); reportErr != nil {
+				maxRetries = 0
+			}
+			tried = append(tried, endpoint.String())
 		}
 		if !retryable || attempt >= maxRetries || resolver == nil || groupID == "" {
 			break
@@ -205,21 +216,14 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		if response != nil {
 			response.Body.Close()
 		}
-		proxyURL, err = resolver.ResolveProxy(req.Context(), groupID)
+		endpoint, err = resolver.ResolveProxy(req.Context(), groupID, service, tried)
 		if err != nil {
 			break
 		}
-		parsed, parseErr := url.Parse(proxyURL)
-		if parseErr != nil {
-			err = parseErr
-			break
+		if client != baseClient {
+			client.CloseIdleConnections()
 		}
-		p.mu.RLock()
-		baseClient := p.client
-		p.mu.RUnlock()
-		transport := baseClient.Transport.(*http.Transport).Clone()
-		transport.Proxy = http.ProxyURL(parsed)
-		client = upstreamClient(transport)
+		client = proxy.Client(baseClient, endpoint)
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	trace.OutboundRequestHeaders = req.Header.Clone()

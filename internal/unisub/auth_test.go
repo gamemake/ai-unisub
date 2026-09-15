@@ -16,7 +16,7 @@ func TestEnsureAdminCreatesEnabledUserThatCanLogin(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	if err := s.AddModule(NewStaticModule()); err != nil {
+	if err := s.AddModule(NewAPIModule()); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Auth().EnsureAdmin("admin", "admin12345"); err != nil {
@@ -30,7 +30,7 @@ func TestEnsureAdminCreatesEnabledUserThatCanLogin(t *testing.T) {
 		t.Fatalf("admin user: %+v", users)
 	}
 
-	login := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(`{"username":"admin","password":"admin12345"}`))
+	login := httptest.NewRequest(http.MethodPost, "/api/login", strings.NewReader(`{"username":"admin","password":"admin12345"}`))
 	login.Header.Set("Content-Type", "application/json")
 	loginWriter := httptest.NewRecorder()
 	s.Handler().ServeHTTP(loginWriter, login)

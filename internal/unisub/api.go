@@ -3,6 +3,7 @@ package unisub
 import (
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
+	proxyconfig "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
 	"crypto/rand"
 	"encoding/hex"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -26,6 +28,27 @@ func (m *APIModule) Name() string { return "api" }
 func (m *APIModule) Close() error { return nil }
 
 func (m *APIModule) Init(ctx framework.ModuleContext) error {
+	for _, path := range []string{"/api/login", "/api/logout"} {
+		ctx.HandleFunc(path, framework.RouteOptions{Auth: framework.AuthNone, Name: "api"}, func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Cache-Control", "no-store")
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", "POST")
+				common.WriteError(w, http.StatusMethodNotAllowed, common.MessageMethodNotAllowed)
+				return
+			}
+			if r.URL.Path == "/api/login" {
+				m.login(ctx, w, r)
+				return
+			}
+			token := ""
+			if cookie, err := r.Cookie("session"); err == nil {
+				token = cookie.Value
+			}
+			ctx.Auth().ClearSessionCookie(w, token)
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		})
+	}
+
 	ctx.HandleFunc("/api/", framework.RouteOptions{Auth: framework.AuthSession, Name: "api"}, func(w http.ResponseWriter, r *http.Request) {
 		m.handle(ctx, w, r)
 	})
@@ -119,7 +142,7 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 		if strings.TrimSpace(input.GroupID) != "" && strings.TrimSpace(input.ProxyID) != "" {
 			value, err = ctx.Proxy().Test(r.Context(), input.GroupID, input.ProxyID)
 		} else if strings.TrimSpace(input.URL) != "" {
-			if _, err := common.ParseHTTPProxy(input.URL); err != nil {
+			if _, err := proxyconfig.NewEndpoint(input.URL); err != nil {
 				common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
 				return
 			}
@@ -175,7 +198,7 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 			common.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		value.ID = framework.NewProxyID()
+		value.ID = newID()
 		now := time.Now().UTC()
 		value.CreatedAt = now
 		value.UpdatedAt = now
@@ -243,7 +266,7 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 
 func validateProxyGroupURLs(group database.PersistedProxyGroup) error {
 	for _, proxy := range group.Proxies {
-		if _, err := common.ParseHTTPProxy(proxy.URL); err != nil || strings.TrimSpace(proxy.URL) == "" {
+		if _, err := proxyconfig.NewEndpoint(proxy.URL); err != nil || strings.TrimSpace(proxy.URL) == "" {
 			return errors.New(common.MessageInvalidProxy)
 		}
 	}
@@ -1126,12 +1149,24 @@ func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r 
 	if !isAdmin(r) || r.URL.Query().Get("mine") == "1" {
 		userName = u.Name
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	values := []string{}
-	if q != "" {
-		values = []string{q}
+	filter := database.CallTraceFilter{UserName: userName, AccountID: strings.TrimSpace(r.URL.Query().Get("account_id")), Search: strings.TrimSpace(r.URL.Query().Get("q")), SearchUsernames: isAdmin(r)}
+	if raw := r.URL.Query().Get("code"); raw != "" {
+		code, err := strconv.Atoi(raw)
+		if err != nil || (code != 0 && (code < 100 || code > 599)) {
+			common.WriteError(w, 400, "invalid call code")
+			return
+		}
+		filter.Code = &code
 	}
-	items, total, err := ctx.Database().QueryCallTraces(userName, "", nil, page, pageSize, nil, values...)
+	if r.URL.Query().Get("range") != "" {
+		var err error
+		filter.TimeRange, err = usageTimeRange(r)
+		if err != nil {
+			common.WriteError(w, 400, err.Error())
+			return
+		}
+	}
+	items, total, err := ctx.Database().QueryCallTracesFiltered(filter, page, pageSize)
 	if err != nil {
 		common.WriteError(w, 500, common.MessageCouldNotQueryCallRecords)
 		return
@@ -1272,4 +1307,40 @@ func credentialIDFromConfig(raw json.RawMessage) string {
 	}
 	id, _ := value["credential_id"].(string)
 	return id
+}
+
+func (m *APIModule) login(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	if decoder.Decode(&input) != nil || strings.TrimSpace(input.Username) == "" || input.Password == "" {
+		common.WriteError(w, http.StatusBadRequest, common.MessageUsernamePasswordRequired)
+		return
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		common.WriteError(w, http.StatusBadRequest, common.MessageUsernamePasswordRequired)
+		return
+	}
+	users, err := ctx.Database().ListUsers()
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotAuthenticateUser)
+		return
+	}
+	for _, user := range users {
+		if user.Name != input.Username || !user.Enabled || !framework.VerifyPassword(user.PasswordHash, input.Password) {
+			continue
+		}
+		token, err := ctx.Auth().CreateSession(&user)
+		if err != nil {
+			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotAuthenticateUser)
+			return
+		}
+		ctx.Auth().SetSessionCookie(w, token)
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "user": publicUser(user)})
+		return
+	}
+	common.WriteError(w, http.StatusUnauthorized, common.MessageInvalidUsernameOrPassword)
 }

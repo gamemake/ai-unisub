@@ -2,13 +2,13 @@
 
 ## 设计范围与实现位置
 
-**本文件定义独立 `internal/proxy` 包的目标设计，不表示该包已存在。** 当前代理管理位于 `internal/service/proxy.go`，基础 URL 与 Context 工具位于 `internal/common/proxy.go`。目标类型名和接口是设计契约，不是可直接调用的现有 API。
+`internal/proxy` 实现本文契约。代理组沿用原管理路由和 JSON 表示；基础代理工具不再位于 Common，代理 Manager 不再位于 Service。
 
 代理包独立负责代理组配置、地址调度、探测、错误分类、可用状态、统计和恢复；不负责 Web 登录、HTTP 管理路由、OAuth 协议或 AI 请求体转换。
 
 ## 包边界与依赖
 
-目标目录按职责划分为：
+目录按职责划分为：
 
 ```text
 internal/proxy/
@@ -33,9 +33,9 @@ internal/proxy/
 
 ## 代理对象与显式传递
 
-目标公共接口不再包含 WithHTTPProxy、HTTPProxyFrom、ParseHTTPProxy，不设置代理 Context key，也不在其他包保留这三个函数的转发包装。Context 仅承载请求取消和超时，不承载代理配置。
+公共接口不再包含 WithHTTPProxy、HTTPProxyFrom、ParseHTTPProxy，不设置代理 Context key，也不在其他包保留这三个函数的转发包装。Context 仅承载请求取消和超时，不承载代理配置。
 
-代理包提供已校验、不可变的代理对象。以下为目标接口示意，不是当前可调用 API：
+代理包提供已校验、不可变的代理对象。公共构造接口：
 
 ```go
 // Endpoint 内部封装代理地址，不向调用方暴露可变的 URL。
@@ -65,7 +65,7 @@ OAuth 启动参数显式携带 Endpoint，Session 保存本次选定的不可变
 
 ## 对外能力
 
-以下是目标能力边界，具体 Go 签名不替代现有 ProxyManager 方法：
+以下能力由 Manager 提供：
 
 | 能力 | 输入与输出语义 |
 | --- | --- |
@@ -105,22 +105,21 @@ OAuth 启动参数显式携带 Endpoint，Session 保存本次选定的不可变
 - 组配置、全局状态、半开配额和统计快照需要并发一致性；网络探测不在全局状态锁内执行。
 - Store 接口只涵盖代理配置和聚合统计所需操作，不接收整套 `database.Database` 或 SQLite 连接。
 
-## 当前实现对照
+## 实现接口与策略
 
-| 项目 | 当前代码行为 | 独立包目标 |
-| --- | --- | --- |
-| 所在位置 | `service.ProxyManager` | `internal/proxy` 自有 Manager |
-| 代理传递与校验 | `internal/common/proxy.go` 的字符串与 Context 工具 | Proxy 包构造已校验的 Endpoint 并显式传参，Common 无代理文件 |
-| 持久化依赖 | 直接持有 `database.Database` | 依赖代理领域 Store 接口 |
-| 代理状态 | 保存在各组的代理条目中 | 按规范化代理全局共享 |
-| 调度 | 在启用且可用的代理中轮询 | 按优先级、网络和应用状态选择 |
-| 反馈 | `ReportProxy(groupID, URL, available)` | 按地址和应用报告分类结果 |
-| 状态表示 | `unknown`、`available`、`unavailable` | 网络与应用状态、冷却及半开 |
-| 错误统计 | 组内 10 分钟桶；记录新错误时清理超过 24 小时的数据 | 1 分钟内存桶与 10 分钟持久化聚合 |
-| 探测 | 固定测试 URL、12 秒超时，响应状态小于 500 判为可用 | 可注入探测器，区分网络与应用恢复 |
+- `NewManager(Store, Policy)` 创建 Manager；Service 使用 DefaultPolicy，允许通过 Config.ProxyPolicy 注入策略。
+- `ResolveProxy(ctx, groupID, application, tried)` 返回不可变 Endpoint；空 groupID 返回 nil。Endpoint 内部保存半开租约，调用方必须将选中对象交回 ReportProxy，包括取消分支。
+- `ReportProxy(endpoint, application, class)` 接收 success（空字符串）、network、application、canceled。网络错误只改变网络健康；应用错误只改变该应用健康。网络探测不能恢复应用熔断。
+- `List/Save/Delete` 管理组；组 Enabled 省略时启用，地址顺序表示优先级。旧健康字段保持 JSON 兼容，但不作为调度输入；未知状态允许首次真实请求验证。
+- `Test/TestURL` 主动探测，`SetProber` 可注入探测器；默认探测使用 HTTPS 请求确认网络路径，不将目标 HTTP 状态当成应用恢复依据。
+- `Snapshot/Recent/History` 分别返回全局健康快照、最近 10 个分钟桶和历史聚合；`ErrorRecords` 为原管理 API 提供网络错误桶视图。
 
-现有管理接口继续位于 `/api/proxy-groups`，详见 [UniSub API](unisub-api.md)。目标包设计本身不改变现有路由、数据库或运行行为。
+默认策略在代码中明确为：连续失败阈值 3、冷却 1 分钟、半开并发 1、待持久化聚合桶上限 10000、探测超时 12 秒。所有值可通过完整 Policy 注入；非法策略在构造时拒绝。实时健康计数保持进程生命周期，分钟桶限制最近 10 分钟；重启不恢复内存熔断状态。
+
+每分钟刷新历史聚合。SQLite 用地址、应用、10 分钟桶及进程来源作唯一键，保存绝对计数快照；相同来源的重复写入覆盖，不重复累计。写入成功后移除已结束的聚合桶，当前桶保留用于后续覆盖更新；失败保留待写数据。容量不足时阻止新增统计序列及相应代理请求，返回错误，不无限积压。Close 取消自有探测、停止刷新任务、等待探测结束并刷新统计；失败可重试，成功后重复关闭安全。
+
+Store 仅包含组读写与聚合统计读写，Database 通过领域类型别名及 SQLite 事务实现契约。管理路由继续为 `/api/proxy-groups`，见 [API](unisub-api.md)。
 
 ## 设计验证边界
 
-独立包的验证应覆盖跨组共享状态、优先级选择、网络与应用错误隔离、半开配额、Context 取消、统计时间窗、持久化失败及重复聚合。当前仓库测试不应被描述为已经验证了尚不存在的目标包。
+测试覆盖地址构造、并发传输隔离、跨组状态、优先级、网络与应用隔离、半开租约、Context 取消、统计时间窗、持久化失败及重复聚合。SQLite 测试验证重启与幂等统计；OAuth 测试验证 Session 代理绑定。模拟测试不等同于真实外部代理或平台验证。

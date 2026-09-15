@@ -27,10 +27,10 @@ UniSub 是 Go + SQLite AI 网关，提供多用户管理、上游订阅凭据与
 - `service` 不导入 `unisub`；应用模块通过 `ModuleContext` 使用共享依赖。
 - `oauth` 不依赖 Web Handler 或具体 AIProvider；Web 与 CLI 复用协议层。
 - `aiprovider` 不依赖数据库或页面，持久化转换由应用层负责。
-- 目标职责：`static` 仅通过 `/` 返回静态网页并提供资源，不判断会话或重定向；`api` 负责 `/api/login`、`/api/logout` 与普通管理 API；`oauthflow` 负责全部 OAuth JSON API 与回调；`gateway` 负责 `/v1/` 转发。四者均为 UniSub 应用模块，不是 Service 框架内置模块。
-- 页面入口合并与登录／登出归属是文档目标契约，当前代码尚未同步；前端目标是在 `/` 中按会话状态切换登录界面和 Dashboard。
-- **代理能力的目标包为独立的 `internal/proxy`**，统一负责代理对象构造与内部 URL 校验、HTTP 传输配置、代理组、调度、探测、状态和统计。`oauth` 显式依赖 `proxy` 并通过参数接收代理对象，不用 Context 隐式传递代理。代理包通过存储接口接入数据库，不依赖 `service`、`unisub`、`oauth` 或具体 AIProvider；`common` 下不包含 `proxy.go`。
-- 当前仓库尚无 `internal/proxy/`，代理管理实际位于 `internal/service/proxy.go`；目标契约和当前差异见 [Proxy 设计](docs/proxy.md)。目标结构不代表代码已实现。
+- 模块职责：`static` 仅通过 `/` 返回静态网页并提供资源，不判断会话或重定向；`api` 负责 `/api/login`、`/api/logout` 与普通管理 API；`oauthflow` 负责全部 OAuth JSON API 与回调；`gateway` 负责 `/v1/` 转发。四者均为 UniSub 应用模块，不是 Service 框架内置模块。
+- 页面入口与登录／登出归属已对齐；前端在 `/` 中按会话状态切换登录界面和 Dashboard。
+- **代理能力位于独立的 `internal/proxy`**，统一负责代理对象构造与内部 URL 校验、HTTP 传输配置、代理组、调度、探测、状态和统计。`oauth` 显式依赖 `proxy` 并通过参数接收代理对象，不用 Context 隐式传递代理。代理包通过存储接口接入数据库，不依赖 `service`、`unisub`、`oauth` 或具体 AIProvider；`common` 下不包含 `proxy.go`。
+- 代理管理由 `internal/proxy` 持有；接口、策略和统计存储见 [Proxy 设计](docs/proxy.md)。
 
 ## 开发与验证
 
@@ -62,7 +62,7 @@ DEV 读取本地前端构建目录；PRD 使用可执行文件中的嵌入资源
 | 系统结构与包／模块关系 | [Architecture](docs/architecture.md) |
 | 应用与接口总览 | [UniSub](docs/unisub.md) |
 | 框架与共享认证实现 | [Service](docs/service.md) |
-| 独立代理包目标设计 | [Proxy](docs/proxy.md) |
+| 独立代理包设计 | [Proxy](docs/proxy.md) |
 | 持久化 | [Database](docs/database.md) |
 | OAuth 协议与 CLI | [OAuth](docs/oauth.md) |
 | AI 上游与运行时账号 | [AIProvider](docs/aiprovider.md) |

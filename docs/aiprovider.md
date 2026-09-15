@@ -48,11 +48,11 @@ AIProviderManager 为每个实例持有同一个 Account，不按请求创建独
 
 ## 代理契约
 
-当前 ProxyResolver 提供 ResolveProxy(Context, groupID)、ProxyRetryLimit(groupID)、ReportProxy(groupID, URL, available)。Service 注入现有 ProxyManager；AIProvider 不直接持有数据库。
+ProxyResolver 提供 `ResolveProxy(ctx, groupID, application, tried) (*proxy.Endpoint, error)`、`ProxyRetryLimit(groupID)`、`ReportProxy(endpoint, application, class) error`。Service 注入独立 `proxy.Manager`；AIProvider 不直接持有数据库。
 
-当前实现将网络错误或上游 5xx 视为可重试失败，并报告代理不可用；按代理组提供的重试上限再次选择代理。它尚未实现按应用分类的健康状态。
+调用使用服务标识作为应用维度，并维护已尝试地址。网络错误报告为 network，上游 5xx、401、403 报告为 application；其他响应不自动判为代理故障。Context 取消释放半开配额，不将代理标为不可用。网络错误与 5xx 根据组重试上限选择未尝试的代理，响应发出后不再重试。
 
-目标架构中独立 `internal/proxy` 提供代理管理与调度，调用方通过窄接口接入，不让代理包依赖具体 AIProvider。网络与应用错误隔离、优先级选择和全局统计详见 [Proxy](proxy.md)，不代表当前行为。
+OAuth 刷新和上游调用显式使用 Endpoint；直接 proxy 配置也经过统一构造校验。组不存在或无可用候选时失败，不绕过代理直连。优先级、共享状态及分层统计见 [Proxy](proxy.md)。
 
 ## 管理响应与验证
 

@@ -2,7 +2,7 @@
 
 UniSub API 模块负责登录、登出、用户、密码、AIProvider Account、API Key、调用记录、用量和代理管理，接口统一使用 `/api/` 前缀。普通管理接口使用 `AuthSession`；登录与登出使用下面定义的公开认证入口，不受该前缀的 Session 中间件拦截。
 
-**登录与登出一节是目标契约，当前代码尚未同步**：登录仍由 Static 处理，新的登出路径尚未实现。其余管理接口以当前 `internal/unisub/api.go` 为依据，不把目标 Proxy 包设计当作现有实现。
+登录、登出与普通管理接口均由 `internal/unisub/api.go` 注册。代理管理通过独立 `proxy.Manager` 完成。
 
 [Static](unisub-static.md) 仅返回 `/` 静态网页与资源；全部 `/api/oauth/*` 仍由 [OAuthFlow](unisub-oauthflow.md) 负责；`/v1/*` 由 [Gateway](unisub-gateway.md) 负责。
 
@@ -24,7 +24,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 ## 登录与登出
 
-本节定义目标 API，均返回 JSON，不返回 HTML 或 3xx 页面跳转。
+本节定义 API，均返回 JSON，不返回 HTML 或 3xx 页面跳转。
 
 | 方法 | 路径 | Body | 认证 | 成功响应 |
 | --- | --- | --- | --- | --- |
@@ -103,10 +103,16 @@ name 去除首尾空白后必须为 1–64 个字符；account_id 必须存在�
 
 | 方法 | 路径 | 参数 |
 | --- | --- | --- |
-| GET | `/api/calls` | Query：`q`、`page`、`page_size`、`mine` |
+| GET | `/api/calls` | Query：`q`、`account_id`、`code`、`range/from/to`、`page`、`page_size`、`mine` |
 | GET | `/api/calls/{day}/{id}` | Path：UTC 日期 `YYYYMMDD` 与记录 ID |
 
 默认 page=1、page_size=100；page 至少 1，page_size 接受 10–100 的整数。管理员默认查询全部记录，`mine=1` 限制为本人；普通用户始终限制为本人。
+
+q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id，任一字段相等即可；仅管理员额外精确匹配 username，界面不提示该能力。account_id 按账号 ID 匹配；code 省略或为空时查询全部；传入时按存储的 http_error_code 精确匹配，接受 0 或 100–599 的整数。成功记录目前存储为 0，不映射为 200。文本、账号、状态、时间以及归属限制之间使用 AND。
+
+时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 保留原接口的不限时间行为，调用记录页面默认使用 1d。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
+
+列表摘要和详情均包含 session_id。网关依次读取 Session-Id、X-Session-Id、session_id 请求头，缺失时读取 JSON 顶层 session_id；这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串。
 
 列表返回摘要，详情包含记录的请求／响应信息。响应前清空用于归属判断的 APIKey 字段；普通用户无权读取的详情返回 `404`。当前详情权限依赖仍存在的所属 Key 匹配，不能将它描述成独立的永久历史授权机制。
 
@@ -123,7 +129,7 @@ usage 包含 requests、input_tokens、output_tokens、cache_creation_tokens、c
 
 ## 代理管理
 
-以下接口均要求管理员，当前调用 `ModuleContext.Proxy()` 提供的 `service.ProxyManager`。
+以下接口均要求管理员，调用 `ModuleContext.Proxy()` 提供的 `proxy.Manager`。
 
 | 方法 | 路径 | 输入／用途 |
 | --- | --- | --- |
@@ -138,12 +144,12 @@ usage 包含 requests、input_tokens、output_tokens、cache_creation_tokens、c
 
 组名必填，max_retries 不得为负，代理 URL 必须通过校验。组列表和普通详情移除代理的 last_error_at、error_records；错误信息使用专门接口读取。探测响应中的 status 表示可用性，HTTP 请求成功不等于被探测代理可用。
 
-独立包的领域设计、优先级调度及分层统计是目标契约，见 [Proxy](proxy.md)；本节不宣称这些能力已实现。
+独立包的领域设计、优先级调度及分层统计见 [Proxy](proxy.md)。
 
 ## 依赖与验证
 
-API 使用 Database、AIProviderManager、代理管理和认证能力。目标中浏览器登录与登出由本模块使用 AuthService 处理；OAuth Session 与结果操作仍属于 OAuthFlow，不在本模块内实现。
+API 使用 Database、AIProviderManager、代理管理和认证能力。浏览器登录与登出由本模块使用 AuthService 处理；OAuth Session 与结果操作仍属于 OAuthFlow，不在本模块内实现。
 
 现有相关测试位于 `internal/unisub/api_test.go`、`auth_test.go`、`aiprovider_compatibility_test.go` 和 Dashboard 端到端测试。文档核对重点为角色差异、Key 归属、配置保存、列表包装、调用查询与代理接口，不将未执行的测试写成已通过。
 
-登录与登出的目标验证包括公开路径优先级、普通 API 仍要求会话、登录错误、Cookie 设置与清除、重复登出、方法限制，以及所有认证交互不返回页面重定向。当前测试尚不代表这些目标行为已经落地。
+登录与登出的验证包括公开路径优先级、普通 API 仍要求会话、登录错误、Cookie 设置与清除、重复登出、方法限制，以及所有认证交互不返回页面重定向。`auth_api_test.go` 验证上述 HTTP 契约。

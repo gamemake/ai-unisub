@@ -5,7 +5,7 @@ export interface Account { id: string; name: string; provider: string; auth_type
 export interface APIKey { id: string; name: string; account_id: string; key: string; valid_seconds: number; created_at: string; expires_at?: string }
 export interface Proxy { id?: string; url: string; enabled: boolean; status?: string; last_available?: string; error_records?: { start_at: string; count: number }[] }
 export interface ProxyGroup { id: string; name: string; remark: string; max_retries: number; proxies: Proxy[] }
-export interface Call { id: string; request_id: string; account_id: string; provider_type: string; url: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; started_at: string; finished_at: string }
+export interface Call { id: string; session_id: string; source_ip: string; request_id: string; account_id: string; provider_type: string; url: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; started_at: string; finished_at: string }
 export interface List<T> { items: T[]; total: number; page?: number; page_size?: number }
 export interface UsageTotals { requests?: number; input_tokens?: number; output_tokens?: number; cache_creation_tokens?: number; cache_read_tokens?: number }
 export interface Usage { data: { subscription_id?: string; subscription_name?: string; provider?: string; user_id?: string; username?: string; role?: string; usage: UsageTotals }[]; totals: UsageTotals }

@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"ai-unisub/internal/proxy"
 	"context"
 	"errors"
 	"net/http"
@@ -40,7 +41,7 @@ func NewGrok(config GrokConfig) *GrokAdapter {
 	return &GrokAdapter{config: config}
 }
 func (a *GrokAdapter) Service() string { return oauth.OAuthServiceGrok }
-func (a *GrokAdapter) StartDeviceAuthorization(ctx context.Context, _ oauth.DeviceStartInput) (oauth.DeviceAuthorizationResult, error) {
+func (a *GrokAdapter) StartDeviceAuthorization(ctx context.Context, input oauth.DeviceStartInput) (oauth.DeviceAuthorizationResult, error) {
 	v := url.Values{
 		"client_id": {a.config.ClientID},
 		"scope":     {strings.Join(a.config.Scopes, " ")},
@@ -63,7 +64,7 @@ func (a *GrokAdapter) StartDeviceAuthorization(ctx context.Context, _ oauth.Devi
 		Expires                 int    `json:"expires_in"`
 		Interval                int    `json:"interval"`
 	}
-	_, err = readResponseDo(clientWithProxy(ctx, a.config.HTTPClient), req, &response)
+	_, err = readResponseDo(clientWithProxy(a.config.HTTPClient, input.Proxy), req, &response)
 	if err != nil {
 		return oauth.DeviceAuthorizationResult{}, err
 	}
@@ -84,7 +85,7 @@ func (a *GrokAdapter) StartDeviceAuthorization(ctx context.Context, _ oauth.Devi
 	}
 	return oauth.DeviceAuthorizationResult{DeviceCode: response.DeviceCode, UserCode: response.UserCode, VerificationURI: uri, ExpiresAt: expiresAt, Interval: interval}, nil
 }
-func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string) (*oauth.OAuthCredential, error) {
+func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
 	v := url.Values{"grant_type": {"urn:ietf:params:oauth:grant-type:device_code"}, "device_code": {deviceCode}, "client_id": {a.config.ClientID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.config.Issuer, "/")+"/oauth2/token", strings.NewReader(v.Encode()))
 	if err != nil {
@@ -96,7 +97,7 @@ func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string) (*
 	req.Header.Set("x-grok-client-version", a.config.ClientVersion)
 	req.Header.Set("x-grok-client-surface", "ui")
 	var token tokenResponse
-	_, err = readResponseDo(clientWithProxy(ctx, a.config.HTTPClient), req, &token)
+	_, err = readResponseDo(clientWithProxy(a.config.HTTPClient, endpoints...), req, &token)
 	if err != nil {
 		if strings.Contains(err.Error(), "authorization_pending") {
 			return nil, oauth.ErrAuthorizationPending
@@ -108,7 +109,7 @@ func (a *GrokAdapter) PollDeviceToken(ctx context.Context, deviceCode string) (*
 	}
 	return credential(token)
 }
-func (a *GrokAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential) (*oauth.OAuthCredential, error) {
+func (a *GrokAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
 	v := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {old.RefreshToken}, "client_id": {a.config.ClientID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(a.config.Issuer, "/")+"/oauth2/token", strings.NewReader(v.Encode()))
 	if err != nil {
@@ -119,7 +120,7 @@ func (a *GrokAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential) (
 	req.Header.Set("x-grok-client-version", a.config.ClientVersion)
 	req.Header.Set("x-grok-client-surface", "ui")
 	var token tokenResponse
-	if _, err := readResponseDo(clientWithProxy(ctx, a.config.HTTPClient), req, &token); err != nil {
+	if _, err := readResponseDo(clientWithProxy(a.config.HTTPClient, endpoints...), req, &token); err != nil {
 		return nil, err
 	}
 	return credential(token)

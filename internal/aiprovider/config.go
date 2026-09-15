@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	proxyconfig "ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -79,16 +80,8 @@ func validateProxy(proxy string) error {
 	if strings.TrimSpace(proxy) == "" {
 		return nil
 	}
-	u, err := url.Parse(proxy)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return errors.New("invalid provider proxy")
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "http", "https", "socks5", "socks5h":
-		return nil
-	default:
-		return errors.New("invalid provider proxy")
-	}
+	_, err := proxyconfig.NewEndpoint(proxy)
+	return err
 }
 
 func validateEndpoint(endpoint string) error {

@@ -6,6 +6,7 @@ import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net"
@@ -102,10 +103,11 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
-		saved := &database.PersistedCallTrace{ID: service.NewProxyID(), APIKey: apiKey, AccountID: principal.Account.ID, AIProviderType: principal.Account.AIProvider, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
+		saved := &database.PersistedCallTrace{ID: newID(), APIKey: apiKey, AccountID: principal.Account.ID, AIProviderType: principal.Account.AIProvider, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
 		if output.status >= 400 {
 			saved.HTTPErrorCode = output.status
 		}
+		saved.SessionID = callSessionID(r.Header, trace.RequestBody)
 		if trace.HTTPErrorInfo != "" {
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
 		}
@@ -132,6 +134,22 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	if !recorded && !output.written {
 		common.WriteError(w, 502, common.MessageUpstreamNoResponse)
 	}
+}
+
+// Session IDs identify upstream client conversations, not Dashboard login sessions.
+func callSessionID(headers http.Header, body []byte) string {
+	for _, name := range []string{"Session-Id", "X-Session-Id", "session_id"} {
+		if value := strings.TrimSpace(headers.Get(name)); value != "" {
+			return value
+		}
+	}
+	var input struct {
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(body, &input) == nil {
+		return strings.TrimSpace(input.SessionID)
+	}
+	return ""
 }
 func upstreamURL(endpoint, name, auth string, incoming *url.URL) (*url.URL, error) {
 	if endpoint == "" {

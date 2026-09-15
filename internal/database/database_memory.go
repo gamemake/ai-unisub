@@ -1,6 +1,7 @@
 package database
 
 import (
+	"ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -11,6 +12,7 @@ import (
 // MemoryDatabase stores accounts, users, and API keys in memory. Call traces
 // are deliberately ignored by this implementation.
 type MemoryDatabase struct {
+	proxyStats  map[proxyStatsKey]proxy.Bucket
 	mu          sync.RWMutex
 	opened      bool
 	accounts    map[string]PersistedAccount
@@ -303,9 +305,17 @@ func cloneUser(value PersistedUser) PersistedUser {
 	return value
 }
 func cloneProxyGroup(value PersistedProxyGroup) PersistedProxyGroup {
+	if value.Enabled != nil {
+		enabled := *value.Enabled
+		value.Enabled = &enabled
+	}
 	value.Proxies = append([]PersistedProxy(nil), value.Proxies...)
 	for i := range value.Proxies {
 		value.Proxies[i].ErrorRecords = append([]ProxyErrorRecord(nil), value.Proxies[i].ErrorRecords...)
 	}
 	return value
+}
+
+func (m *MemoryDatabase) QueryCallTracesFiltered(CallTraceFilter, int, int) ([]PersistedCallTraceSummary, int, error) {
+	return []PersistedCallTraceSummary{}, 0, nil
 }
