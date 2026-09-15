@@ -18,7 +18,7 @@ go run ./cmd/unisub
 ```
 
 Windows PowerShell 若禁用脚本执行策略，请使用 `npm.cmd` 替代 `npm`。
-默认监听 `http://localhost:8080`。开发初始账号为 `admin` / `admin12345`，可通过下表变量配置；已有数据库中的账号和密码不会被启动配置覆盖。
+默认监听 `http://localhost:8080`。开发初始账号为 `admin` / `admin12345`，可通过下表变量配置；同名账号已有密码散列时不会被启动配置覆盖；散列为空时会补上初始密码。
 
 ## DEV / PRD
 
@@ -66,15 +66,17 @@ Docker 使用 Node 前端构建 → Go 编译 → Alpine 运行三阶段构建�
 
 ## 目录与模块
 
+包依赖、Service 框架与 UniSub 应用模块之间的关系见 [系统结构](docs/architecture.md)。
+
 ```text
 cmd/unisub/       服务入口
 cmd/oauth/        OAuth 调试工具
 cmd/dummy/        本地模拟工具
-internal/common/ 通用错误和代理工具
-internal/database/ SQLite、内存实现及持久化契约
+internal/common/ 通用 JSON 错误与公共错误消息
+internal/database/ 统一数据库契约、SQLite 持久化与内部内存缓存
 internal/oauth/  OAuth 会话、刷新和适配器
 internal/aiprovider/ AI Provider、运行时账号和并发队列
-internal/service/ 模块框架、路由、身份认证与共享服务
+internal/service/ 模块框架、路由、身份认证与共享服务（含当前代理管理实现）
 internal/unisub/ 应用组装、静态文件、管理 API、OAuth 流程、网关
 internal/web/    Vite 产物的 go:embed 入口
 src/data/        请求、缓存、查询订阅和变更操作
@@ -83,7 +85,15 @@ src/components/ui/ shadcn/ui 源码组件
 public/          公共静态资源
 ```
 
-AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/aiprovider_design.md)。
+AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/aiprovider.md)。
+
+代理能力的目标架构是独立的 `internal/proxy` 包，统一包含代理对象构造与内部 URL 校验、HTTP 传输配置和代理管理；`oauth` 显式依赖代理包，通过参数接收代理对象，不用 Context 隐式传递代理，`common` 不保留代理文件或工具。Service 注入代理管理能力，UniSub API 提供管理入口，AIProvider 通过窄接口调用。当前代理代码仍分布于 `internal/service/proxy.go` 和 `internal/common/proxy.go`；目标契约见 [Proxy 设计](docs/proxy.md)，不表示已经实现。
+
+四个业务模块均位于 `internal/unisub`：[Static](docs/unisub-static.md)、[API](docs/unisub-api.md)、[OAuthFlow](docs/unisub-oauthflow.md)、[Gateway](docs/unisub-gateway.md)。`service` 提供模块框架，不承载这些模块的业务归属。
+
+`internal/service/auth.go` 的共享认证接口与实现行为见 [Service](docs/service.md)；登录、登出及管理接口的业务授权见 [UniSub API](docs/unisub-api.md)。
+
+页面与认证的目标契约：`/` 仅返回静态网页，前端在同一入口按会话状态显示登录界面或 Dashboard；登录、登出分别使用 API 模块的 `POST /api/login`、`POST /api/logout`，返回 JSON，不做页面重定向。这些路由职责目前仅更新到文档，代码尚未同步。
 
 ## 验证
 
@@ -95,7 +105,7 @@ go vet ./...
 npm run test:e2e
 ```
 
-端到端测试自动使用独立的内存数据库和 `127.0.0.1:28080`，不会读取 `data/` 中的账号或凭据。默认在 Windows 上使用已安装的 Edge；其他系统默认使用 Playwright Chromium（首次需 `npx playwright install chromium`）。可通过 `PLAYWRIGHT_CHANNEL` 指定 `chrome`、`msedge` 等通道。
+端到端测试自动使用独立的 SQLite 内存数据库（`sqlite::memory:`）和 `127.0.0.1:28080`，不会读取 `data/` 中的账号或凭据。这里是 SQLite 的存储模式，不是数据库模块内部用于统一缓存逻辑的 `MemoryDatabase` 结构。默认在 Windows 上使用已安装的 Edge；其他系统默认使用 Playwright Chromium（首次需 `npx playwright install chromium`）。可通过 `PLAYWRIGHT_CHANNEL` 指定 `chrome`、`msedge` 等通道。
 
 ## API 调用
 
@@ -103,4 +113,4 @@ npm run test:e2e
 
 网关保持响应状态和流式字节；调用记录中的响应体最多保存前 1 MiB，完整响应仍发送给客户端。WebSocket upgrade 尚未实现。真实平台的账号可用性与模型能力需要使用对应账号验证；本地自动化测试使用模拟上游。
 
-详细设计入口：[UniSub](docs/unisub_design.md)、[框架](docs/service_design.md)、[数据库](docs/database_design.md)、[AI Provider](docs/aiprovider_design.md)、[OAuth](docs/auth_design.md)、[公共工具](docs/common_design.md)。
+项目协作约定见 [AGENT.md](AGENT.md)。详细设计入口：[UniSub](docs/unisub.md)、[框架](docs/service.md)、[数据库](docs/database.md)、[AI Provider](docs/aiprovider.md)、[OAuth](docs/oauth.md)、[公共工具](docs/common.md)。
