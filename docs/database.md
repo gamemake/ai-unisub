@@ -59,7 +59,7 @@ SaveModuleConfig(module string, config json.RawMessage) error
 DeleteModuleConfig(module string) error
 ```
 
-- 每个模块使用稳定且唯一的名称作为键，例如 AI Provider 使用 `aiprovider`，保存供应商和模型映射配置。
+- 每个模块使用稳定且唯一的名称作为键，例如 AI Provider 使用 `aiprovider`，保存供应商名称与服务地址结构。模型映射功能尚未实现，不保存或加载映射配置。
 - SQLite 使用 `module_configs(module PRIMARY KEY, config)` 表；保存以完整 JSON 文档原子覆盖，不合并字段。各模块独立存储。
 - 模块名不能为空或带首尾空白，数据库只校验 JSON 语法。配置结构、默认值、版本迁移和业务校验由所属模块负责。
 - 未配置或已删除时读取返回 `nil, nil`；删除不存在的键也成功。删除持久化配置不会自动修改运行时状态，运行时重载由模块负责。

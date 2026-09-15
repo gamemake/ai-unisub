@@ -8,7 +8,7 @@ import { Spinner } from './ui/spinner'
 import { Table as UITable, TableHeader, TableBody, TableRow, TableHead } from './ui/table'
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction } from './ui/alert-dialog'
 import { Button } from './ui/button'
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog'
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   const id = useId()
@@ -28,10 +28,12 @@ export function PageHeader({ title, description, action }: { title: string; desc
 }
 export function Modal({ title, description, children, onClose, wide }: { title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
   const descriptionId = useId()
-  return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className={`max-h-[calc(100dvh-2rem)] overflow-y-auto p-6 ${wide ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`} aria-describedby={description ? descriptionId : undefined}>
-    <DialogTitle className="pr-8 text-lg font-semibold">{title}</DialogTitle>
-    {description && <DialogDescription id={descriptionId} className="mt-2 text-sm text-muted-foreground">{description}</DialogDescription>}
-    <div className="mt-6">{children}</div>
+  return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className={`max-h-[calc(100dvh-2rem)] gap-6 overflow-y-auto p-6 ${wide ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`} aria-describedby={description ? descriptionId : undefined}>
+    <DialogHeader className="pr-8">
+      <DialogTitle className="text-lg font-semibold leading-snug">{title}</DialogTitle>
+      {description && <DialogDescription id={descriptionId} className="leading-relaxed">{description}</DialogDescription>}
+    </DialogHeader>
+    <div>{children}</div>
   </DialogContent></Dialog>
 }
 export function Empty({ children = '暂无数据' }: { children?: ReactNode }) { return <UIEmpty><EmptyDescription>{children}</EmptyDescription></UIEmpty> }

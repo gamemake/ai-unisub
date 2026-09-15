@@ -83,20 +83,20 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 配置中的内联 `credential` 保存到凭据存储后，账号配置只保存 `credential_id`；提供已有 ID 时验证凭据存在。API Key 认证账号在编辑时省略 `api_key` 可保留原密钥。配置字段与运行时语义见 [AIProvider](ai-provider.md)。
 
-`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（Any、Anthropic、OpenAI、Grok），缺省 Any；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须为 Any 或与所有成员的有效客户端类型相同。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
+`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（Any、Anthropic、OpenAI、Grok），缺省 Any；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须与所有成员的有效客户端类型完全相同，Any 组只能包含 Any 成员；修改成员客户端限制也会校验其所属组。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
 
-### 模型供应商与映射
+### 模型供应商
 
 | 方法与路径 | 权限 | 语义 |
 | --- | --- | --- |
 | GET /api/ai-catalog | 管理员 | 返回 `{catalog: {suppliers}, builtin_suppliers}` |
 | PUT /api/ai-catalog | 管理员 | 整体保存 `{suppliers}`；数据库成功后原子更新运行时目录 |
-| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商 `{id, name, claude_url, codex_url, mappings}`；不存在返回 404 |
-| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商，body 为 `{id, name, claude_url, codex_url, mappings}`；路径与 body 的 id 必须一致，其他供应商配置不变；响应格式与目录 GET 一致 |
+| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商 `{id, name, claude_url, codex_url}`；不存在返回 404 |
+| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商，body 为 `{id, name, claude_url, codex_url}`；路径与 body 的 id 必须一致，其他供应商配置不变；响应格式与目录 GET 一致 |
 
-`suppliers` 和 `builtin_suppliers` 项为 `{id, name, claude_url, codex_url, mappings}`，必须保留 anthropic、openai、grok、deepseek、zhipu、kimi 六项，不能删除或重复。每个供应商内部的 `mappings` 项为 `{client, model, target}`，client 取 Anthropic、OpenAI、Grok；相同客户端、供应商和请求模型名不允许重复。数据库映射优先，删除覆盖项后回退 对应供应商的内置映射；无匹配项时保留请求模型名。
+`suppliers` 和 `builtin_suppliers` 项为 `{id, name, claude_url, codex_url}`，必须保留 anthropic、openai、grok、deepseek、zhipu、kimi 六项，不能删除或重复。模型映射功能尚未实现；接口不提供模型映射字段，所有请求模型名原样转发。
 
-`claude_url`、`codex_url` 为代码维护的只读内置值，Grok 共用 `codex_url`。目录整体 PUT 和单供应商 PUT 修改 URL 均返回 400；模型映射仍可修改。加载数据库时恢复内置 URL，旧 `url` 字段不生效。
+`claude_url`、`codex_url` 为代码维护的只读内置值，Grok 共用 `codex_url`。目录整体 PUT 和单供应商 PUT 修改 URL 均返回 400；仍可保存供应商名称。加载数据库时恢复内置 URL，旧 `url` 字段不生效。
 
 当前响应边界：
 

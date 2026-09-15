@@ -1,7 +1,7 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalog, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Supplier, Usage, User } from './types'
+import type { Account, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, User } from './types'
 const id = encodeURIComponent
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
@@ -16,8 +16,6 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
   return useMutation({ mutationFn: action, onSuccess: async () => { await Promise.all(invalidate.map(key => queryClient.invalidateQueries({ queryKey: [key] }))) } })
 }
 export const actions = {
-  saveAISupplier: (input: Supplier) => request<AICatalogResponse>('/api/ai-catalog/' + encodeURIComponent(input.id), json('PUT', input)),
-  saveAICatalog: (input: AICatalog) => request<AICatalogResponse>('/api/ai-catalog', json('PUT', input)),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: string; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),

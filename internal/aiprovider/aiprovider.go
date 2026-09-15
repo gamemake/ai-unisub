@@ -16,8 +16,8 @@ type ProxyResolver interface {
 
 // AIProviderConfig is the configuration of one concrete provider instance.
 //
-// Forwarding preserves the request except authentication, gateway-only headers
-// and explicitly configured model mappings.
+// Forwarding preserves the request body and model names; authentication and
+// gateway-only headers are handled separately from client access policies.
 type AIProviderConfig struct {
 	Kind                          string        `json:"kind,omitempty"`
 	Supplier                      string        `json:"supplier,omitempty"`
@@ -73,7 +73,7 @@ type AIProviderCallTrace struct {
 type APICallRecorder func(*AIProviderCallTrace)
 
 // AIProvider forwards an HTTP request to a subscription-backed service.
-// Implementations preserve the protocol; model mapping is not protocol conversion.
+// Implementations preserve the upstream protocol.
 type AIProvider interface {
 	Config() AIProviderConfig
 	// UpdateConfig updates mutable provider-specific settings. The AIProviderConfig.ID

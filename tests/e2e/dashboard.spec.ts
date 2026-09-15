@@ -15,6 +15,7 @@ test('admin and member workflows, gateway, logs, and responsive navigation', asy
   await expect(page.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'AI Provider', exact: true }).click()
   await page.getByRole('button', { name: '添加 AI Provider', exact: true }).click()
+  await page.getByRole('button', { name: '添加订阅 AI Provider', exact: true }).click()
   let dialog = page.getByRole('dialog')
   const platform = dialog.getByRole('combobox', { name: '订阅平台', exact: true })
   await platform.focus()

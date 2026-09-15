@@ -7,7 +7,6 @@ import (
 	"ai-unisub/internal/service"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -89,7 +88,6 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			return
 		}
 		originalBody = append([]byte(nil), body...)
-		body = mapRequestModel(ctx.AIProviders(), r.Header, outbound.Header, config.Supplier, body)
 		outbound.Body = io.NopCloser(bytes.NewReader(body))
 		outbound.ContentLength = int64(len(body))
 		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
@@ -196,7 +194,6 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		outbound.URL, outbound.Host = target, target.Host
 		body := originalBody
-		body = mapRequestModel(ctx.AIProviders(), r.Header, outbound.Header, config.Supplier, body)
 		outbound.Body = io.NopCloser(bytes.NewReader(body))
 		outbound.ContentLength = int64(len(body))
 		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
@@ -304,33 +301,4 @@ func (w *gatewayWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
-}
-
-// Always map from the original request on each member attempt, not the prior
-// supplier's mapped name. Grok also carries a model override in its headers.
-func mapRequestModel(manager *aiprovider.AIProviderManager, original, outbound http.Header, supplier string, body []byte) []byte {
-	client := aiprovider.DetectClient(original)
-	if client == aiprovider.ClientGrok {
-		if model := original.Get("X-Grok-Model-Override"); model != "" {
-			outbound.Set("X-Grok-Model-Override", manager.MapModel(client, supplier, model))
-		}
-	}
-	var fields map[string]json.RawMessage
-	if json.Unmarshal(body, &fields) != nil {
-		return body
-	}
-	var model string
-	if json.Unmarshal(fields["model"], &model) != nil || model == "" {
-		return body
-	}
-	mapped := manager.MapModel(client, supplier, model)
-	if mapped == model {
-		return body
-	}
-	fields["model"], _ = json.Marshal(mapped)
-	result, err := json.Marshal(fields)
-	if err != nil {
-		return body
-	}
-	return result
 }

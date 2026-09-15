@@ -1,7 +1,6 @@
 package unisub
 
 import (
-	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"encoding/json"
@@ -35,7 +34,7 @@ func routingKey(t *testing.T, s *service.Service, cookie *http.Cookie, id string
 	}
 	return k.Key
 }
-func TestGatewayGroupNativeAffinityMappingsAndRestrictions(t *testing.T) {
+func TestGatewayGroupNativeAffinityAndRestrictions(t *testing.T) {
 	s := testApp(t)
 	cookie := loginTestApp(t, s)
 	var a, b atomic.Int32
@@ -45,14 +44,14 @@ func TestGatewayGroupNativeAffinityMappingsAndRestrictions(t *testing.T) {
 			body, _ := io.ReadAll(r.Body)
 			var v map[string]any
 			_ = json.Unmarshal(body, &v)
-			if v["model"] != "mapped" {
-				t.Errorf("model not mapped: %s", body)
+			if v["model"] != "incoming" {
+				t.Errorf("model changed: %s", body)
 			}
 			if r.Header.Get("Authorization") != "Bearer upstream" || r.Header.Get("Session-Id") != "native-session" || r.Header.Get("X-Unisub-Session-ID") != "" {
 				t.Errorf("bad headers: %v", r.Header)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"model":"mapped","ok":true}`)
+			_, _ = io.WriteString(w, `{"model":"incoming","ok":true}`)
 		}))
 	}
 	first, second := server(&a), server(&b)
@@ -64,13 +63,6 @@ func TestGatewayGroupNativeAffinityMappingsAndRestrictions(t *testing.T) {
 	id1 := addRoutingProvider(t, s, cookie, "first", "api", config(first.URL))
 	id2 := addRoutingProvider(t, s, cookie, "second", "api", config(second.URL))
 	group := addRoutingProvider(t, s, cookie, "group", "group", map[string]any{"client_type": "OpenAI", "members": []map[string]any{{"id": id1}, {"id": id2}}})
-	catalog := s.AIProviders().Catalog()
-	catalog.Suppliers[1].Mappings = []aiprovider.ModelMapping{{Client: aiprovider.ClientOpenAI, Model: "incoming", Target: "mapped"}}
-	raw, _ := json.Marshal(catalog)
-	saved := appRequest(s, "PUT", "/api/ai-catalog", string(raw), cookie)
-	if saved.Code != 200 {
-		t.Fatal(saved.Body.String())
-	}
 	key := routingKey(t, s, cookie, group)
 	for i := 0; i < 5; i++ {
 		r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"incoming","input":"hello"}`))

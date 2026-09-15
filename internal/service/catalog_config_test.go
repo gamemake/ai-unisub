@@ -15,7 +15,7 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 		db := database.NewMemoryDatabase()
 		var suppliers []map[string]any
 		for _, builtin := range aiprovider.SupplierConfigs() {
-			item := map[string]any{"id": builtin.ID, "name": builtin.Name, "mappings": []map[string]string{{"client": "OpenAI", "model": "local", "target": "saved"}}}
+			item := map[string]any{"id": builtin.ID, "name": builtin.Name}
 			for key, value := range fields {
 				item[key] = value
 			}
@@ -35,9 +35,7 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 					t.Fatal(builtin.ID, client, got)
 				}
 			}
-			if got := s.AIProviders().MapModel(aiprovider.ClientOpenAI, builtin.ID, "local"); got != "saved" {
-				t.Fatal("lost stored mapping", got)
-			}
+
 		}
 		s.Close()
 	}

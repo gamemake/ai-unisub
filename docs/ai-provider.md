@@ -8,7 +8,7 @@
 
 - **ProxyGroup** 包含多个网络代理，已实现按模型供应商维度自动选择代理的算法。AIProvider 复用该能力，不重复实现代理调度。
 - **OAuth** 模块为 Anthropic、OpenAI、Grok 订阅账户提供认证服务，负责凭据及访问令牌管理；AIProvider 通过其公开接口获取有效令牌。
-- **模型供应商** 描述厂商、默认服务 URL 和模型映射；**AIProvider** 描述可调用的订阅账户、API 服务或它们的组。AIProvider 组选择上游服务，ProxyGroup 选择网络代理，两者不是同一种组。
+- **模型供应商** 描述厂商和默认服务 URL；**AIProvider** 描述可调用的订阅账户、API 服务或它们的组。AIProvider 组选择上游服务，ProxyGroup 选择网络代理，两者不是同一种组。
 
 ## 功能设计（目标）
 
@@ -20,19 +20,11 @@
 
 客户端限制使用单值 `client_type`，界面为下拉单选，不支持数组或复选；省略时为 `Any`。旧 `client_types` 字段直接忽略，不迁移；再次保存时移除旧字段。User-Agent 分类只用于客户端兼容和访问策略，不能替代用户认证，也不能证明请求确实来自官方程序。
 
-### 模型供应商与模型映射
+### 模型供应商
 
-- 内置模型供应商为 **Anthropic、OpenAI、Grok、Deepseek、智谱、Kimi**，这些供应商记录不允许删除。
-- 每个供应商配置独立包含 `{id, name, claude_url, codex_url, mappings}`。URL 和模型映射都归属于当前供应商，不存在全局映射列表。默认 URL 供 API 类型 AIProvider 在未填写 URL 时使用。
-- 为 Anthropic、OpenAI、Grok 官方客户端提供模型映射，将客户端请求中的模型名转换为目标供应商的模型名。
-- 模型映射有代码内置和数据库配置两份，**数据库配置优先**。建议按 `(客户端类型, 目标供应商, 请求模型名)` 精确匹配：命中数据库配置时使用该配置，否则回退代码内置项；删除数据库覆盖项后恢复使用内置项。
-- 建议无映射时保留请求模型名，由目标供应商处理；不静默改成其他默认模型。模型名映射不等于协议转换，候选 AIProvider 仍须具备处理该请求协议的能力。
+内置模型供应商为 **Anthropic、OpenAI、Grok、Deepseek、智谱、Kimi**，记录不允许删除。每项包含 `{id, name, claude_url, codex_url}`。API 类型 AIProvider 使用所选供应商的默认服务地址；已有接口配置中的 `api_endpoint` 仍可指定独立上游地址。
 
-### 供应商独立配置与内置映射
-
-供应商 URL 分为 `claude_url` 和 `codex_url`，Grok 共用 `codex_url`，不单独保存第三份地址。内置供应商 URL 由代码维护，界面只读，目录和单供应商 PUT 修改任一 URL 均返回 400。加载数据库时忽略旧 `url`，并以代码内置值替换已存的 URL 快照，保留模型映射；后续保存输出新结构。AI Provider 自身的 `api_endpoint` 仍可显式指定自定义上游，不修改供应商目录。
-
-未指定 `api_endpoint` 时，`/v1/messages` 和 `/v1/messages/count_tokens` 使用 Claude 地址；其他请求使用 Codex / Grok 地址。未提供对应内置地址时不猜测其他协议端点：组调度跳过该成员，直接调用返回错误。URL 包含实际 API 前缀（如 `/anthropic/v1`），网关追加去掉入口 `/v1` 的相对路径，不重复版本号；这里只选择协议端点，不转换请求协议。
+`claude_url` 和 `codex_url` 为代码维护的只读地址，Grok 共用 `codex_url`。目录整体 PUT 和单供应商 PUT 均不允许修改内置 URL；加载数据库时恢复代码内置地址，旧 `url` 字段不生效。
 
 | 供应商 | Claude URL | Codex / Grok URL |
 | --- | --- | --- |
@@ -43,26 +35,13 @@
 | 智谱 | https://open.bigmodel.cn/api/anthropic/v1 | https://open.bigmodel.cn/api/paas/v4 |
 | Kimi | https://api.moonshot.cn/anthropic/v1 | https://api.moonshot.cn/v1 |
 
-兼容地址依据 [DeepSeek Anthropic API](https://api-docs.deepseek.com/guides/anthropic_api/)、[智谱 Claude API](https://docs.bigmodel.cn/cn/guide/develop/claude/introduction)、[Kimi Claude Code](https://platform.kimi.com/docs/guide/claude-code-kimi) 的官方文档配置。xAI 的 [Anthropic 兼容接口已弃用](https://docs.x.ai/developers/rest-api-reference/inference/legacy)，故不提供 Claude 内置地址。地址存在不保证供应商支持该客户端的所有功能，验证使用本地测试，不代表真实上游调用验证。
+持久化使用 `aiprovider` 模块配置键，结构为 `{"suppliers":[{"id":"…","name":"…","claude_url":"…","codex_url":"…"}]}`。供应商名称配置可通过管理 API 保存；旧配置中不属于此结构的字段不会加载到运行时目录，也不会出现在后续保存结果中。
 
-持久化使用 `aiprovider` 模块配置键，结构为 `{"suppliers":[{"id":"…","name":"…","claude_url":"…","codex_url":"…","mappings":[{"client":"OpenAI","model":"…","target":"…"}]}]}`。每家供应商的 `mappings` 保存数据库覆盖项；内置配置由代码提供。旧全局映射读取后归入对应供应商，后续保存只输出嵌套结构。
+模型供应商页面（`/#ai-catalog`）展示供应商和默认服务地址，点击整行打开详情（`/#ai-catalog/{id}`）。详情展示 Claude 与 Codex / Grok 的只读地址，支持刷新恢复、关闭按钮和 Escape 关闭，不提供编辑或保存按钮。
 
-模型供应商是独立管理页面（`/#ai-catalog`），通过管理中心导航或 AI Provider 页面链接进入；保存后留在当前页面，支持撤销未保存修改。采用列表与弹窗详情两层结构：列表展示供应商、URL 和映射数量，点击整行打开详情弹窗（`/#ai-catalog/{id}`），按 Claude、Codex、Grok 切换查看对应只读 URL 和编辑模型映射，Grok 与 Codex 共用地址。详情只保存当前供应商，关闭弹窗返回列表，刷新后仍可打开当前详情。弹窗高度限制在视口内，仅模型映射列表滚动，URL 显示、客户端切换、添加映射和底部保存按钮固定显示；支持关闭按钮和 Escape 关闭。支持添加精确名称映射、覆盖内置目标、恢复内置映射；某供应商的修改不影响其他供应商。AI Provider 表单不显示独立“认证方式”字段，订阅和 API 类型分别决定其凭据要求。
+### 模型映射（尚未实现）
 
-内置映射覆盖跨供应商使用时的三类客户端模型名称：Claude 的 `haiku/sonnet/opus/fable` 及常见完整版本名，Codex 的 `gpt-5.x`、`gpt-5.x-codex`、`gpt-5.6-*`、`gpt-6-astra` 等，以及 Grok 的 `grok-build`、`grok-build-0.1`、`grok-code-fast-1` 等。实际列表以 `catalog_defaults.go` 为准，不使用通配符。原厂客户端使用原厂供应商时不生成自映射，模型名直接透传；第三方供应商使用以下 UniSub 默认路由预设，可按账号可用模型覆盖：
-
-| 目标供应商 | 小型客户端模型名对应目标 | 常规客户端模型名对应目标 | 高阶客户端模型名对应目标 |
-| --- | --- | --- | --- |
-| Anthropic | claude-haiku-4-5-20251001 | claude-sonnet-5 | claude-opus-5 |
-| OpenAI | gpt-5.6-luna | gpt-5.6-terra | gpt-5.6-sol |
-| Grok | grok-build-0.1 | grok-build-0.1 | grok-build-0.1 |
-| Deepseek | deepseek-v4-flash | deepseek-v4-flash | deepseek-v4-pro |
-| 智谱 | glm-4.5-air | glm-5 | glm-5 |
-| Kimi | kimi-k2.5 | kimi-k2.5 | kimi-k2.5 |
-
-这是 UniSub 的名称路由预设，不表示厂商承诺模型能力、价格、账户权限或协议等价。未匹配的名称原样转发。网关映射 JSON 正文的 `model`，Grok 客户端还映射 `X-Grok-Model-Override`；切换成员时始终根据原始请求重新匹配新供应商。
-
-模型名称核对依据（2026-09-15）：[Claude 模型配置](https://code.claude.com/docs/en/model-config)、[Codex 模型](https://learn.chatgpt.com/docs/models)、[Grok Build](https://docs.x.ai/developers/models/grok-build-0.1)、[Deepseek API](https://api-docs.deepseek.com/quick_start/pricing-details-cny/)、[智谱 GLM-5](https://docs.bigmodel.cn/cn/guide/models/text/glm-5)、[Kimi 平台](https://platform.kimi.ai/docs/overview)。客户端本地可能先解析别名，网关只处理实际收到的名称；模型映射不补足供应商缺少的协议能力。
+**模型映射功能尚未实现。** 当前不提供映射配置、内置映射规则、数据库覆盖或映射编辑界面。请求正文中的 `model` 和 Grok 的 `X-Grok-Model-Override` 均原样转发，切换组成员时也不改写模型名。客户端需要直接指定目标上游支持的模型名称；供应商选择不进行模型名转换或跨协议转换。旧数据库中的映射字段不再读取或生效。
 
 ### AIProvider 类型
 
@@ -76,15 +55,15 @@ AIProvider 是上游模型服务的抽象，分为以下三种：
 
 订阅可以启用“仅原厂客户端”：开启后仅允许与订阅供应商对应的客户端类型，不能通过 `Any` 或组配置绕过；关闭时按单值 `client_type` 处理。
 
-API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的供应商默认 URL 均不存在，应拒绝保存。目标设计中的 URL 对应当前配置字段 `api_endpoint`，不引入含义重复的第二个字段。未指定供应商时，不推断厂商专属模型映射；认证和请求处理仍须由所选适配器明确支持。
+API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的供应商默认 URL 均不存在，应拒绝保存。目标设计中的 URL 对应当前配置字段 `api_endpoint`，不引入含义重复的第二个字段。认证和请求处理仍须由所选适配器明确支持。
 
 ### 组成员、权重与客户端兼容
 
 每个组成员关联配置整数权重 **1～5，缺省为 3**。权重属于组与成员的关系，同一个 AIProvider 在不同组中可以使用不同权重；越界值和非整数拒绝保存。
 
-组和成员均使用单值客户端配置：组为 `Any` 时允许包含不同类型成员；组为具体类型时，每个成员的有效客户端类型必须与组相同，不能包含 `Any` 成员。订阅开启“仅原厂客户端”后以原厂类型为有效类型。创建组、修改组限制、增删成员以及修改成员限制时，均须校验受影响的关联关系。
+组和成员均使用单值客户端配置，每个成员的有效客户端类型必须与组完全相同；`Any` 组只能包含 `Any` 成员。订阅开启“仅原厂客户端”后以原厂类型为有效类型。创建组、修改组限制、增删成员以及修改成员限制时，均须校验受影响的关联关系。
 
-例如，`OpenAI` 组只能包含有效类型为 `OpenAI` 的成员，不能包含 `Anthropic` 或 `Any` 成员；要组合不同类型的成员，组应选择 `Any`。请求必须同时通过组和被选成员的客户端校验。无匹配成员时返回明确的无可用成员错误，不能绕过成员限制。
+例如，`OpenAI` 组只能包含有效类型为 `OpenAI` 的成员，不能包含 `Anthropic` 或 `Any` 成员；不同有效客户端类型的成员不能加入同一个组。请求必须同时通过组和被选成员的客户端校验。无匹配成员时返回明确的无可用成员错误，不能绕过成员限制。
 
 建议按以下顺序选择成员：
 
@@ -92,7 +71,7 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
 2. 过滤停用、客户端不匹配、协议不兼容、处于回避期以及本次请求已尝试的成员。
 3. 从可用候选中取最高权重档；高权重不可用时才降到下一档。权重表示优先级，不是按比例分配流量。
 4. 在最高权重档内优先复用有效的 SessionID 绑定；没有可复用绑定时，对同权重成员均匀随机挑选。
-5. 使用所选成员的供应商解析模型映射，进入该成员共享的 Account 并发队列，再通过其 ProxyGroup 选择网络代理。
+5. 保留客户端提供的模型名，进入所选成员共享的 Account 并发队列，再通过其 ProxyGroup 选择网络代理。
 
 ### SessionID 粘性选择建议
 
@@ -126,7 +105,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 | 401、明确的凭据失效 | OAuth 通过 OAuthManager 重新获取有效令牌，最多进行一次认证恢复后的重试；仍失败则暂停成员。API Key 失效直接暂停 | 凭据更新或重新授权后进行受控试用，避免持续认证重试 |
 | 403 | 根据上游错误码区分账户禁用、模型权限和请求策略拒绝；不能仅凭状态码禁用整个成员 | 账户问题待权限或配置修复；模型权限问题仅回避对应模型；请求策略拒绝直接返回，不轮换账户规避 |
 | 明确的额度耗尽 | 暂停相应账户或模型，不继续立即轮换同一成员 | 有重置时间时到期受控试用；无重置时间时等待额度更新或管理员恢复 |
-| 请求参数错误、模型不存在等请求级 4xx | 不累计成员通用健康失败；明确模型不支持时可标记该成员对该模型不可用 | 修正请求、模型映射或能力信息，不盲目重试相同错误 |
+| 请求参数错误、模型不存在等请求级 4xx | 不累计成员通用健康失败；明确模型不支持时可标记该成员对该模型不可用 | 修正请求或能力信息，不盲目重试相同错误 |
 | 客户端取消、下游断开、本地队列超时 | 释放并发资源；不视为上游或代理健康故障 | 无需健康恢复；队列超时可作为本次请求排除繁忙成员的依据 |
 
 建议采用 `健康（Closed）→ 回避（Open）→ 半开（Half-Open）` 状态机。临时故障冷却到期后，每个成员只放行一个符合权限和协议要求的真实请求试用；成功则清零连续失败计数并恢复，暂态失败则重新冷却并增加退避，认证等永久性错误则转为等待修复。半开请求取消时释放试用配额，不记健康失败。凭据失效、账户禁用等等待修复状态不由短期定时器自动解除。
@@ -140,7 +119,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 ## 当前实现与边界
 
 - 已实现订阅、API、组三种类型；沿用 `provider` 字段指定适配器，新增 `api` 和 `group` 值，旧 `claude/codex/grok/dummy` 保持兼容。组只引用已有非组成员，修改任一关联配置都校验客户端允许集合，仍被组引用的成员不能删除。
-- 供应商目录与数据库模型映射通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；数据库覆盖优先于代码映射，未知模型原样转发，不做跨协议转换。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。
+- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；模型映射尚未实现，所有模型名原样转发，不做跨协议转换。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。
 - SessionID 已适配上表的原生请求头。绑定在单实例内存中按用户、组、客户端和会话隔离，键使用 SHA-256，空闲 TTL 30 分钟、容量 10000；配置更新会失效绑定，多实例共享缓存不在当前实现范围内。
 - 组成员先按客户端、协议、启用和健康状态过滤，再取最高权重；同权重优先粘性，否则均匀随机。底层成员共享原有 Account 并发队列，调用记录归属实际执行的成员。
 - 网络／5xx 连续失败 3 次后回避，30 秒指数退避至 5 分钟；429 优先遵守 `Retry-After`；认证恢复后仍为 401 或明确 `insufficient_quota` 时暂停，更新配置后解除暂停。OAuth 401 最多通过 OAuthManager 刷新并重试一次，API Key 不执行 OAuth 刷新。普通 403、参数及模型错误不禁用整个账号；模型级隔离、厂商细分额度重置时间属于后续适配扩展。
@@ -158,7 +137,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 | Account | 每账号唯一的运行时并发计数与 FIFO 队列 |
 | AIProviderCallTrace、APICallRecorder | 调用结果及回调，不携带数据库实体 |
 
-具体实现包括 Codex、Claude、Grok、APIProvider、组和 Dummy。前端页面是 `src/pages/ai-providers.tsx`，供应商／映射编辑器为 `src/pages/ai-catalog.tsx`；管理接口与缓存键分别为 /api/ai-providers、ai-providers。
+具体实现包括 Codex、Claude、Grok、APIProvider、组和 Dummy。前端页面是 `src/pages/ai-providers.tsx`，供应商只读详情页面为 `src/pages/ai-catalog.tsx`；管理接口与缓存键分别为 /api/ai-providers、ai-providers。
 
 兼容协议包括 /api/providers、旧 #providers/#accounts 页面入口、JSON 字段 provider/provider_type 和已有 SQLite 列名；这些不是 Go 类型名。OAuth CLI 的 provider 标识也保持其协议含义。
 
@@ -182,7 +161,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 | max_concurrent_connections | 负值拒绝，0 归一为 1 |
 | queue_timeout_seconds | 负值拒绝，0 在运行时使用 180 秒 |
 
-旧 `api_keys` 配置不再接受。直接 `proxy` 字段作为未知字段忽略，不校验、不迁移，也不用于代理连接；仅 `proxy_group_id` 生效。模型由客户端请求提供，匹配显式映射后再发送，不将所有模型能力写成账号固定属性。组不保存上游密钥、供应商、URL 或代理组，实际调用使用成员配置。
+旧 `api_keys` 配置不再接受。直接 `proxy` 字段作为未知字段忽略，不校验、不迁移，也不用于代理连接；仅 `proxy_group_id` 生效。模型由客户端请求提供并原样发送，不将所有模型能力写成账号固定属性。组不保存上游密钥、供应商、URL 或代理组，实际调用使用成员配置。
 
 ## 认证与调用
 

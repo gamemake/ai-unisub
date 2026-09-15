@@ -12,7 +12,7 @@ func TestSupplierDetailUpdatesAreIsolated(t *testing.T) {
 	initial := s.AIProviders().Catalog()
 	for _, index := range []int{0, 5} {
 		supplier := initial.Suppliers[index]
-		supplier.Mappings = []aiprovider.ModelMapping{{Client: aiprovider.ClientOpenAI, Model: "custom", Target: supplier.ID}}
+		supplier.Name = supplier.ID + " custom"
 		raw, _ := json.Marshal(supplier)
 		w := appRequest(s, "PUT", "/api/ai-catalog/"+supplier.ID, string(raw), cookie)
 		if w.Code != 200 {
@@ -20,12 +20,12 @@ func TestSupplierDetailUpdatesAreIsolated(t *testing.T) {
 		}
 		got := appRequest(s, "GET", "/api/ai-catalog/"+supplier.ID, "", cookie)
 		var saved aiprovider.Supplier
-		if err := json.Unmarshal(got.Body.Bytes(), &saved); err != nil || saved.ClaudeURL != supplier.ClaudeURL || saved.CodexURL != supplier.CodexURL || len(saved.Mappings) != 1 {
+		if err := json.Unmarshal(got.Body.Bytes(), &saved); err != nil || saved.ClaudeURL != supplier.ClaudeURL || saved.CodexURL != supplier.CodexURL || saved.Name != supplier.Name {
 			t.Fatalf("detail: %s %v", got.Body.String(), err)
 		}
 	}
 	c := s.AIProviders().Catalog()
-	if c.Suppliers[0].Mappings[0].Target != "anthropic" || c.Suppliers[5].Mappings[0].Target != "kimi" || len(c.Suppliers[1].Mappings) != len(initial.Suppliers[1].Mappings) {
+	if c.Suppliers[0].Name != "anthropic custom" || c.Suppliers[5].Name != "kimi custom" || c.Suppliers[1].Name != initial.Suppliers[1].Name {
 		t.Fatal("overwrote another supplier")
 	}
 	raw, _ := json.Marshal(initial.Suppliers[0])
@@ -40,7 +40,7 @@ func TestSupplierDetailUpdatesAreIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(stored, &persisted); err != nil || persisted.Suppliers[0].Mappings[0].Target != c.Suppliers[0].Mappings[0].Target || persisted.Suppliers[5].Mappings[0].Target != c.Suppliers[5].Mappings[0].Target {
+	if err := json.Unmarshal(stored, &persisted); err != nil || persisted.Suppliers[0].Name != c.Suppliers[0].Name || persisted.Suppliers[5].Name != c.Suppliers[5].Name {
 		t.Fatal("isolated updates not persisted", err)
 	}
 }

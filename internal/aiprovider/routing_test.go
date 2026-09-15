@@ -81,7 +81,8 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	m := routingManager(t)
 	createRouting(t, m, "a", "dummy", `{"client_type":"Anthropic"}`)
 	createRouting(t, m, "b", "dummy", `{"client_type":"OpenAI"}`)
-	createRouting(t, m, "g", "group", `{"client_type":"Any","members":[{"id":"a","weight":5},{"id":"b"}]}`)
+	createRouting(t, m, "b2", "dummy", `{"client_type":"OpenAI"}`)
+	createRouting(t, m, "g", "group", `{"client_type":"OpenAI","members":[{"id":"b","weight":5},{"id":"b2"}]}`)
 	p, _ := m.Get("g")
 	if p.Config().Members[1].Weight != 3 {
 		t.Fatal("default weight")
@@ -107,7 +108,7 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 		t.Fatal("direct policy bypass", err)
 	}
 	createRouting(t, m, "c", "dummy", `{"client_type":"OpenAI"}`)
-	if e := m.UpdateConfig("g", json.RawMessage(`{"client_type":"Any","members":[{"id":"a","weight":5},{"id":"b","weight":3},{"id":"c","weight":3}]}`)); e != nil {
+	if e := m.UpdateConfig("g", json.RawMessage(`{"client_type":"OpenAI","members":[{"id":"b","weight":3},{"id":"c","weight":3}]}`)); e != nil {
 		t.Fatal(e)
 	}
 	var wg sync.WaitGroup
@@ -149,32 +150,38 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	m.health[current.ID].until = time.Now().Add(-time.Second)
 	m.mu.Unlock()
 }
-func TestCatalogPrecedenceAndProtectedSuppliers(t *testing.T) {
+func TestCatalogProtectedSuppliers(t *testing.T) {
 	m := routingManager(t)
 	c := m.Catalog()
 	c.Suppliers = c.Suppliers[:5]
 	if m.SetCatalog(c) == nil {
 		t.Fatal("deleted built-in")
 	}
-	c = m.Catalog()
-	c.Suppliers[3].Mappings = []ModelMapping{{Client: ClientOpenAI, Model: "client-model", Target: "upstream-model"}}
-	if err := m.SetCatalog(c); err != nil {
-		t.Fatal(err)
-	}
-	if m.MapModel(ClientOpenAI, "deepseek", "client-model") != "upstream-model" {
-		t.Fatal("mapping missing")
-	}
-	if m.MapModel(ClientAnthropic, "deepseek", "client-model") != "client-model" {
-		t.Fatal("cross-client mapping leak")
-	}
-	c.Suppliers[0].Mappings = []ModelMapping{{Client: ClientAnthropic, Model: "claude-haiku-4-5", Target: "override"}}
-	_ = m.SetCatalog(c)
-	if m.MapModel(ClientAnthropic, "anthropic", "claude-haiku-4-5") != "override" {
-		t.Fatal("database does not win")
-	}
-	c.Suppliers[0].Mappings = nil
-	_ = m.SetCatalog(c)
-	if m.MapModel(ClientAnthropic, "anthropic", "claude-haiku-4-5") != "claude-haiku-4-5" {
-		t.Fatal("native model must pass through without a mapping")
+}
+
+func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
+	for _, groupClient := range []ClientType{ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok} {
+		for _, memberClient := range []ClientType{ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok} {
+			t.Run(string(groupClient)+"/"+string(memberClient), func(t *testing.T) {
+				m := routingManager(t)
+				raw, _ := json.Marshal(map[string]any{"client_type": memberClient})
+				createRouting(t, m, "member", "dummy", string(raw))
+				raw, _ = json.Marshal(map[string]any{"client_type": groupClient, "members": []map[string]any{{"id": "member"}}})
+				_, err := m.Create("group", "group", raw)
+				if (err == nil) != (groupClient == memberClient) {
+					t.Fatalf("group %s, member %s: %v", groupClient, memberClient, err)
+				}
+				if err == nil {
+					other := ClientAny
+					if memberClient == ClientAny {
+						other = ClientOpenAI
+					}
+					raw, _ = json.Marshal(map[string]any{"client_type": other})
+					if err := m.UpdateConfig("member", raw); err == nil {
+						t.Fatal("member update broke group consistency")
+					}
+				}
+			})
+		}
 	}
 }

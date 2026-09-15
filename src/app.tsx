@@ -22,7 +22,7 @@ const navigation = [
   { id: 'logs', label: '调用记录', icon: Activity }, { id: 'security', label: '安全设置', icon: Shield },
   { id: 'overview', label: '系统总览', icon: LayoutDashboard, admin: true }, { id: 'ai-providers', label: 'AI Provider', icon: Layers3, admin: true },
   { id: 'ai-catalog', label: '模型供应商', icon: SlidersHorizontal, admin: true },
-  { id: 'users', label: '用户管理', icon: UsersIcon, admin: true }, { id: 'proxies', label: '代理管理', icon: Network, admin: true },
+  { id: 'proxies', label: '代理管理', icon: Network, admin: true }, { id: 'users', label: '用户管理', icon: UsersIcon, admin: true },
 ]
 function pageFromHash() { const raw = location.hash.slice(1); if (raw.startsWith('ai-catalog/')) return 'ai-catalog'; return (raw === 'accounts' || raw === 'providers') ? 'ai-providers' : raw || 'personal' }
 export default function App() {

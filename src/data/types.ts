@@ -1,8 +1,7 @@
 export interface User { id: string; name: string; role: 'admin' | 'user'; enabled?: boolean; server_version?: string; created_at?: string }
 export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
 export interface GroupMember { id: string; weight: number }
-export interface Supplier { id: string; name: string; claude_url: string; codex_url: string; mappings: ModelMapping[] }
-export interface ModelMapping { client: Exclude<ClientType, 'Any'>; model: string; target: string }
+export interface Supplier { id: string; name: string; claude_url: string; codex_url: string }
 export interface AICatalog { suppliers: Supplier[] }
 export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supplier[] }
 export interface AIProviderConfig { kind?: 'subscription' | 'api' | 'group'; supplier?: string; client_type?: ClientType; official_only?: boolean; members?: GroupMember[]; auth_type?: string; api_endpoint?: string; api_key?: string; credential_id?: string; credential?: unknown; oauth?: { credential_id?: string }; proxy_group_id?: string; enabled?: boolean; max_concurrent_connections?: number; queue_timeout_seconds?: number; [key: string]: unknown }

@@ -160,8 +160,8 @@ func (m *AIProviderManager) validateRelations(id string, c AIProviderConfig) err
 			if !ok || child.Kind == "group" {
 				return errors.New("group members must be existing non-group providers")
 			}
-			if !AllowsClient(group, effectiveClient(child)) {
-				return errors.New("group client type must be Any or match every member client type")
+			if effectiveClient(group) != effectiveClient(child) {
+				return errors.New("group client type must match every member client type")
 			}
 		}
 	}
