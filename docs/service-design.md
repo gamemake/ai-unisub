@@ -1,13 +1,15 @@
 # `internal/service` 重构方案
 
+> 本文保留早期设计讨论。当前程序入口为 `cmd/unisub`，应用模块位于 `internal/unisub`，前端为 React/Vite；实际框架契约与启动方式以 [service_design.md](service_design.md) 和 [unisub_design.md](unisub_design.md) 为准。
+
 ## 1. 目标
 
 将 `internal/service` 从一个包含所有 Web 行为的 `Server`，重构为一个只负责组装和分发请求的 Service。Service 内部采用统一的 `Service Module` 概念，具体业务按边界拆分为四个相互独立的 Module：
 
 1. `static` Module：静态文件、HTML 页面以及登录/登出等 Web UI 入口。
-2. `api` Module：面向 Web UI 和管理功能的 JSON API，例如用户、Provider、API Key、调用记录。
+2. `api` Module：面向 Web UI 和管理功能的 JSON API，例如用户、AIProvider、API Key、调用记录。
 3. `oauthflow` Module：OAuth 上游 callback 和授权协议衔接；不依赖项目内部 `provider` Module。
-4. `gateway` Module：面向 API Key 或其他调用方的 AI 接口，以及 Provider 调用转发。
+4. `gateway` Module：面向 API Key 或其他调用方的 AI 接口，以及 AIProvider 调用转发。
 
 Service 本身只负责以下事情：
 
@@ -17,7 +19,7 @@ Service 本身只负责以下事情：
 - 提供统一的认证、日志、错误和基础设施能力；
 - 启动和关闭 HTTP Server。
 
-Service Module 不应通过调用 `Service` 或其他 Module 的具体业务方法来协作。Module 之间通过数据库、OAuth Manager、Provider Manager 或明确的领域接口协作。
+Service Module 不应通过调用 `Service` 或其他 Module 的具体业务方法来协作。Module 之间通过数据库、OAuth Manager、AIProvider Manager 或明确的领域接口协作。
 
 ## 2. Service Module 概念
 
@@ -60,7 +62,7 @@ type Module interface {
 - Service 负责创建共享依赖、初始化 Service Module、注册路由、应用统一中间件并管理生命周期；
 - `static`、`api`、`oauthflow`、`gateway` 都通过统一的 `Module` 接口接入 Service；
 - 每个 Module 在初始化阶段自行声明和注册负责的路由，Service 只负责匹配、冲突检查和分发；
-- Module 只能通过 `ModuleContext` 使用数据库、OAuth Manager、Provider Manager 和认证服务；
+- Module 只能通过 `ModuleContext` 使用数据库、OAuth Manager、AIProvider Manager 和认证服务；
 - Module 不直接依赖 `*Service`，也不直接调用其他 Module 的具体实现；
 - Session、API Key 和管理员权限由统一认证服务提供，具体路由通过认证模式声明所需认证；
 - OAuth 协议逻辑由 `internal/oauth` 负责，官方 CLI 兼容的 OAuth callback 和 OAuth JSON API 分别由对应的 Service Module 处理；
@@ -173,7 +175,7 @@ type ModuleContext interface {
     HandleFunc(pattern string, options RouteOptions, handler http.HandlerFunc)
     Database() database.Database
     OAuth() *oauth.OAuthManager
-    Providers() *provider.ProviderManager
+    AIProviders() *aiprovider.AIProviderManager
     Auth() AuthService
     OAuthResults() *OAuthResultStore
 }
@@ -184,7 +186,7 @@ Module 通过 `ModuleContext` 注册路由并获取 Service 提供的公共能�
 
 `ModuleContext.Config()` 返回本次 Service 实例使用的最终配置快照。Module 只能读取配置，不能修改 Service 配置，也不能自行重新解析命令行参数或环境变量。Module 应只读取自己负责的字段，例如 `gateway` 读取 `GatewayQueueLimit`；OAuth session 和 OAuth result 的保留时间由 OAuth 基础设施中的固定常量决定，不作为 Service 配置暴露。跨 Module 读取配置字段应视为设计例外。
 
-Service 不管理定时任务。需要后台任务的 Module 自行创建和管理 `time.Ticker`、goroutine、取消 Context 及关闭等待；这些任务不属于 Service 的生命周期，也不能阻塞 Service 关闭。任务如果访问 Service 提供的数据库、OAuth 或 Provider Manager，仍必须遵守对应依赖的并发和关闭约束。
+Service 不管理定时任务。需要后台任务的 Module 自行创建和管理 `time.Ticker`、goroutine、取消 Context 及关闭等待；这些任务不属于 Service 的生命周期，也不能阻塞 Service 关闭。任务如果访问 Service 提供的数据库、OAuth 或 AIProvider Manager，仍必须遵守对应依赖的并发和关闭约束。
 
 每条路由注册时必须声明最低认证要求。这个声明表示请求进入 Handler 之前必须具备什么身份，不表示调用者已经拥有所有业务权限：
 
@@ -215,7 +217,7 @@ Service 不管理定时任务。需要后台任务的 Module 自行创建和管�
 
 `Handler()` 返回最终的 `http.Handler`；`ListenAndServe` 或 `http.Server` 的生命周期由 Service 或上层 `cmd/server` 负责。
 
-ModuleContext 不直接暴露通用的 `*http.Client`。当前 OAuth adapter 和 Provider 已经各自拥有外部 HTTP 请求所需的 Client 配置，因此 Module 不需要获得任意外部网络访问能力。OAuth adapter、Provider 或其他明确的基础设施组件仍必须使用带超时的 HTTP Client，不能使用无超时的 `http.DefaultClient`。
+ModuleContext 不直接暴露通用的 `*http.Client`。当前 OAuth adapter 和 AIProvider 已经各自拥有外部 HTTP 请求所需的 Client 配置，因此 Module 不需要获得任意外部网络访问能力。OAuth adapter、AIProvider 或其他明确的基础设施组件仍必须使用带超时的 HTTP Client，不能使用无超时的 `http.DefaultClient`。
 
 如果未来确实出现由 Module 直接访问外部服务的需求，应先为该能力定义明确的领域接口或专用 Client，而不是把通用 `*http.Client` 直接加入 `ModuleContext`。
 
@@ -229,7 +231,7 @@ Database() database.Database
 
 数据库接口本身已经覆盖 User、Account、API Key、Call Trace 和 OAuth Credential。模块不应绕过接口访问 SQLite 连接，也不应把数据库具体实现类型暴露给其他模块。
 
-Credential 的持久化由 `database.Database` 直接提供，数据库实例也可以作为 `oauth.CredentialStore` 使用。保存 OAuth Credential、在 Provider 配置中只保存 `credential_id`、删除无引用 Credential 等规则属于 `api` Module 的 Provider/Account 业务逻辑，不需要额外提升为 Service 级别的 `CredentialService`。
+Credential 的持久化由 `database.Database` 直接提供，数据库实例也可以作为 `oauth.CredentialStore` 使用。保存 OAuth Credential、在 AIProvider 配置中只保存 `credential_id`、删除无引用 Credential 等规则属于 `api` Module 的 AIProvider/Account 业务逻辑，不需要额外提升为 Service 级别的 `CredentialService`。
 
 ### 6.3 OAuth Manager 服务
 
@@ -332,7 +334,7 @@ API Key 认证使用 `Authorization: Bearer <key>`。认证服务必须先确认
 
 ### 6.5 统一错误处理（`internal/common`）
 
-`internal/common` 提供不同 Module 共用的 HTTP 错误响应能力，负责统一包含英文消息的 JSON 错误格式，并由调用方完成内部错误到安全公共消息的映射，避免把数据库错误、Provider 地址、OAuth Token 等敏感信息直接返回给客户端。
+`internal/common` 提供不同 Module 共用的 HTTP 错误响应能力，负责统一包含英文消息的 JSON 错误格式，并由调用方完成内部错误到安全公共消息的映射，避免把数据库错误、AIProvider 地址、OAuth Token 等敏感信息直接返回给客户端。
 
 Service 至少提供统一的 JSON 错误输出能力，例如：
 
@@ -353,16 +355,16 @@ func WriteError(w http.ResponseWriter, status int, message string)
 - [`static` Module](service-static.md)：静态资源、HTML 页面、登录和登出。
 - [`api` Module](service-api.md)：面向 Web UI 的管理 JSON API。
 - [`oauthflow` Module](service-oauthflow.md)：OAuth 上游 callback 和协议衔接。
-- [`gateway` Module](service-gateway.md)：API Key 认证、Provider 选择和 AI 请求转发。
+- [`gateway` Module](service-gateway.md)：API Key 认证、AIProvider 选择和 AI 请求转发。
 
 总文档只定义它们和 Service 的边界。每个 Module 文档独立说明自己的路由、依赖、状态、认证方式、错误格式和测试要求。
 
 | Module | 主要职责 | 默认认证 | 详细文档 |
 | --- | --- | --- | --- |
 | `static` | 静态文件、页面、登录/登出 | 视路由而定 | [`service-static.md`](service-static.md) |
-| `api` | 用户、Provider、API Key、调用记录管理 | `AuthSession` | [`service-api.md`](service-api.md) |
+| `api` | 用户、AIProvider、API Key、调用记录管理 | `AuthSession` | [`service-api.md`](service-api.md) |
 | `oauthflow` | OAuth 上游 callback 和 OAuth 协议衔接 | callback 无认证 | [`service-oauthflow.md`](service-oauthflow.md) |
-| `gateway` | API Key、Codex/Claude/Grok AI API、Provider 调用 | `AuthAPIKey` | [`service-gateway.md`](service-gateway.md) |
+| `gateway` | API Key、Codex/Claude/Grok AI API、AIProvider 调用 | `AuthAPIKey` | [`service-gateway.md`](service-gateway.md) |
 
 ## 8. 认证和中间件边界
 
@@ -382,7 +384,7 @@ Route Handler
 | `AuthNone` | 静态资源、登录页、OAuth callback | 不认证 |
 | `AuthSession` | 页面、管理 API、OAuth start/result/poll | 页面 302；JSON 401 |
 | `AuthAPIKey` | AI API | JSON 401/403 |
-| `AuthSessionAdmin` | 用户、Provider、调用记录管理 | JSON 403 或页面 403 |
+| `AuthSessionAdmin` | 用户、AIProvider、调用记录管理 | JSON 403 或页面 403 |
 
 认证失败响应格式必须由路由模式决定，而不是由业务 Handler 临时判断。OAuth callback 的“无 session”是有意设计，不是认证遗漏。
 
@@ -533,20 +535,20 @@ type Config struct {
 }
 
 func New(cfg Config) (*Service, error)
-func NewWithDependencies(cfg Config, db database.Database, providers *provider.ProviderManager) (*Service, error)
+func NewWithDependencies(cfg Config, db database.Database, providers *aiprovider.AIProviderManager) (*Service, error)
 func (s *Service) AddModule(module Module) error
 func (s *Service) Handler() http.Handler
 func (s *Service) OAuthResults() *OAuthResultStore
 func (s *Service) Close() error
 ```
 
-这里的 `Config` 不包含命令行解析器或环境变量读取器。`ListenAddr` 虽然保存在同一个配置对象中，但只由 `cmd/server/main.go` 使用，Service 不读取它，也不负责创建监听器。默认构造路径由 `New` 创建数据库和 Provider Manager；需要由上层持有依赖时使用 `NewWithDependencies`。Module 列表始终由 `cmd/server/main.go` 或测试组装层创建并通过 `AddModule` 注册。
+这里的 `Config` 不包含命令行解析器或环境变量读取器。`ListenAddr` 虽然保存在同一个配置对象中，但只由 `cmd/server/main.go` 使用，Service 不读取它，也不负责创建监听器。默认构造路径由 `New` 创建数据库和 AIProvider Manager；需要由上层持有依赖时使用 `NewWithDependencies`。Module 列表始终由 `cmd/server/main.go` 或测试组装层创建并通过 `AddModule` 注册。
 
 初始化顺序：
 
-1. 校验并保存 `database.Database` 和 Provider Manager；
+1. 校验并保存 `database.Database` 和 AIProvider Manager；
 2. 创建并注册默认 OAuth adapters，构造 `OAuthManager`；
-3. 注册默认 Provider factories；
+3. 注册默认 AIProvider factories；
 4. 创建认证服务和一次性 OAuth ResultStore；
 5. 创建路由注册表；
 6. `cmd/server/main.go` 创建 Module，并逐个调用 `AddModule`，初始化 Module 及注册路由；
@@ -571,7 +573,7 @@ func (s *Service) Close() error
 
 ### 阶段二：抽出共享 Context 和认证
 
-- 将 `db`、`oauth`、`providers` 和认证能力封装进 `ModuleContext`；外部 HTTP Client 只注入 OAuth adapter、Provider 等基础设施组件；
+- 将 `db`、`oauth`、`providers` 和认证能力封装进 `ModuleContext`；外部 HTTP Client 只注入 OAuth adapter、AIProvider 等基础设施组件；
 - 将 session 解析、API Key 解析和管理员判断移入 `AuthService`；
 - Handler 不再读取 `Server` 的字段。
 
@@ -587,7 +589,7 @@ func (s *Service) Close() error
 
 - 按资源将 `api.go` 拆成 users、providers、keys、calls；
 - 每个资源在自己的 `Init` 中注册 `/api/...`；
-- 将 Credential 保存、引用和清理规则收拢到 `api` Module 的 Provider/Account 业务逻辑，删除 API 与页面中的重复处理。
+- 将 Credential 保存、引用和清理规则收拢到 `api` Module 的 AIProvider/Account 业务逻辑，删除 API 与页面中的重复处理。
 
 ### 阶段五：迁移 static
 
@@ -597,7 +599,7 @@ func (s *Service) Close() error
 
 ### 阶段六：新增 gateway 模块
 
-- 先定义 API Key 认证、Principal、Provider 选择和错误格式；
+- 先定义 API Key 认证、Principal、AIProvider 选择和错误格式；
 - 用独立模块注册新前缀；
 - 为上游超时、取消、调用记录和 Credential 刷新补充测试；
 - 最后再移除旧的中心分发代码。
@@ -619,12 +621,12 @@ OAuth callback 至少保留并扩展当前测试：
 - 结果过期后不可读取；
 - state 不匹配不能完成；
 - callback 不依赖 Web session，但 start/result 依赖 Web session；
-- Provider 列表不泄漏 access token 和 refresh token。
+- AIProvider 列表不泄漏 access token 和 refresh token。
 
 AI API 需要覆盖：
 
 - API Key 不存在、禁用或不属于目标 Account；
-- Provider 不存在或初始化失败；
+- AIProvider 不存在或初始化失败；
 - 上游超时和取消；
 - 调用记录成功、失败和耗时；
 - OAuth token 刷新失败时不把 Credential 内容返回给客户端。

@@ -1,0 +1,210 @@
+package unisub
+
+import (
+	"ai-unisub/internal/aiprovider"
+	"ai-unisub/internal/common"
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/service"
+	"context"
+	"errors"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+type GatewayModule struct{}
+
+func NewGatewayModule() *GatewayModule { return &GatewayModule{} }
+func (m *GatewayModule) Name() string  { return "gateway" }
+func (m *GatewayModule) Close() error  { return nil }
+func (m *GatewayModule) Init(ctx service.ModuleContext) error {
+	ctx.HandleFunc("/v1/", service.RouteOptions{Auth: service.AuthAPIKey, Name: "gateway"}, func(w http.ResponseWriter, r *http.Request) { m.handle(ctx, w, r) })
+	return nil
+}
+func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter, r *http.Request) {
+	principal, ok := service.PrincipalFromContext(r.Context())
+	if !ok || principal.Account == nil {
+		common.WriteError(w, 401, common.MessageUnauthorized)
+		return
+	}
+	p, ok := ctx.AIProviders().Get(principal.Account.ID)
+	if !ok {
+		common.WriteError(w, 503, common.MessageAIProviderUnavailable)
+		return
+	}
+	account, ok := ctx.AIProviders().GetAccount(principal.Account.ID)
+	if !ok {
+		common.WriteError(w, 503, common.MessageAIProviderUnavailable)
+		return
+	}
+	config := p.Config()
+	target, err := upstreamURL(config.APIEndpoint, principal.Account.AIProvider, config.AuthType, r.URL)
+	if err != nil {
+		common.WriteError(w, 502, common.MessageInvalidUpstreamEndpoint)
+		return
+	}
+	timeout := ctx.Config().GatewayRequestTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	requestContext, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	output := &gatewayWriter{ResponseWriter: w}
+	outbound := r.Clone(aiprovider.WithResponseWriter(requestContext, output))
+	outbound.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	outbound.URL, outbound.Host, outbound.RequestURI = target, target.Host, ""
+	for _, value := range outbound.Header.Values("Connection") {
+		for _, name := range strings.Split(value, ",") {
+			outbound.Header.Del(strings.TrimSpace(name))
+		}
+	}
+	for _, name := range []string{"Connection", "Keep-Alive", "Proxy-Authorization", "Proxy-Authenticate", "Te", "Trailer", "Transfer-Encoding", "Upgrade", "Cookie"} {
+		outbound.Header.Del(name)
+	}
+	started := time.Now().UTC()
+	recorded := false
+	err = account.Handle(outbound, func(trace *aiprovider.AIProviderCallTrace) {
+		if trace == nil {
+			return
+		}
+		recorded = true
+		if !output.written {
+			status := trace.ResponseStatus
+			if status == 0 {
+				status = trace.HTTPErrorCode
+			}
+			if status == 0 && trace.HTTPErrorInfo != "" {
+				status = http.StatusBadGateway
+			}
+			if status == 0 {
+				status = http.StatusOK
+			}
+			if trace.HTTPErrorInfo != "" && len(trace.ResponseBody) == 0 {
+				common.WriteError(output, status, common.MessageUpstreamRequestFailed)
+			} else {
+				for key, values := range trace.ResponseHeaders {
+					if !strings.EqualFold(key, "Set-Cookie") {
+						output.Header()[key] = values
+					}
+				}
+				output.WriteHeader(status)
+				_, _ = output.Write(trace.ResponseBody)
+			}
+		}
+		requestID, _ := service.RequestIDFromContext(r.Context())
+		sourceIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+		apiKey := ""
+		if parts := strings.Fields(r.Header.Get("Authorization")); len(parts) == 2 {
+			apiKey = parts[1]
+		}
+		// The DB uses the presented key to associate historical records with users.
+		// Headers shown in the UI do not contain downstream/upstream secrets.
+		saved := &database.PersistedCallTrace{ID: service.NewProxyID(), APIKey: apiKey, AccountID: principal.Account.ID, AIProviderType: principal.Account.AIProvider, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
+		if output.status >= 400 {
+			saved.HTTPErrorCode = output.status
+		}
+		if trace.HTTPErrorInfo != "" {
+			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
+		}
+		if err := ctx.Database().RecordCallTrace(saved); err != nil {
+			log.Printf("record gateway call %s: %v", requestID, err)
+		}
+	}, ctx.Config().GatewayQueueLimit)
+	if err != nil && !output.written {
+		status := http.StatusServiceUnavailable
+		message := common.MessageAIProviderUnavailable
+		switch {
+		case errors.Is(err, aiprovider.ErrQueueFull):
+			status = http.StatusTooManyRequests
+			message = common.MessageAIProviderQueueFull
+		case errors.Is(err, aiprovider.ErrQueueTimeout), errors.Is(err, context.DeadlineExceeded):
+			status = http.StatusGatewayTimeout
+			message = common.MessageGatewayTimeout
+		case errors.Is(err, context.Canceled):
+			return
+		}
+		common.WriteError(w, status, message)
+		return
+	}
+	if !recorded && !output.written {
+		common.WriteError(w, 502, common.MessageUpstreamNoResponse)
+	}
+}
+func upstreamURL(endpoint, name, auth string, incoming *url.URL) (*url.URL, error) {
+	if endpoint == "" {
+		switch name {
+		case "claude":
+			endpoint = "https://api.anthropic.com/v1"
+		case "grok":
+			endpoint = "https://api.x.ai/v1"
+		case "codex":
+			endpoint = "https://api.openai.com/v1"
+			if auth != aiprovider.AuthTypeAPIKey {
+				endpoint = "https://chatgpt.com/backend-api/codex"
+			}
+		case "dummy":
+			endpoint = "http://dummy.local/v1"
+		default:
+			return nil, errors.New("unknown provider")
+		}
+	}
+	base, err := url.Parse(endpoint)
+	if err != nil || base.Host == "" || (base.Scheme != "https" && base.Scheme != "http") {
+		return nil, errors.New("invalid endpoint")
+	}
+	// Base URLs commonly already end with /v1; append the official relative path
+	// without duplicating the version segment, preserving escaped resource IDs.
+	suffix := strings.TrimPrefix(incoming.EscapedPath(), "/v1")
+	prefix := strings.TrimRight(base.EscapedPath(), "/")
+	if prefix == "" {
+		prefix = "/v1"
+	}
+	rawPath := prefix + suffix
+	base.Path, err = url.PathUnescape(rawPath)
+	if err != nil {
+		return nil, err
+	}
+	base.RawPath, base.RawQuery, base.Fragment = rawPath, incoming.RawQuery, ""
+	return base, nil
+}
+func redactedHeaders(headers http.Header) http.Header {
+	copy := headers.Clone()
+	for _, name := range []string{"Authorization", "X-Api-Key", "Cookie", "Set-Cookie", "Proxy-Authorization"} {
+		if copy.Get(name) != "" {
+			copy.Set(name, "[redacted]")
+		}
+	}
+	return copy
+}
+
+type gatewayWriter struct {
+	http.ResponseWriter
+	written bool
+	status  int
+}
+
+func (w *gatewayWriter) WriteHeader(code int) {
+	if w.written {
+		return
+	}
+	w.written = true
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
+}
+func (w *gatewayWriter) Write(p []byte) (int, error) {
+	if !w.written {
+		w.WriteHeader(200)
+	}
+	return w.ResponseWriter.Write(p)
+}
+func (w *gatewayWriter) Flush() {
+	if !w.written {
+		w.WriteHeader(200)
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}

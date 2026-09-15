@@ -1,59 +1,47 @@
 {
-    "version": "2.0.0",
-    "tasks": [
-        {
-            "label": "Go: Build Server",
-            "type": "process",
-            "command": "go",
-            "args": [
-                "build",
-                "-o",
-                "${workspaceFolder}/bin/ai-unisub",
-                "./cmd/server"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
-            "problemMatcher": [
-                "$go"
-            ]
-        },
-        {
-            "label": "Go: Build App",
-            "type": "process",
-            "command": "go",
-            "args": [
-                "build",
-                "-o",
-                "${workspaceFolder}/bin/ai-unisub-app.exe",
-                "./cmd/app"
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": [
-                "$go"
-            ]
-        },
-        {
-            "label": "Go: Test All",
-            "type": "process",
-            "command": "go",
-            "args": [
-                "test",
-                "./..."
-            ],
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "group": "test",
-            "problemMatcher": [
-                "$go"
-            ]
-        }
-    ]
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Web: Build",
+      "type": "shell",
+      "command": "npm run build",
+      "windows": {
+        "command": "npm.cmd run build"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Go: Build UniSub",
+      "type": "process",
+      "command": "go",
+      "args": [
+        "build",
+        "-o",
+        "bin/",
+        "./cmd/unisub"
+      ],
+      "dependsOn": "Web: Build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": [
+        "$go"
+      ]
+    },
+    {
+      "label": "Go: Test All",
+      "type": "process",
+      "command": "go",
+      "args": [
+        "test",
+        "./..."
+      ],
+      "dependsOn": "Web: Build",
+      "group": "test",
+      "problemMatcher": [
+        "$go"
+      ]
+    }
+  ]
 }

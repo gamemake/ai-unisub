@@ -77,18 +77,18 @@ func WriteError(w http.ResponseWriter, status int, message string)
 
 ### 3.3 公共错误消息
 
-所有 Web handler 使用的客户端可见错误消息都定义在 `common/errors.go` 的 `Message...` 常量中，例如 `MessageUnauthorized`、`MessageInvalidProviderConfig` 和 `MessageOAuthUpstreamFailed`。模块只引用这些常量，不在 handler 中新增字符串字面量。
+所有 Web handler 使用的客户端可见错误消息都定义在 `common/errors.go` 的 `Message...` 常量中，例如 `MessageUnauthorized`、`MessageInvalidAIProviderConfig` 和 `MessageOAuthUpstreamFailed`。模块只引用这些常量，不在 handler 中新增字符串字面量。
 
-内部错误不能直接通过 `err.Error()` 写入响应；应根据错误类型映射到 Common 的安全公共消息。这样可以避免把数据库细节、Provider 配置、上游响应或其他敏感信息泄漏给 Web 客户端，同时保证相同语义的错误使用稳定文本。
+内部错误不能直接通过 `err.Error()` 写入响应；应根据错误类型映射到 Common 的安全公共消息。这样可以避免把数据库细节、AIProvider 配置、上游响应或其他敏感信息泄漏给 Web 客户端，同时保证相同语义的错误使用稳定文本。
 
 ## 4. 包边界与兼容入口
 
 新代码应直接依赖 `ai-unisub/internal/common`。现有 `oauth` 的 Proxy 函数保留为兼容转发入口；Service handler 直接调用 Common。新的跨模块代码不应继续把通用能力绑定到 OAuth 或 Service 包。
 
-Common 只提供机制，不提供业务错误码、OAuth 错误或 Provider 错误。业务包继续拥有自己的领域错误，并在 HTTP 边界调用 Common 完成安全映射和输出。
+Common 只提供机制，不提供业务错误码、OAuth 错误或 AIProvider 错误。业务包继续拥有自己的领域错误，并在 HTTP 边界调用 Common 完成安全映射和输出。
 
 ## 5. 测试要求
 
 - Proxy：覆盖空值、首尾空白、四种支持的 Scheme、缺少 Scheme/Host、非法 URL，以及 Context 读写和 nil Context；
 - Error：覆盖单字段 JSON、Content-Type 和 HTTP status；
-- 集成：OAuth callback、Device Flow 和 Provider outbound request 均应使用同一套 Common Proxy 语义。
+- 集成：OAuth callback、Device Flow 和 AIProvider outbound request 均应使用同一套 Common Proxy 语义。

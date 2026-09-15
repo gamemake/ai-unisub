@@ -11,6 +11,7 @@ import (
 )
 
 type OAuthResult struct {
+	SessionID  string
 	SubjectID  string
 	Service    string
 	Credential oauth.OAuthCredential
@@ -47,9 +48,30 @@ func (s *OAuthResultStore) Put(result OAuthResult) (string, error) {
 	}
 	id := hex.EncodeToString(raw[:])
 	s.mu.Lock()
+	for key, value := range s.values {
+		if !value.expiresAt.After(time.Now()) {
+			delete(s.values, key)
+		}
+	}
 	s.values[id] = oauthResultValue{subjectID: result.SubjectID, result: result, expiresAt: time.Now().Add(s.ttl)}
 	s.mu.Unlock()
 	return id, nil
+}
+
+// FindSession only reveals a completed result ID to the original session owner.
+func (s *OAuthResultStore) FindSession(sessionID, name, subjectID string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, value := range s.values {
+		if !value.expiresAt.After(time.Now()) {
+			delete(s.values, id)
+			continue
+		}
+		if sessionID != "" && value.result.SessionID == sessionID && value.result.Service == name && value.subjectID == subjectID {
+			return id, true
+		}
+	}
+	return "", false
 }
 
 func (s *OAuthResultStore) Take(id, subjectID string) (OAuthResult, error) {

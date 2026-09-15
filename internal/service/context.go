@@ -1,9 +1,9 @@
 package service
 
 import (
+	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/provider"
 	"net/http"
 )
 
@@ -26,7 +26,7 @@ type ModuleContext interface {
 	HandleFunc(string, RouteOptions, http.HandlerFunc)
 	Database() database.Database
 	OAuth() *oauth.OAuthManager
-	Providers() *provider.ProviderManager
+	AIProviders() *aiprovider.AIProviderManager
 	Proxy() *ProxyManager
 	Auth() AuthService
 	OAuthResults() *OAuthResultStore
@@ -38,7 +38,7 @@ func (c *moduleContext) Handle(p string, o RouteOptions, h http.Handler)        
 func (c *moduleContext) HandleFunc(p string, o RouteOptions, h http.HandlerFunc) { c.Handle(p, o, h) }
 func (c *moduleContext) Database() database.Database                             { return c.s.db }
 func (c *moduleContext) OAuth() *oauth.OAuthManager                              { return c.s.oauth }
-func (c *moduleContext) Providers() *provider.ProviderManager                    { return c.s.providers }
+func (c *moduleContext) AIProviders() *aiprovider.AIProviderManager              { return c.s.aiProviders }
 func (c *moduleContext) Proxy() *ProxyManager                                    { return c.s.proxy }
 func (c *moduleContext) Auth() AuthService                                       { return c.s.authSvc }
 func (c *moduleContext) OAuthResults() *OAuthResultStore                         { return c.s.results }

@@ -1,0 +1,38 @@
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
+import { TableRow, TableCell } from '@/components/ui/table'
+import { useState } from 'react'
+import { AlertTriangle, Pencil, Play, Plus, Trash2 } from 'lucide-react'
+import { actions, useAction, useProxies } from '@/data/store'
+import type { Proxy, ProxyGroup } from '@/data/types'
+import { Badge, Confirm, Empty, ErrorMessage, Field, Modal, PageHeader, QueryState, Submit, Table } from '@/components/shared'
+import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { date } from '@/lib/utils'
+
+export function Proxies() {
+  const query = useProxies(), [editing, setEditing] = useState<ProxyGroup | 'new' | null>(null), [removing, setRemoving] = useState<ProxyGroup | null>(null), remove = useAction(actions.deleteProxy, ['proxies'])
+  return <><PageHeader title="代理管理" description="配置上游连接的代理组、重试策略和可用地址。" action={<Button onClick={() => setEditing('new')}><Plus />添加代理组</Button>} /><Card><QueryState query={query}>{query.data?.length ? <Table headers={['名称', '备注', '代理数量', '最大重试', '操作']}>{query.data.map(g => <TableRow key={g.id}><TableCell className="font-medium">{g.name}</TableCell><TableCell className="text-muted-foreground">{g.remark || '—'}</TableCell><TableCell>{g.proxies?.length || 0}</TableCell><TableCell>{g.max_retries}</TableCell><TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`编辑 ${g.name}`} onClick={() => setEditing(g)}><Pencil /></Button><Button variant="ghost" size="icon" aria-label={`删除 ${g.name}`} onClick={() => { remove.reset(); setRemoving(g) }}><Trash2 /></Button></div></TableCell></TableRow>)}</Table> : <Empty>暂无代理组；不使用代理时可以直接连接上游。</Empty>}</QueryState></Card>{editing && <ProxyForm group={editing === 'new' ? undefined : editing} onClose={() => setEditing(null)} />}{removing && <Confirm title={`删除代理组「${removing.name}」？`} pending={remove.isPending} error={remove.error} onClose={() => setRemoving(null)} onConfirm={() => remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })} />}</>
+}
+type EditorProxy = Proxy & { rowID: string }
+function ProxyForm({ group, onClose }: { group?: ProxyGroup; onClose: () => void }) {
+  const [name, setName] = useState(group?.name || ''), [remark, setRemark] = useState(group?.remark || ''), [retries, setRetries] = useState(group?.max_retries || 0), [rows, setRows] = useState<EditorProxy[]>((group?.proxies || []).map(p => ({ ...p, rowID: crypto.randomUUID() })))
+  const [validation, setValidation] = useState<Error | null>(null), [testing, setTesting] = useState<string | null>(null), [errorOpen, setErrorOpen] = useState(false)
+  const save = useAction(actions.saveProxy, ['proxies']), test = useAction(actions.testProxy), errors = useAction(actions.proxyErrors)
+  function update(rowID: string, value: Partial<Proxy>) { setRows(old => old.map(p => p.rowID === rowID ? { ...p, ...value } : p)) }
+  function valid(url: string) {
+    try {
+      const value = url.trim(), parsed = new URL(value)
+      return !/\s/.test(value) && ['http:', 'https:', 'socks5:', 'socks5h:'].includes(parsed.protocol.toLowerCase()) && !!parsed.hostname && !parsed.search && !parsed.hash && (!parsed.port || (Number(parsed.port) >= 1 && Number(parsed.port) <= 65535))
+    } catch { return false }
+  }
+  return <Modal wide title={group ? '编辑代理组' : '添加代理组'} onClose={onClose}><form className="space-y-5" onSubmit={e => {
+    e.preventDefault(); setValidation(null)
+    if (rows.some(p => !valid(p.url))) { setValidation(new Error('代理地址需要是有效的 http://、https://、socks5:// 或 socks5h:// URL')); return }
+    save.mutate({ id: group?.id, name, remark, max_retries: retries, proxies: rows.map(({ rowID: _, ...p }) => ({ ...p, url: p.url.trim() })) }, { onSuccess: onClose })
+  }}><div className="grid gap-4 sm:grid-cols-3"><Field label="代理组名称"><Input required maxLength={64} value={name} onChange={e => setName(e.target.value)} /></Field><Field label="备注"><Input value={remark} onChange={e => setRemark(e.target.value)} /></Field><Field label="最大重试次数"><Input type="number" min={0} max={100} required value={retries} onChange={e => setRetries(Number(e.target.value))} /></Field></div>
+    <div className="flex items-center justify-between"><h3 className="text-sm font-medium">代理地址</h3><Button type="button" variant="outline" size="sm" onClick={() => setRows(old => [...old, { rowID: crypto.randomUUID(), url: '', enabled: true }])}><Plus />添加地址</Button></div>
+    {rows.map(p => <div key={p.rowID} className="space-y-3 rounded-xl border p-4"><Input aria-label="代理 URL" required type="url" value={p.url} placeholder="socks5h://user:password@127.0.0.1:1080" onChange={e => { update(p.rowID, { url: e.target.value }); setValidation(null); test.reset() }} /><div className="flex flex-wrap items-center gap-3"><Label className="flex items-center gap-2 text-sm"><Checkbox checked={p.enabled} onCheckedChange={checked => update(p.rowID, { enabled: checked })} />启用</Label><Badge enabled={p.status === 'available'}>{p.status === 'available' ? '可用' : p.status === 'unavailable' ? '不可用' : '未测试'}</Badge><span className="flex-1 text-xs text-muted-foreground">最后可用：{date(p.last_available)}</span><Button type="button" variant="outline" size="sm" disabled={!!testing} onClick={() => { setValidation(null); test.reset(); if (!valid(p.url)) { setValidation(new Error('请先填写有效代理 URL（支持 http、https、socks5、socks5h）')); return } setTesting(p.rowID); test.mutate({ url: p.url.trim() }, { onSuccess: result => update(p.rowID, { status: result.status, last_available: result.last_available }), onSettled: () => setTesting(null) }) }}><Play />{testing === p.rowID ? '测试中…' : '测试'}</Button>{group && p.id && <Button type="button" variant="ghost" size="icon" aria-label="查看代理错误记录" onClick={() => { errors.reset(); setErrorOpen(true); errors.mutate({ group_id: group.id, proxy_id: p.id! }) }}><AlertTriangle /></Button>}<Button type="button" variant="ghost" size="icon" aria-label="移除代理地址" onClick={() => setRows(old => old.filter(r => r.rowID !== p.rowID))}><Trash2 /></Button></div></div>)}
+    <ErrorMessage error={validation || save.error || test.error} /><div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={onClose}>取消</Button><Submit pending={save.isPending} /></div></form>{errorOpen && <Modal title="最近 24 小时代理错误记录" onClose={() => setErrorOpen(false)}><ErrorMessage error={errors.error} />{errors.isPending ? <p role="status">正在加载…</p> : errors.data?.error_records?.length ? <Table headers={['时间', '错误次数']}>{errors.data.error_records.map(r => <TableRow key={r.start_at}><TableCell>{date(r.start_at)}</TableCell><TableCell>{r.count}</TableCell></TableRow>)}</Table> : <Empty>没有错误记录</Empty>}</Modal>}</Modal>
+}

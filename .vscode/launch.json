@@ -1,40 +1,29 @@
 {
-    "version": "0.2.0",
-    "configurations": [
-        {
-            "name": "Debug Server",
-            "type": "go",
-            "request": "launch",
-            "mode": "debug",
-            "program": "${workspaceFolder}/cmd/server",
-            "cwd": "${workspaceFolder}",
-            "env": {
-                "ADMIN_USERNAME": "admin",
-                "ADMIN_PASSWORD": "admin12345",
-                "DATABASE_URL": "sqlite://./data/ai-unisub.db",
-                "LISTEN_ADDR": "127.0.0.1:8080"
-            },
-            "showLog": true,
-            "trace": "verbose",
-            "console": "integratedTerminal"
-        },
-        {
-            "name": "Debug CLI",
-            "type": "go",
-            "request": "launch",
-            "mode": "debug",
-            "program": "${workspaceFolder}/cmd/app",
-            "cwd": "${workspaceFolder}",
-            "args": [
-                "oauth",
-                "status",
-                "--file",
-                "${workspaceFolder}/data/oauth/claude.json"
-            ],
-            "preLaunchTask": "Go: Build App",
-            "showLog": true,
-            "trace": "verbose",
-            "console": "integratedTerminal"
-        }
-    ]
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug UniSub (DEV)",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/unisub",
+      "cwd": "${workspaceFolder}",
+      "preLaunchTask": "Web: Build",
+      "env": {
+        "UNISUB_MODE": "DEV",
+        "DATABASE_URL": "sqlite://./data/ai-unisub.db",
+        "LISTEN_ADDR": "127.0.0.1:8080"
+      },
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Debug OAuth CLI",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/cmd/oauth",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal"
+    }
+  ]
 }

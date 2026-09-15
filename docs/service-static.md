@@ -1,18 +1,18 @@
 # `static` Service Module
 
-`static` 是负责浏览器 Web UI 入口的 Service Module，处理静态资源、HTML 页面、登录和登出，不处理 JSON API、OAuth 协议交换或 AI Provider 调用。
+`static` 位于 `internal/unisub/static.go`，负责浏览器入口、静态资源、登录和登出，只处理登录所需的 JSON API，不处理其他管理 API、OAuth 协议交换或 AI AIProvider 调用。
 
 ## 路由与认证
 
 | 路径 | 说明 | 认证 |
 | --- | --- | --- |
-| `/static/*` | JavaScript、CSS 和嵌入式资源 | `AuthNone` |
+| `/assets/*`、`/favicon.svg` | Vite 构建的 JavaScript、CSS 和公共资源 | `AuthNone` |
 | `/login` | 返回静态登录网页和登录提交脚本；如果已经登录则重定向到 `/home` | `AuthNone` |
 | `/` | 根据登录状态重定向到 `/login` 或 `/home` | `AuthNone` |
 | `/home` | 返回静态 Web 应用网页；如果没有登录则重定向到 `/login` | `AuthNone`，由 Handler 判断 |
 | `/logout` | 清除当前 Session，完成后重定向到 `/login` | Session 或无 Session 均可安全调用 |
 
-系统只保留 `/login` 和 `/home` 两个静态 HTML 页面。页面本身由嵌入的静态网页资源提供，不使用服务端模板渲染；登录状态只用于决定是否重定向。页面中的登录、用户、Provider、API Key、调用记录等操作通过公开的 JSON API 完成。`/` 是根据登录状态进行跳转的统一入口，不直接渲染页面；`/logout` 是 Session 操作入口，不是 HTML 页面。
+`/login` 和 `/home` 是两个页面路由，返回同一个 Vite `index.html`，由 React 根据路径渲染登录或 Dashboard。DEV 从 `UNISUB_WEB_DIR`（默认 `internal/web/dist`）读取构建文件；PRD 从 `internal/web/embed.go` 嵌入的 FS 提供页面。均不使用服务端模板。页面操作通过鉴权 JSON API 完成。`/` 只按会话重定向；`/logout` 是 Session 操作入口。
 
 界面通过统一请求函数解析 API 响应。失败响应读取 JSON 的 `error` 字段，将稳定的英文消息作为多语言 key 映射为当前界面语言；没有翻译时显示英文原文。登录与其他 API 共用同一套解析逻辑，`401` 在展示错误后清理本地登录状态。网络失败和无法解析的响应使用界面自己的兜底消息，所有错误都通过 `textContent` 或等价的转义方式展示。
 

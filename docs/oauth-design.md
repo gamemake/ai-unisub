@@ -4,10 +4,10 @@
 
 为 Grok、Codex、Claude 提供统一 OAuth 能力，并支持：
 
-- Web Service：在添加 Provider 页面完成 OAuth，并显示完整 OAuth 结果。
+- Web Service：在添加 AIProvider 页面完成 OAuth，并显示完整 OAuth 结果。
 - CLI：通过浏览器和 localhost 回调完成 OAuth；CLI 始终打印授权地址，也支持用户显式保存到本地凭据文件。
 
-OAuth 是独立模块，不依赖 `service`、`cmd` 或具体 Provider 实现。Web 和 CLI 只负责交互，OAuth 模块负责授权流程、Token 交换、刷新、撤销和 Credential 生命周期管理；具体持久化由调用方注入的 `CredentialStore` 完成。CLI 运行期间可以在内存中保存一次性 state/PKCE；只有用户指定输出文件时，CLI 才将结果保存到本地。
+OAuth 是独立模块，不依赖 `service`、`cmd` 或具体 AIProvider 实现。Web 和 CLI 只负责交互，OAuth 模块负责授权流程、Token 交换、刷新、撤销和 Credential 生命周期管理；具体持久化由调用方注入的 `CredentialStore` 完成。CLI 运行期间可以在内存中保存一次性 state/PKCE；只有用户指定输出文件时，CLI 才将结果保存到本地。
 
 ## 2. 总体架构
 
@@ -52,7 +52,7 @@ internal/oauth/
 
 ### 3.1 OAuthAdapter
 
-OAuthAdapter 是独立的上游 OAuth 协议适配器，不属于 `provider.Provider`，也不由 `ProviderManager` 注册或管理。每个上游 OAuth 服务实现一个 OAuthAdapter，隔离授权地址、Token 地址、请求参数、响应格式和账户信息解析差异。
+OAuthAdapter 是独立的上游 OAuth 协议适配器，不属于 `aiprovider.AIProvider`，也不由 `AIProviderManager` 注册或管理。每个上游 OAuth 服务实现一个 OAuthAdapter，隔离授权地址、Token 地址、请求参数、响应格式和账户信息解析差异。
 
 这里的上游 OAuth 服务标识使用普通 `string`，通过常量提供已知服务名称：
 
@@ -241,7 +241,7 @@ type OAuthCredential struct {
 ### 4.1 页面流程
 
 ```text
-添加 Provider
+添加 AIProvider
     ↓
 选择 Grok / Codex / Claude
     ↓
@@ -251,13 +251,13 @@ type OAuthCredential struct {
     ↓
 OAuth callback
     ↓
-返回 Provider 添加页面
+返回 AIProvider 添加页面
     ↓
 显示完整 OAuth JSON
     ↓
 用户填写名称、并发数；模型由每次请求指定
     ↓
-保存 Provider
+保存 AIProvider
 ```
 
 OAuth 完成后，页面展示：
@@ -274,12 +274,12 @@ OAuth 完整结果
 │ }                                          │
 └────────────────────────────────────────────┘
 
-Provider 名称：[我的 Claude 账号]
+AIProvider 名称：[我的 Claude 账号]
 并发数：[4]
 
 请求模型：由调用方在每次请求中指定
 
-[保存 Provider]
+[保存 AIProvider]
 ```
 
 可以使用 JSON 编辑器或 `textarea`：
@@ -302,7 +302,7 @@ POST /api/oauth/{provider}/start
 ```json
 {
   "session_id": "oauth-session-xxx",
-  "authorization_url": "https://provider.example/authorize?...",
+  "authorization_url": "https://aiprovider.example/authorize?...",
   "expires_at": "2026-09-10T12:00:00Z"
 }
 ```
@@ -334,10 +334,10 @@ GET /api/oauth/results/{result_id}
 }
 ```
 
-提交 Provider：
+提交 AIProvider：
 
 ```http
-POST /api/providers
+POST /api/ai-providers
 ```
 
 请求：
@@ -361,7 +361,7 @@ POST /api/providers
 
 ### 4.3 临时 OAuth Credential
 
-OAuth callback 不直接创建 Provider，而是保存短期临时结果：
+OAuth callback 不直接创建 AIProvider，而是保存短期临时结果：
 
 ```go
 type PendingOAuthCredential struct {
@@ -385,7 +385,7 @@ callback 完成后重定向：
 - 只能被发起授权的用户读取；
 - 读取或提交后删除；
 - URL 中只放结果 ID，不放 Token；
-- 不允许跨 Provider 使用。
+- 不允许跨 AIProvider 使用。
 
 ## 5. CLI 集成
 
@@ -404,7 +404,7 @@ oauth logout --file ./oauth/claude.json
 
 CLI 不写服务器数据库，但可以在用户明确指定的本地文件中保存和管理 OAuth 结果。`--file` 指定凭据文件；`--output` 是 `login` 的别名语义，用于保存本次登录结果。没有指定文件时，`login` 只向 stdout 输出结果。
 
-默认约定是一个文件保存一个 OAuth 结果，因此 Provider 从文件内容的 `provider` 字段中读取，不需要每个命令重复传入 `--provider`。命令执行时仍必须校验文件中的 Provider、Token 字段和结果格式。由于没有集合文件，CLI 不提供 `list`；由于文件可以直接读取，CLI 也不提供重复的 `show`。
+默认约定是一个文件保存一个 OAuth 结果，因此 AIProvider 从文件内容的 `provider` 字段中读取，不需要每个命令重复传入 `--provider`。命令执行时仍必须校验文件中的 AIProvider、Token 字段和结果格式。由于没有集合文件，CLI 不提供 `list`；由于文件可以直接读取，CLI 也不提供重复的 `show`。
 
 `oauth login` 启动时始终打印授权地址，并尝试自动打开系统浏览器。授权地址和交互提示写入 stderr；OAuth 成功后，完整 JSON 结果写入 stdout，方便管道传给其他程序：
 
@@ -431,7 +431,7 @@ oauth login claude --output ./oauth/claude.json
 oauth login claude > oauth-result.json
 ```
 
-如果 CLI 需要将结果提交给服务器创建 Provider，可以增加显式的 stdin 模式：
+如果 CLI 需要将结果提交给服务器创建 AIProvider，可以增加显式的 stdin 模式：
 
 ```bash
 app provider add --provider claude --oauth-result-stdin
@@ -471,7 +471,7 @@ CLI 应监听 `127.0.0.1`，不要默认监听 `0.0.0.0`。CLI 始终打印授�
 
 ```text
 OAuth authorization completed.
-Provider: claude
+AIProvider: claude
 Account: user@example.com
 Account ID: account_xxx
 Expires: 2026-09-10 14:00:00 UTC
@@ -507,7 +507,7 @@ oauth login claude --output ./oauth/claude.json
 - 文件不存在时由 `login --output` 创建。
 - 每个文件只允许保存一个 OAuth 结果。
 - 读取文件时校验文件中的 `provider` 字段和结果格式。
-- 写入前校验 JSON 和 Provider 类型。
+- 写入前校验 JSON 和 AIProvider 类型。
 - 使用临时文件加原子 rename，避免中途写坏凭据文件。
 - Unix 文件权限设置为 `0600`。
 - Windows 使用当前用户私有 ACL。
@@ -521,17 +521,17 @@ oauth login claude --output ./oauth/claude.json
 | `login` | 完成 OAuth；可通过 `--output` 保存结果 |
 | `status` | 检查单个文件中的 Token 是否有效、即将过期或已过期 |
 | `refresh` | 使用单个文件中的 Refresh Token 更新该文件 |
-| `revoke` | 调用该文件记录的 Provider 撤销授权，并从文件中删除或标记结果 |
+| `revoke` | 调用该文件记录的 AIProvider 撤销授权，并从文件中删除或标记结果 |
 | `logout` | 撤销并删除单个文件中的 OAuth 结果 |
 
 `refresh`、`revoke` 和 `logout` 都只修改用户指定的本地文件，不写服务器数据库。需要查看完整结果时，直接读取 `--file` 指定的 JSON 文件即可。
 
-## 6. Provider 配置
+## 6. AIProvider 配置
 
-`ProviderConfig` 只表示所有 Provider 共用的配置，不能放入 OAuth、模型或某个具体上游服务专有的字段。每个具体 Provider 应该定义自己的配置类型，并在内部嵌入公共配置：
+`AIProviderConfig` 只表示所有 AIProvider 共用的配置，不能放入 OAuth、模型或某个具体上游服务专有的字段。每个具体 AIProvider 应该定义自己的配置类型，并在内部嵌入公共配置：
 
 ```go
-type ProviderConfig struct {
+type AIProviderConfig struct {
     ID                       string   `json:"id"`
     Name                     string   `json:"name"`
     CredentialID             string   `json:"credential_id,omitempty"`
@@ -543,48 +543,48 @@ type ProviderConfig struct {
 
 ```
 
-公共 `ProviderConfig` 保存 OAuth Credential 的引用，不需要把 Token 字段放入 Provider 配置。当前接入的 Provider 为 Grok、Codex 和 Claude：
+公共 `AIProviderConfig` 保存 OAuth Credential 的引用，不需要把 Token 字段放入 AIProvider 配置。当前接入的 AIProvider 为 Grok、Codex 和 Claude：
 
 ```go
-type GrokProviderConfig struct {
-    ProviderConfig
+type GrokAIProviderConfig struct {
+    AIProviderConfig
 }
 ```
 
 ```go
-type ClaudeProviderConfig struct {
-    ProviderConfig
+type ClaudeAIProviderConfig struct {
+    AIProviderConfig
 }
 
-type CodexProviderConfig struct {
-    ProviderConfig
+type CodexAIProviderConfig struct {
+    AIProviderConfig
 }
 ```
 
-本阶段三个 Provider 只需要实现 OAuth 页面功能，包括在 Provider 添加页面发起对应的 OAuth、接收并展示 OAuth 结果，以及提交 OAuth Credential 和页面配置。Provider 的模型配置、上游请求转发和其他非 OAuth 能力不属于本阶段范围；这些能力由后续 Provider 接入工作单独实现。
+本阶段三个 AIProvider 只需要实现 OAuth 页面功能，包括在 AIProvider 添加页面发起对应的 OAuth、接收并展示 OAuth 结果，以及提交 OAuth Credential 和页面配置。AIProvider 的模型配置、上游请求转发和其他非 OAuth 能力不属于本阶段范围；这些能力由后续 AIProvider 接入工作单独实现。
 
-`ProviderFactory` 仍然接收 `json.RawMessage`，由具体 Factory 解码到自己的配置类型。`ProviderManager` 不需要理解 OAuth、模型或其他专有字段。Provider 不与 Model 绑定；模型由每次请求的调用方指定，并由具体 Provider 按上游协议转发。
+`AIProviderFactory` 仍然接收 `json.RawMessage`，由具体 Factory 解码到自己的配置类型。`AIProviderManager` 不需要理解 OAuth、模型或其他专有字段。AIProvider 不与 Model 绑定；模型由每次请求的调用方指定，并由具体 AIProvider 按上游协议转发。
 
-当前 `PersistedAccount.Config` 是 `json.RawMessage`，可以保存具体 Provider 的完整 JSON，但 Provider 列表 API 不应原样返回包含 Token 的 Config。
+当前 `PersistedAccount.Config` 是 `json.RawMessage`，可以保存具体 AIProvider 的完整 JSON，但 AIProvider 列表 API 不应原样返回包含 Token 的 Config。
 
-Provider 创建或更新时，Service 必须校验 `CredentialID` 属于当前用户，且 Credential 的 Service 与 Provider 类型一致。Provider 请求转发时只把 `CredentialID` 传给 OAuthManager，由 OAuthManager 取得当前有效的 Access Token。
+AIProvider 创建或更新时，Service 必须校验 `CredentialID` 属于当前用户，且 Credential 的 Service 与 AIProvider 类型一致。AIProvider 请求转发时只把 `CredentialID` 传给 OAuthManager，由 OAuthManager 取得当前有效的 Access Token。
 
-删除 Provider 时，Service 先读取其 `CredentialID`，再删除 Provider 记录；如果该 Credential 没有被其他 Provider 引用，则一并删除对应的 OAuth Credential。这样可以避免删除 Provider 后留下无主 Credential，也避免误删被多个 Provider 共享的 Credential。
+删除 AIProvider 时，Service 先读取其 `CredentialID`，再删除 AIProvider 记录；如果该 Credential 没有被其他 AIProvider 引用，则一并删除对应的 OAuth Credential。这样可以避免删除 AIProvider 后留下无主 Credential，也避免误删被多个 AIProvider 共享的 Credential。
 
 长期更推荐：
 
 ```text
-GrokProviderConfig / ClaudeProviderConfig / CodexProviderConfig
-    └── ProviderConfig       // 公共字段和 CredentialID
+GrokAIProviderConfig / ClaudeAIProviderConfig / CodexAIProviderConfig
+    └── AIProviderConfig       // 公共字段和 CredentialID
 
-ProviderConfig
+AIProviderConfig
     └── CredentialID         // OAuth Credential 的引用
 
 OAuth Credential
     └── 明文保存 access_token / refresh_token
 ```
 
-这样每个 Provider 可以独立定义自己的配置，同时公共 Provider 接口保持稳定。完整 OAuth 结果只在授权完成页面或专门的 Credential 查询接口中返回；普通 Provider 列表接口只返回 `CredentialID` 和脱敏后的账户信息，不返回 Token。
+这样每个 AIProvider 可以独立定义自己的配置，同时公共 AIProvider 接口保持稳定。完整 OAuth 结果只在授权完成页面或专门的 Credential 查询接口中返回；普通 AIProvider 列表接口只返回 `CredentialID` 和脱敏后的账户信息，不返回 Token。
 
 ## 7. 存储职责
 
@@ -592,7 +592,7 @@ Credential 的持久化和 Token 的生命周期管理分开：
 
 - `CredentialStore` 只负责按 ID 读取、保存和删除 `OAuthCredential`；
 - `OAuthManager` 或独立的 `CredentialManager` 负责过期判断、选择 `OAuthAdapter`、刷新 Token 和刷新并发控制；
-- Provider 只保存 `credentialID`，不负责读取、刷新或持久化 Token；
+- AIProvider 只保存 `credentialID`，不负责读取、刷新或持久化 Token；
 - CLI 使用文件型 `CredentialStore`；Web Service 直接使用 `internal/database/database.go` 中的 `database.Database` 实现 `CredentialStore` 所需的方法，不单独实现 `DatabaseCredentialStore`。
 
 推荐接口如下：
@@ -613,11 +613,11 @@ var store oauth.CredentialStore = db
 
 不建议把 `GetValidAccessToken` 直接放入 `CredentialStore`。否则文件存储和数据库存储都必须理解 Token 过期策略、OAuthAdapter、上游刷新协议和并发刷新，导致存储层与 OAuth 业务逻辑耦合。`GetValidAccessToken` 应保留在 OAuthManager/CredentialManager 中，由它调用 Store 的 `LoadCredential` 和 `SaveCredential`。
 
-短期授权 Session 直接保存在 OAuthManager 的内存字段中；它与已完成 Credential 的持久化不是同一类数据。Web Service 如果需要在 callback 和 Provider 页面之间传递结果，可以自行增加临时表或缓存；该临时存储属于 Web Service，不属于 OAuthManager 的 Session 存储。
+短期授权 Session 直接保存在 OAuthManager 的内存字段中；它与已完成 Credential 的持久化不是同一类数据。Web Service 如果需要在 callback 和 AIProvider 页面之间传递结果，可以自行增加临时表或缓存；该临时存储属于 Web Service，不属于 OAuthManager 的 Session 存储。
 
 CLI 的本地 OAuth 文件由 CLI 自己读写，或由 CLI 提供的 `FileCredentialStore` 读写。一个文件可以保存一个 OAuth 结果；`credentialID` 可以使用文件路径，也可以使用文件中生成的稳定 ID。写文件时必须使用临时文件加原子 rename，避免中途写坏凭据文件；Unix 使用 `0600`，Windows 使用当前用户私有 ACL。Token 和完整 OAuth Result 按当前要求以明文 JSON 保存，但不得写入普通日志。Session 始终使用内存实现，不使用 SQLite。
 
-Web Service 应将 Credential 独立保存到数据库，Provider 只保存 `credential_id`：
+Web Service 应将 Credential 独立保存到数据库，AIProvider 只保存 `credential_id`：
 
 ```text
 providers
@@ -644,15 +644,15 @@ oauth_credentials
     updated_at
 ```
 
-`credential_id` 不应单独作为权限依据。Web 请求必须同时校验当前用户是否拥有该 Credential，以及 Credential 的 Service 是否与 Provider 类型一致。多实例部署时，`internal/database/database.go` 中的数据库实现还必须使用行级锁、乐观锁或其他分布式并发控制，避免同一 Credential 被重复刷新。
+`credential_id` 不应单独作为权限依据。Web 请求必须同时校验当前用户是否拥有该 Credential，以及 Credential 的 Service 是否与 AIProvider 类型一致。多实例部署时，`internal/database/database.go` 中的数据库实现还必须使用行级锁、乐观锁或其他分布式并发控制，避免同一 Credential 被重复刷新。
 
 OAuth Session 只保存在 OAuthManager 的内存字段中。不要为 OAuth Session 增加 SQLite 表；进程退出或重启后，未完成的 OAuth 流程失效。已完成的 OAuthCredential 由 CLI 文件存储或 `internal/database/database.go` 中的 `database.Database` 保存，OAuthManager 不维护 Credential 列表，而是通过注入的 Store 访问它们。项目不单独实现 `DatabaseCredentialStore`。
 
-## 8. Provider 请求转发
+## 8. AIProvider 请求转发
 
-OAuth 的通用授权流程、Token 读取、过期判断、刷新和并发控制都由 `OAuthManager` 或 `CredentialManager` 负责。Provider 不再依赖单独的 `token_resolver.go` 或自行实现 Token Resolver，也不直接调用具体的 OAuthAdapter。
+OAuth 的通用授权流程、Token 读取、过期判断、刷新和并发控制都由 `OAuthManager` 或 `CredentialManager` 负责。AIProvider 不再依赖单独的 `token_resolver.go` 或自行实现 Token Resolver，也不直接调用具体的 OAuthAdapter。
 
-Provider 只需要向 OAuth 模块请求当前可用的 Access Token：
+AIProvider 只需要向 OAuth 模块请求当前可用的 Access Token：
 
 ```go
 accessToken, err := oauthManager.GetValidAccessToken(ctx, credentialID)
@@ -665,16 +665,16 @@ request.Header.Set("Authorization", "Bearer "+accessToken)
 `GetValidAccessToken` 的内部流程为：
 
 1. 根据 `CredentialID` 读取 Credential。
-2. 在 Web 场景校验当前用户是否拥有 Credential，并校验 Service 与 Provider 类型一致。
+2. 在 Web 场景校验当前用户是否拥有 Credential，并校验 Service 与 AIProvider 类型一致。
 3. 判断 Access Token 是否已经过期或进入刷新提前量。
 4. 如果仍然有效，直接返回 Access Token。
 5. 如果即将过期，通过对应的 `OAuthAdapter.Refresh` 刷新。
 6. 保存新的 Access Token、Refresh Token 和过期时间。
 7. 返回新的 Access Token。
 
-同一个 Credential 的刷新必须使用并发控制，并在等待锁后再次检查 Token，避免多个请求重复刷新。单进程 CLI 可以使用进程内锁并配合文件锁；Web 多实例部署则应使用数据库行锁、乐观锁或分布式锁。Provider 不参与这些细节，只负责请求转发和设置认证 Header。
+同一个 Credential 的刷新必须使用并发控制，并在等待锁后再次检查 Token，避免多个请求重复刷新。单进程 CLI 可以使用进程内锁并配合文件锁；Web 多实例部署则应使用数据库行锁、乐观锁或分布式锁。AIProvider 不参与这些细节，只负责请求转发和设置认证 Header。
 
-这样，Provider 只负责请求转发和设置认证 Header；Grok 的 Device Flow、Claude 的 Refresh JSON、Token 续期和并发刷新细节都不会泄漏到 Provider 或 Service 层。
+这样，AIProvider 只负责请求转发和设置认证 Header；Grok 的 Device Flow、Claude 的 Refresh JSON、Token 续期和并发刷新细节都不会泄漏到 AIProvider 或 Service 层。
 
 ## 9. 安全要求
 
@@ -683,9 +683,9 @@ request.Header.Set("Authorization", "Bearer "+accessToken)
 - Session 和临时 Result 必须有过期时间。
 - Refresh Token 和 Access Token 按当前要求明文保存；不得写入日志或错误信息。
 - 日志中禁止输出 Authorization Header、Access Token 和 Refresh Token。
-- 普通 Provider 列表接口不返回完整 OAuth Config。
+- 普通 AIProvider 列表接口不返回完整 OAuth Config。
 - OAuth Result 只能被创建它的用户读取。
-- 创建 Provider 时重新校验 Provider 类型、用户归属和字段合法性。
+- 创建 AIProvider 时重新校验 AIProvider 类型、用户归属和字段合法性。
 - CLI callback 只监听 `127.0.0.1`。
 - OAuth callback 成功或失败后都清理一次性 Session。
 - Token 刷新需要并发控制。
@@ -696,18 +696,18 @@ request.Header.Set("Authorization", "Bearer "+accessToken)
 
 当前项目已经完成独立的 `internal/oauth` 核心模块、Grok Device Flow、Codex/Claude
 PKCE Adapter、CLI OAuth 命令，以及阶段 6 所需的 Web OAuth 启动、回调、临时结果和
-Provider 绑定链路。Provider 层仍只保留公共配置和 Credential 引用；模型配置与上游
+AIProvider 绑定链路。AIProvider 层仍只保留公共配置和 Credential 引用；模型配置与上游
 请求转发不属于阶段 6/7 的范围。
 
 ### 10.2 `ai-unisub` 参考实现
 
-可运行的参考版本位于 `D:/Projects/ai-unisub`。它没有使用本文件前面规划的 `internal/oauth/*Adapter` 目录，而是采用“具体 Provider 持有协议实现，Server 持有 Web Flow”的结构：
+可运行的参考版本位于 `D:/Projects/ai-unisub`。它没有使用本文件前面规划的 `internal/oauth/*Adapter` 目录，而是采用“具体 AIProvider 持有协议实现，Server 持有 Web Flow”的结构：
 
 ```text
-internal/provider/grok/oauth.go       Grok Token、Refresh、Device Flow 辅助逻辑
-internal/provider/claude/oauth.go     Claude PKCE、Token Exchange、Refresh
-internal/provider/grok/provider.go    Grok Provider 接入 OAuth
-internal/provider/claude/provider.go  Claude Provider 接入 OAuth
+internal/aiprovider/grok/oauth.go       Grok Token、Refresh、Device Flow 辅助逻辑
+internal/aiprovider/claude/oauth.go     Claude PKCE、Token Exchange、Refresh
+internal/aiprovider/grok/aiprovider.go    Grok AIProvider 接入 OAuth
+internal/aiprovider/claude/aiprovider.go  Claude AIProvider 接入 OAuth
 internal/server/grok_oauth.go         Grok Device Flow、轮询和账号绑定
 internal/server/pkce_oauth.go         Claude/Codex PKCE Flow 和账号绑定
 internal/server/oauth.go              通用 OAuth 请求、刷新和订阅绑定
@@ -719,7 +719,7 @@ internal/server/oauth.go              通用 OAuth 请求、刷新和订阅绑�
 go test ./...
 ```
 
-其中包含 Grok Device OAuth、Claude PKCE、Token Refresh、state 校验、上游 401 重试和 Provider Header 测试。
+其中包含 Grok Device OAuth、Claude PKCE、Token Refresh、state 校验、上游 401 重试和 AIProvider Header 测试。
 
 ### 10.3 Grok 和 Claude 不能共用同一种流程
 
@@ -760,12 +760,12 @@ internal/oauth/
     ├── claude.go    PKCE、Token Exchange、Refresh
     └── codex.go     Codex 专用 PKCE 参数和 Token 解析
 
-internal/service/   Web API、用户归属、临时 Result 和 Provider 页面
-internal/provider/  Provider 配置和请求转发，不负责授权交互或 Token 刷新
+internal/service/   Web API、用户归属、临时 Result 和 AIProvider 页面
+internal/aiprovider/  AIProvider 配置和请求转发，不负责授权交互或 Token 刷新
 cmd/                CLI callback server 和本地凭据文件
 ```
 
-如果后续选择直接迁移 `ai-unisub` 的 Server 实现，而不是采用独立 `internal/oauth`，必须同步迁移完整的 Config、Model、Provider、Server OAuth、刷新锁和测试；只复制单个 Grok 或 Claude Adapter 不足以形成可运行链路。
+如果后续选择直接迁移 `ai-unisub` 的 Server 实现，而不是采用独立 `internal/oauth`，必须同步迁移完整的 Config、Model、AIProvider、Server OAuth、刷新锁和测试；只复制单个 Grok 或 Claude Adapter 不足以形成可运行链路。
 
 ## 11. 行动项
 
@@ -782,15 +782,15 @@ Grok DeviceAdapter / Codex PKCEAdapter / Claude PKCEAdapter
     ↓
 Web Service
     ↓
-Provider 请求转发集成
+AIProvider 请求转发集成
 ```
 
-先完成 CLI 的原因是：CLI 不依赖 Web 页面，可以先验证三家独立 Adapter、Grok Device Flow、Claude/Codex PKCE、Token Exchange、完整结果格式和错误处理；Web 阶段只复用已经验证过的 OAuthManager 和 Adapter，Provider 不参与授权交互。
+先完成 CLI 的原因是：CLI 不依赖 Web 页面，可以先验证三家独立 Adapter、Grok Device Flow、Claude/Codex PKCE、Token Exchange、完整结果格式和错误处理；Web 阶段只复用已经验证过的 OAuthManager 和 Adapter，AIProvider 不参与授权交互。
 
 ### 阶段一：核心模块
 
 - [x] 创建 `internal/oauth`。
-- [x] 定义 Provider、OAuthCredential 和 OAuthSession。
+- [x] 定义 AIProvider、OAuthCredential 和 OAuthSession。
 - [x] 定义 OAuthAdapter 和 OAuthManager。
 - [x] 在 OAuthManager 内实现 Session 的创建、读取、删除和过期清理。
 - [x] 实现 state、PKCE、超时和一次性 Session 测试。
@@ -828,43 +828,43 @@ Provider 请求转发集成
 - [ ] 增加 `POST /api/oauth/{provider}/start`。
 - [ ] 增加 `GET /oauth/{provider}/callback`。
 - [ ] 增加临时 OAuth Result API。
-- [ ] 修改 Provider 添加页面，增加 OAuth 按钮。
-- [ ] OAuth 成功后返回 Provider 页面。
+- [ ] 修改 AIProvider 添加页面，增加 OAuth 按钮。
+- [ ] OAuth 成功后返回 AIProvider 页面。
 - [ ] 显示完整 OAuth JSON。
 - [ ] 支持用户确认或编辑完整 OAuth 结果。
-- [ ] 提交 Provider 时保存 OAuth 结果和其他配置。
-- [ ] 增加用户归属和 Provider 类型校验。
+- [ ] 提交 AIProvider 时保存 OAuth 结果和其他配置。
+- [ ] 增加用户归属和 AIProvider 类型校验。
 
-### 阶段六：接入 Provider
+### 阶段六：接入 AIProvider
 
 - [x] 定义 Grok、Codex、Claude 各自的 Config 类型。
-- [x] 三个 Provider 支持 OAuth 页面所需的 OAuth Credential 引用字段。
-- [x] 公共 `ProviderConfig` 保持只包含公共字段。
-- [x] 在 Provider 添加页面接入 OAuth 启动、callback 结果展示和提交保存。
-- [x] 本阶段不实现三个 Provider 的模型配置、上游请求转发或其他非 OAuth 功能。
+- [x] 三个 AIProvider 支持 OAuth 页面所需的 OAuth Credential 引用字段。
+- [x] 公共 `AIProviderConfig` 保持只包含公共字段。
+- [x] 在 AIProvider 添加页面接入 OAuth 启动、callback 结果展示和提交保存。
+- [x] 本阶段不实现三个 AIProvider 的模型配置、上游请求转发或其他非 OAuth 功能。
 
 阶段六的实现约定如下：`GrokConfig`、`CodexConfig` 和 `ClaudeConfig` 都复用公共
-`ProviderConfig`，并通过 `OAuthConfig.CredentialID` 引用 Credential。创建 Provider
+`AIProviderConfig`，并通过 `OAuthConfig.CredentialID` 引用 Credential。创建 AIProvider
 时，服务端接收页面提交的一次性 OAuth 结果，将 Credential 保存到 `CredentialStore`，
-然后只把 `credential_id` 写入 Provider 配置；普通 Provider 列表会移除 `oauth`、
-`access_token` 和 `refresh_token` 字段。Provider 页面通过同一套 OAuthManager 完成
-启动、回调和临时结果确认，不在 Provider 层实现 OAuth 协议。
+然后只把 `credential_id` 写入 AIProvider 配置；普通 AIProvider 列表会移除 `oauth`、
+`access_token` 和 `refresh_token` 字段。AIProvider 页面通过同一套 OAuthManager 完成
+启动、回调和临时结果确认，不在 AIProvider 层实现 OAuth 协议。
 
 ### 阶段七：验收
 
 - [x] CLI 先完成 Grok、Codex、Claude OAuth，并输出完整结果。
-- [x] Web 再复用同一套 OAuthManager 完成 Grok、Codex、Claude OAuth 并创建 Provider。
+- [x] Web 再复用同一套 OAuthManager 完成 Grok、Codex、Claude OAuth 并创建 AIProvider。
 - [x] 验证不同用户无法读取彼此的 OAuth Result。
 - [x] 验证页面刷新、重复点击和 callback 重放。
 - [x] 验证完整 OAuth 结果不会出现在普通列表 API、日志和错误页面。
-- [x] 验证 OAuth 模块不依赖 Service，Provider 不负责 OAuth 流程，也不依赖 OAuthAdapter。
+- [x] 验证 OAuth 模块不依赖 Service，AIProvider 不负责 OAuth 流程，也不依赖 OAuthAdapter。
 
 阶段七验收结果：CLI 和 Web 都通过 `go test ./...` 的构建与单元测试检查。Web
 临时结果绑定当前登录用户并在读取后立即删除；过期、重复读取、错误用户读取和
-callback 重放均返回失败。OAuth Token 仅在 CLI 明确要求 stdout 或 Provider 页面
-的临时结果接口中出现，不进入普通 Provider 列表；日志使用固定错误信息，不打印
+callback 重放均返回失败。OAuth Token 仅在 CLI 明确要求 stdout 或 AIProvider 页面
+的临时结果接口中出现，不进入普通 AIProvider 列表；日志使用固定错误信息，不打印
 Token。OAuthManager 只依赖 OAuth 自身的 CredentialStore，Web 负责交互和用户归属，
-Provider 只保存 Credential 引用。
+AIProvider 只保存 Credential 引用。
 
 ## 12. 第一版验收标准
 
@@ -879,19 +879,19 @@ CLI 验收通过的标准：
 3. OAuth 成功后，默认只向 stdout 输出完整 OAuth JSON；日志、提示和错误全部写入 stderr，且不包含 Access Token 或 Refresh Token。
 4. `state`、PKCE、Session 过期时间、一次性 callback 消费和 Token Exchange 校验有效；Grok 的 Device Flow 轮询状态和过期行为正确。
 5. CLI 不写服务器数据库、Web Session、Keychain 或默认配置文件；未指定 `--output` 时只在进程内保存结果。
-6. 指定 `--output` 时可以创建或原子更新本地凭据文件，并执行 Provider 类型、JSON 格式和文件权限校验。
+6. 指定 `--output` 时可以创建或原子更新本地凭据文件，并执行 AIProvider 类型、JSON 格式和文件权限校验。
 7. `status`、`refresh`、`revoke`、`logout` 可以针对 `--file` 指定的单个凭据文件工作，并且不会把 Token 写入普通日志。
-8. OAuth 模块不依赖 `service`、`cmd` 或具体 Provider 实现；CLI 不调用 Web Handler 或 Web Service。
+8. OAuth 模块不依赖 `service`、`cmd` 或具体 AIProvider 实现；CLI 不调用 Web Handler 或 Web Service。
 
 ### 第二步：Web
 
 Web 验收通过的标准：
 
-1. 用户可以从 Provider 添加页面启动 Grok、Codex 或 Claude OAuth，并通过 `POST /api/oauth/{provider}/start` 获取授权地址。
+1. 用户可以从 AIProvider 添加页面启动 Grok、Codex 或 Claude OAuth，并通过 `POST /api/oauth/{provider}/start` 获取授权地址。
 2. OAuth callback 可以完成 Session、`state`、PKCE、过期时间和当前用户归属校验；成功或失败后都清理一次性 Session。
-3. OAuth 成功后返回 Provider 添加页面，并通过临时 OAuth Result 显示完整 OAuth JSON；URL 中只包含结果 ID，不包含 Token。
-4. 用户可以填写或确认 Provider 名称和并发数，并提交 `POST /api/providers` 保存 OAuth Credential 和其他 Provider 配置；Provider 不保存 Model。
-5. 临时 OAuth Result 具备短期过期、用户归属、Provider 类型校验，读取或提交后删除，且不同用户无法读取彼此的结果。
-6. Provider 只保存 `credential_id` 和自身配置；Provider 请求转发通过同一个 `OAuthManager` 获取有效 Access Token，并支持过期刷新和刷新并发控制。
-7. 普通 Provider 列表 API、日志和错误页面不返回或泄露 Access Token、Refresh Token 和完整 OAuth Config。
-8. Web 与 CLI 使用同一个 `OAuthManager` 和 `OAuthAdapter`；OAuth 模块不依赖 `service`，Provider 模块不负责 OAuth 授权流程。
+3. OAuth 成功后返回 AIProvider 添加页面，并通过临时 OAuth Result 显示完整 OAuth JSON；URL 中只包含结果 ID，不包含 Token。
+4. 用户可以填写或确认 AIProvider 名称和并发数，并提交 `POST /api/ai-providers` 保存 OAuth Credential 和其他 AIProvider 配置；AIProvider 不保存 Model。
+5. 临时 OAuth Result 具备短期过期、用户归属、AIProvider 类型校验，读取或提交后删除，且不同用户无法读取彼此的结果。
+6. AIProvider 只保存 `credential_id` 和自身配置；AIProvider 请求转发通过同一个 `OAuthManager` 获取有效 Access Token，并支持过期刷新和刷新并发控制。
+7. 普通 AIProvider 列表 API、日志和错误页面不返回或泄露 Access Token、Refresh Token 和完整 OAuth Config。
+8. Web 与 CLI 使用同一个 `OAuthManager` 和 `OAuthAdapter`；OAuth 模块不依赖 `service`，AIProvider 模块不负责 OAuth 授权流程。

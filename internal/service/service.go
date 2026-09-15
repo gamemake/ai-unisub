@@ -2,10 +2,10 @@
 package service
 
 import (
+	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
 	"ai-unisub/internal/oauth/adapters"
-	"ai-unisub/internal/provider"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,17 +31,17 @@ type Module interface {
 	Close() error
 }
 type Service struct {
-	cfg       Config
-	db        database.Database
-	providers *provider.ProviderManager
-	proxy     *ProxyManager
-	oauth     *oauth.OAuthManager
-	router    *router
-	results   *OAuthResultStore
-	modules   []Module
-	authSvc   *authService
-	mu        sync.Mutex
-	closed    bool
+	cfg         Config
+	db          database.Database
+	aiProviders *aiprovider.AIProviderManager
+	proxy       *ProxyManager
+	oauth       *oauth.OAuthManager
+	router      *router
+	results     *OAuthResultStore
+	modules     []Module
+	authSvc     *authService
+	mu          sync.Mutex
+	closed      bool
 }
 
 func New(cfg Config) (*Service, error) {
@@ -55,16 +55,16 @@ func New(cfg Config) (*Service, error) {
 	if e = db.Open(); e != nil {
 		return nil, fmt.Errorf("open database: %w", e)
 	}
-	return NewWithDependencies(cfg, db, provider.NewProviderManager())
+	return NewWithDependencies(cfg, db, aiprovider.NewAIProviderManager())
 }
-func NewWithDependencies(cfg Config, db database.Database, p *provider.ProviderManager) (*Service, error) {
+func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProviderManager) (*Service, error) {
 	if db == nil {
 		return nil, errors.New("database is required")
 	}
 	if p == nil {
-		p = provider.NewProviderManager()
+		p = aiprovider.NewAIProviderManager()
 	}
-	s := &Service{cfg: cfg, db: db, providers: p, proxy: NewProxyManager(db), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
+	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: NewProxyManager(db), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
 	s.authSvc = &authService{s: s, sessions: map[string]session{}}
 	for _, adapter := range []oauth.OAuthAdapter{adapters.NewGrok(adapters.GrokConfig{}), adapters.NewCodex(adapters.CodexConfig{}), adapters.NewClaude(adapters.ClaudeConfig{}), oauth.NewDummyAdapter()} {
@@ -72,12 +72,12 @@ func NewWithDependencies(cfg Config, db database.Database, p *provider.ProviderM
 			return nil, fmt.Errorf("register OAuth adapter: %w", err)
 		}
 	}
-	factories := map[string]provider.ProviderFactory{
-		"grok":   provider.GrokProviderFactory(s.oauth),
-		"codex":  provider.CodexProviderFactory(s.oauth),
-		"claude": provider.ClaudeProviderFactory(s.oauth),
-		"dummy": func(id string, config json.RawMessage) (provider.Provider, error) {
-			return provider.NewDummyProvider(id, config)
+	factories := map[string]aiprovider.AIProviderFactory{
+		"grok":   aiprovider.GrokAIProviderFactory(s.oauth),
+		"codex":  aiprovider.CodexAIProviderFactory(s.oauth),
+		"claude": aiprovider.ClaudeAIProviderFactory(s.oauth),
+		"dummy": func(id string, config json.RawMessage) (aiprovider.AIProvider, error) {
+			return aiprovider.NewDummyAIProvider(id, config)
 		},
 	}
 	for name, factory := range factories {
@@ -110,14 +110,14 @@ func (s *Service) AddModule(m Module) error {
 	s.modules = append(s.modules, m)
 	return nil
 }
-func (s *Service) Handler() http.Handler                { return s.router.handler(s) }
-func (s *Service) Config() Config                       { return s.cfg }
-func (s *Service) Database() database.Database          { return s.db }
-func (s *Service) Providers() *provider.ProviderManager { return s.providers }
-func (s *Service) Proxy() *ProxyManager                 { return s.proxy }
-func (s *Service) OAuth() *oauth.OAuthManager           { return s.oauth }
-func (s *Service) Auth() AuthService                    { return s.authSvc }
-func (s *Service) OAuthResults() *OAuthResultStore      { return s.results }
+func (s *Service) Handler() http.Handler                      { return s.router.handler(s) }
+func (s *Service) Config() Config                             { return s.cfg }
+func (s *Service) Database() database.Database                { return s.db }
+func (s *Service) AIProviders() *aiprovider.AIProviderManager { return s.aiProviders }
+func (s *Service) Proxy() *ProxyManager                       { return s.proxy }
+func (s *Service) OAuth() *oauth.OAuthManager                 { return s.oauth }
+func (s *Service) Auth() AuthService                          { return s.authSvc }
+func (s *Service) OAuthResults() *OAuthResultStore            { return s.results }
 func (s *Service) Close() error {
 	s.mu.Lock()
 	if s.closed {

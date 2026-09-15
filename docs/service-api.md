@@ -1,8 +1,8 @@
 # `api` Service Module
 
-`api` 是面向 Web UI 和管理功能的 JSON API Service Module，负责当前用户、密码、用户管理、Provider Account、API Key、调用记录以及 OAuth JSON API。
+`api` 是面向 Web UI 和管理功能的 JSON API Service Module，负责当前用户、密码、用户管理、AIProvider Account、API Key、调用记录以及 OAuth JSON API。
 
-OAuth 上游 callback 由 `oauthflow` Module 负责；项目内部 Provider 的 Codex、Claude、Grok 以及其他 AI 请求由 `gateway` Module 负责。
+OAuth 上游 callback 由 `oauthflow` Module 负责；项目内部 AIProvider 的 Codex、Claude、Grok 以及其他 AI 请求由 `gateway` Module 负责。
 
 ## 1. 通用约定
 
@@ -89,26 +89,26 @@ Service 的认证中间件先验证 Session，并将 `Principal` 写入 `request
 - 普通用户不能访问用户管理接口；
 - 用户 ID 来自 URL 只表示目标资源，不能替代当前请求的身份。
 
-## 4. Provider Account 管理
+## 4. AIProvider Account 管理
 
 | Method | Path | Path 参数 | Query 参数 | Body | 权限 | 作用 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `GET` | `/api/providers` | 无 | 无 | 无 | Session | 返回 Provider Account 列表；敏感 Credential 必须脱敏 |
-| `POST` | `/api/providers` | 无 | 无 | `name`、`provider`、`config` | Session + Admin | 创建 Provider Account |
-| `PUT` | `/api/providers/{id}` | `id`：Account ID | 无 | `name`、`provider`、`config` | Session + Admin | 编辑 Provider Account；Provider 类型不可变更 |
-| `DELETE` | `/api/providers/{id}` | `id`：Account ID | 无 | 无 | Session + Admin | 删除 Provider Account，并清理无引用 Credential |
+| `GET` | `/api/ai-providers` | 无 | 无 | 无 | Session | 返回 AIProvider Account 列表；敏感 Credential 必须脱敏 |
+| `POST` | `/api/ai-providers` | 无 | 无 | `name`、`provider`、`config` | Session + Admin | 创建 AIProvider Account |
+| `PUT` | `/api/ai-providers/{id}` | `id`：Account ID | 无 | `name`、`provider`、`config` | Session + Admin | 编辑 AIProvider Account；AIProvider 类型不可变更 |
+| `DELETE` | `/api/ai-providers/{id}` | `id`：Account ID | 无 | 无 | Session + Admin | 删除 AIProvider Account，并清理无引用 Credential |
 
-`POST /api/providers` 请求字段：
+`POST /api/ai-providers` 请求字段：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `name` | string | 否 | Account 显示名称 |
-| `provider` | string | 是 | Provider 类型，例如 `codex`、`claude`、`grok` |
-| `config` | object/string | 是 | Provider 配置；如果包含 OAuth Credential，保存后只保留 `credential_id` |
+| `provider` | string | 是 | AIProvider 类型，例如 `codex`、`claude`、`grok` |
+| `config` | object/string | 是 | AIProvider 配置；如果包含 OAuth Credential，保存后只保留 `credential_id` |
 
-Provider Account 规则：
+AIProvider Account 规则：
 
-- 普通用户可以读取 Provider 列表，以便创建 API Key 或选择可用 Account；
+- 普通用户可以读取 AIProvider 列表，以便创建 API Key 或选择可用 Account；
 - 创建和删除必须由管理员执行；
 - API 响应不能包含 `access_token`、`refresh_token` 或其他 Credential 原文；
 - 保存 OAuth Credential 和 Account 配置失败时，应执行补偿清理；
@@ -156,7 +156,7 @@ Provider Account 规则：
 
 ## 7. OAuth JSON API
 
-OAuth JSON API 的业务契约属于 `api` Module；OAuth 上游 callback 属于 `oauthflow` Module。当前实现由 `OAuthFlowModule` 注册 `/api/oauth/` 路由，但两者的职责边界仍按本节和 [`service-oauthflow.md`](service-oauthflow.md) 理解。这里的 OAuth 上游服务不是项目内部的 `provider` Module 或 `ProviderManager`。
+OAuth JSON API 的业务契约属于 `api` Module；OAuth 上游 callback 属于 `oauthflow` Module。当前实现由 `OAuthFlowModule` 注册 `/api/oauth/` 路由，但两者的职责边界仍按本节和 [`service-oauthflow.md`](service-oauthflow.md) 理解。这里的 OAuth 上游服务不是项目内部的 `provider` Module 或 `AIProviderManager`。
 
 | Method | Path | Path 参数 | Query 参数 | Body | 权限 | 作用 |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -207,11 +207,11 @@ OAuth API 规则：
 - Device Flow 轮询等待时返回 `202`，响应包含 `status`、`error`、`interval_seconds` 和 `expires_at`；
 - callback 的 state、过期时间和 PKCE 校验由 `OAuthManager` 负责；
 - callback URL、callback 的固定 HTML 页面、result ID 的交接方式和 OAuth 上游服务的具体协议由 [`service-oauthflow.md`](service-oauthflow.md) 维护；callback 成功时通过 `X-OAuth-Result-ID` 响应头交接 result ID，不把它写入 HTML、URL 或日志；
-- `/api/oauth/results/{id}` 成功响应设置 `Cache-Control: no-store`，并返回完整的 `OAuthCredential`；除该一次性接口外，普通 API、Provider 列表、调用记录、callback 页面和日志都不得返回 Credential 敏感字段。
+- `/api/oauth/results/{id}` 成功响应设置 `Cache-Control: no-store`，并返回完整的 `OAuthCredential`；除该一次性接口外，普通 API、AIProvider 列表、调用记录、callback 页面和日志都不得返回 Credential 敏感字段。
 
 ### OAuth API 中仍需确定或补齐的内容
 
-- 前端如何接收 callback 返回的 `X-OAuth-Result-ID`，以及读取结果后创建 Provider、持久化 Credential 的完整流程仍待补齐；该交接不能依赖 callback HTML、URL 查询参数或日志。
+- 前端如何接收 callback 返回的 `X-OAuth-Result-ID`，以及读取结果后创建 AIProvider、持久化 Credential 的完整流程仍待补齐；该交接不能依赖 callback HTML、URL 查询参数或日志。
 - callback replay、上游 OAuth error、token exchange 失败、result 保存失败、Device Flow 的 pending/slow down/过期和并发 poll 仍需端到端测试；这些情况不能泄漏 Credential 或 result 是否属于其他用户。
 
 ## 8. 认证与业务授权
@@ -239,7 +239,7 @@ api Handler
 本 Module 使用：
 
 - `database.Database`：用户、Account、API Key、调用记录和 Credential；
-- `ProviderManager`：创建、更新和删除 Provider 实例；
+- `AIProviderManager`：创建、更新和删除 AIProvider 实例；
 - `OAuthManager`：OAuth Session 和协议操作；
 - `OAuthResultStore`：一次性 OAuth 结果；
 - `AuthService`：Session、Principal 和管理员权限。
@@ -249,7 +249,7 @@ api Handler
 - admin/user 对同一路由的不同查询范围和响应内容；
 - 普通用户无法访问管理员专属操作；
 - URL、Query 或 Body 中的用户 ID 不能绕过 Principal；
-- Provider 配置校验和 Credential 脱敏；
+- AIProvider 配置校验和 Credential 脱敏；
 - API Key 只返回一次明文；
 - OAuth Session 和结果的跨用户访问、过期和重复读取；
 - 数据库失败时的状态码和 Credential 补偿清理。

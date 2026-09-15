@@ -1,0 +1,14 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { fileURLToPath, URL } from 'node:url'
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
+  build: { outDir: 'internal/web/dist', emptyOutDir: true },
+  server: {
+    proxy: Object.fromEntries(['/api', '/logout', '/callback', '/auth', '/oauth', '/v1'].map(path =>
+      [path, { target: process.env.UNISUB_BACKEND_URL || 'http://127.0.0.1:8080' }]))
+  }
+})

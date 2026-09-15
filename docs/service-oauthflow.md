@@ -1,8 +1,8 @@
 # `oauthflow` Service Module
 
-`oauthflow` 负责 Web Service 与外部 OAuth 授权服务之间的 callback 衔接。本文所说的 OAuth 上游是外部 authorization server 和 token endpoint，不是项目内部的 `provider` Module 或 `ProviderManager`。
+`oauthflow` 负责 Web Service 与外部 OAuth 授权服务之间的 callback 衔接。本文所说的 OAuth 上游是外部 authorization server 和 token endpoint，不是项目内部的 `provider` Module 或 `AIProviderManager`。
 
-OAuth 协议、PKCE、Device Flow、Token Exchange、刷新和撤销由 `internal/oauth` 提供；OAuth JSON API（`start`、`poll`、`result`）由 `api` Module 提供；`oauthflow` 只负责无浏览器 Session 的上游 callback。项目内部 Provider 的 AI 请求转发由 `gateway` 负责。
+OAuth 协议、PKCE、Device Flow、Token Exchange、刷新和撤销由 `internal/oauth` 提供；OAuth JSON API（`start`、`poll`、`result`）由 `api` Module 提供；`oauthflow` 只负责无浏览器 Session 的上游 callback。项目内部 AIProvider 的 AI 请求转发由 `gateway` 负责。
 
 ## 1. 模块边界
 
@@ -15,13 +15,13 @@ OAuth 协议、PKCE、Device Flow、Token Exchange、刷新和撤销由 `interna
 
 `oauthflow` 不负责：
 
-- 用户登录、用户管理、Provider 管理、API Key 或调用记录；
+- 用户登录、用户管理、AIProvider 管理、API Key 或调用记录；
 - OAuth Credential 的长期持久化；
-- 在 callback 中创建或修改 Provider；
+- 在 callback 中创建或修改 AIProvider；
 - 实现某个具体上游的 OAuth 协议；
 - 渲染业务页面。
 
-callback 完成后只保存短期、一次性的结果。用户随后通过 `api` Module 读取结果，并在自己的业务流程中确认、保存 Credential 和创建 Provider。
+callback 完成后只保存短期、一次性的结果。用户随后通过 `api` Module 读取结果，并在自己的业务流程中确认、保存 Credential 和创建 AIProvider。
 
 ## 2. 路由与认证
 
@@ -68,7 +68,7 @@ func (s *OAuthResultStore) Take(id, subjectID string) (OAuthResult, error)
 - 不存在、过期和跨用户读取统一返回 not found，避免泄漏 result 是否存在；
 - 并发读取同一个 ID 时最多只有一个请求成功。
 
-结果 ID 不是 Credential ID。它只用于完成当前授权流程，不能作为长期引用，也不能写入 Provider 配置。
+结果 ID 不是 Credential ID。它只用于完成当前授权流程，不能作为长期引用，也不能写入 AIProvider 配置。
 
 ## 4. 标准流程
 
@@ -81,7 +81,7 @@ func (s *OAuthResultStore) Take(id, subjectID string) (OAuthResult, error)
 5. callback 根据 state 找到待处理 Session，并以 Session 中保存的 service、subjectID 和 redirect URI 为准调用 `OAuthManager.Complete`。
 6. `Complete` 校验 Session、过期时间、state 和一次性消费语义，然后使用保存的 PKCE verifier 与保存的 redirect URI 完成 token exchange。
 7. 成功获得 Credential 后，callback 将完整 Credential 写入 `OAuthResultStore`，得到一次性 result ID，并返回固定的成功页面。
-8. 前端使用已认证的 `GET /api/oauth/results/{id}` 读取并消费结果；服务端随后再将 Credential 持久化到 CredentialStore，并只在 Provider 配置中保存 `credential_id`。
+8. 前端使用已认证的 `GET /api/oauth/results/{id}` 读取并消费结果；服务端随后再将 Credential 持久化到 CredentialStore，并只在 AIProvider 配置中保存 `credential_id`。
 
 ### 4.2 Device Flow 流程
 
@@ -152,7 +152,7 @@ callback 只返回固定的最小 HTML 页面：
 
 result ID 应通过前端已拥有的流程状态、约定的安全交接机制或后续 API 流程传递，不能放入 callback HTML 页面、日志或 URL 查询参数中。若产品流程要求浏览器 callback 直接把结果交给前端，需要另外定义安全的、短期的交接机制，并保持 result API 的用户归属和一次性消费约束。
 
-OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 result 时返回完整的 `OAuthCredential`，包括 Access Token、Refresh Token 和其他标准化字段。完整 Credential 只允许出现在这个一次性 result API 中，不得出现在 Provider 列表、调用记录、普通管理 API、callback 页面或日志中。
+OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 result 时返回完整的 `OAuthCredential`，包括 Access Token、Refresh Token 和其他标准化字段。完整 Credential 只允许出现在这个一次性 result API 中，不得出现在 AIProvider 列表、调用记录、普通管理 API、callback 页面或日志中。
 
 ## 7. 错误、日志与安全要求
 
@@ -194,9 +194,9 @@ OAuth JSON API 的职责见 [`service-api.md`](service-api.md)：成功读取 re
 
 当前仍需继续补齐或验证：
 
-- 前端对 `X-OAuth-Result-ID` 的交接和完整 Provider 创建流程；
+- 前端对 `X-OAuth-Result-ID` 的交接和完整 AIProvider 创建流程；
 - Handler 的上游错误、callback replay 和 Device Flow 端到端测试；
-- Credential 持久化、Provider 配置保存和失败补偿流程。
+- Credential 持久化、AIProvider 配置保存和失败补偿流程。
 
 至少应覆盖以下测试：
 

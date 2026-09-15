@@ -41,3 +41,10 @@ Thumbs.db
 
 # Temporary logs
 *.log
+
+# Frontend dependencies and generated assets (build before compiling Go)
+/node_modules/
+/internal/web/dist/
+*.tsbuildinfo
+/playwright-report/
+/test-results/

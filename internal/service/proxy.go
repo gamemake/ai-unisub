@@ -61,7 +61,7 @@ func (m *ProxyManager) Save(v *database.PersistedProxyGroup) error {
 			return errors.New(common.MessageInvalidProxy)
 		}
 		if v.Proxies[i].ID == "" {
-			v.Proxies[i].ID = newProxyID()
+			v.Proxies[i].ID = NewProxyID()
 		}
 		if v.Proxies[i].Status == "" {
 			if v.Proxies[i].Available {
@@ -288,17 +288,10 @@ func (m *ProxyManager) testURL(ctx context.Context, proxyURL string) (*database.
 	}
 	return result, nil
 }
-func newProxyID() string {
+func NewProxyID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return hex.EncodeToString([]byte(time.Now().String()))
 	}
 	return hex.EncodeToString(b[:])
 }
-
-type ProxyModule struct{}
-
-func NewProxyModule() *ProxyModule              { return &ProxyModule{} }
-func (m *ProxyModule) Name() string             { return "proxy" }
-func (m *ProxyModule) Close() error             { return nil }
-func (m *ProxyModule) Init(ModuleContext) error { return nil }

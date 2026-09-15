@@ -70,12 +70,12 @@ func sqlitePathFromURL(parsed *url.URL, rawURL string) (string, error) {
 
 // PersistedAccount stores a provider instance and its serialized configuration.
 type PersistedAccount struct {
-	ID        string          `json:"id"`
-	Provider  string          `json:"provider"`
-	Name      string          `json:"name"`
-	Config    json.RawMessage `json:"config"`
-	CreatedAt time.Time       `json:"created_at"`
-	UpdatedAt time.Time       `json:"updated_at"`
+	ID         string          `json:"id"`
+	AIProvider string          `json:"provider"`
+	Name       string          `json:"name"`
+	Config     json.RawMessage `json:"config"`
+	CreatedAt  time.Time       `json:"created_at"`
+	UpdatedAt  time.Time       `json:"updated_at"`
 }
 
 // PersistedProxyGroup is a named pool of outbound proxy addresses.
@@ -143,7 +143,7 @@ type PersistedAPIKey struct {
 // PersistedCallTrace is the database-owned representation of one API call.
 //
 // This type is intentionally separate from the provider package's
-// ProviderCallTrace. The layer that coordinates a request should map the provider
+// AIProviderCallTrace. The layer that coordinates a request should map the provider
 // result into this type and add the request metadata that only the outer
 // layer knows, such as the authenticated user API key and selected provider
 // instance.
@@ -152,11 +152,11 @@ type PersistedAPIKey struct {
 type PersistedCallTrace struct {
 	ID string `json:"id"`
 
-	APIKey       string `json:"apikey"`
-	ProviderType string `json:"provider_type"`
-	AccountID    string `json:"account_id"`
-	RequestID    string `json:"request_id"`
-	SourceIP     string `json:"source_ip"`
+	APIKey         string `json:"apikey"`
+	AIProviderType string `json:"provider_type"`
+	AccountID      string `json:"account_id"`
+	RequestID      string `json:"request_id"`
+	SourceIP       string `json:"source_ip"`
 
 	URL                    string      `json:"url"`
 	HTTPErrorCode          int         `json:"http_error_code"`
@@ -183,7 +183,7 @@ type PersistedCallTrace struct {
 type PersistedCallTraceSummary struct {
 	ID                  string    `json:"id"`
 	APIKey              string    `json:"apikey"`
-	ProviderType        string    `json:"provider_type"`
+	AIProviderType      string    `json:"provider_type"`
 	AccountID           string    `json:"account_id"`
 	RequestID           string    `json:"request_id"`
 	SourceIP            string    `json:"source_ip"`
@@ -206,7 +206,7 @@ type TimeRange struct {
 }
 
 // Database is the persistence contract. Implementations may be SQLite,
-// Postgres, or an in-memory store used by tests. Provider configurations are
+// Postgres, or an in-memory store used by tests. AIProvider configurations are
 // instance records, not configuration records for a provider type.
 type Database interface {
 	Open() error
@@ -244,7 +244,7 @@ type Database interface {
 	// range is unbounded. The returned count is the total
 	// number of matching traces before pagination. A trace matches when its
 	// source IP, model, or request ID equals any value in values.
-	QueryCallTraces(userName, providerName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, values ...string) ([]PersistedCallTraceSummary, int, error)
+	QueryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, values ...string) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
 	GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error)

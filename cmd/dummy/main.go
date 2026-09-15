@@ -137,8 +137,8 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 			if account == nil {
 				return nil, nil, fmt.Errorf("API key %q references missing account %q", value, keys[i].AccountID)
 			}
-			if account.Provider != "dummy" {
-				return nil, nil, fmt.Errorf("API key %q is bound to provider %q, not dummy", value, account.Provider)
+			if account.AIProvider != "dummy" {
+				return nil, nil, fmt.Errorf("API key %q is bound to provider %q, not dummy", value, account.AIProvider)
 			}
 			if foundKey != nil {
 				return nil, nil, fmt.Errorf("API key %q is ambiguous", value)
@@ -197,7 +197,7 @@ func recordDummyCall(db database.Database, key *database.PersistedAPIKey, accoun
 	trace := &database.PersistedCallTrace{
 		ID:                     id,
 		APIKey:                 key.Key,
-		ProviderType:           "dummy",
+		AIProviderType:         "dummy",
 		AccountID:              account.ID,
 		RequestID:              requestID,
 		SourceIP:               "127.0.0.1",

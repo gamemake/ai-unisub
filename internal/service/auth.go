@@ -68,7 +68,7 @@ func (a *authService) EnsureAdmin(n, p string) error {
 	for _, u := range xs {
 		if u.Name == n {
 			if u.PasswordHash == "" {
-				u.PasswordHash = hashPassword(p)
+				u.PasswordHash = HashPassword(p)
 				u.UpdatedAt = time.Now().UTC()
 				return a.s.db.SaveUser(&u)
 			}
@@ -80,7 +80,7 @@ func (a *authService) EnsureAdmin(n, p string) error {
 		return err
 	}
 	now := time.Now().UTC()
-	return a.s.db.SaveUser(&database.PersistedUser{ID: hex.EncodeToString(id[:]), Name: n, Role: database.UserRoleAdmin, Enabled: true, PasswordHash: hashPassword(p), CreatedAt: now, UpdatedAt: now})
+	return a.s.db.SaveUser(&database.PersistedUser{ID: hex.EncodeToString(id[:]), Name: n, Role: database.UserRoleAdmin, Enabled: true, PasswordHash: HashPassword(p), CreatedAt: now, UpdatedAt: now})
 }
 func (a *authService) CreateSession(user *database.PersistedUser) (string, error) {
 	if user == nil || user.ID == "" {
@@ -256,7 +256,7 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 
 const passwordIterations = 120000
 
-func hashPassword(password string) string {
+func HashPassword(password string) string {
 	var salt [16]byte
 	if _, err := rand.Read(salt[:]); err != nil {
 		panic(err)
@@ -271,7 +271,7 @@ func passwordDigest(salt []byte, password string) [32]byte {
 	}
 	return sum
 }
-func verifyPassword(encoded, password string) bool {
+func VerifyPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 3 || parts[0] != "sha256" {
 		return false

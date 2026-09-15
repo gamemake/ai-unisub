@@ -9,3 +9,8 @@ bin
 Dockerfile
 docker-compose*.yml
 README.md
+node_modules
+internal/web/dist
+test-results
+playwright-report
+*.tsbuildinfo
