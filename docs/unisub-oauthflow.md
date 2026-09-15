@@ -6,11 +6,11 @@
 
 | 方法 | 路径 | 权限 | 作用 |
 | --- | --- | --- | --- |
-| POST | `/api/oauth/{service}/start` | Session | 开始授权，可提交 `{"proxy":"..."}` 或空 Body |
-| GET | `/api/oauth/{service}/status/{session}` | Session + 归属 | 查询 PKCE 待完成状态或结果 ID |
-| POST | `/api/oauth/{service}/complete/{session}` | Session + 归属 | 提交 `code/state` 完成 PKCE |
-| POST | `/api/oauth/{service}/poll/{session}` | Session + 归属 | 轮询 Device Flow |
-| GET | `/api/oauth/results/{id}` | Session + 归属 | 一次性读取结果 |
+| POST | `/api/oauth/{service}/start` | 管理员 Session | 开始授权，可提交 `{"proxy":"..."}` 或空 Body |
+| GET | `/api/oauth/{service}/status/{session}` | 管理员 Session + 归属 | 查询 PKCE 待完成状态或结果 ID |
+| POST | `/api/oauth/{service}/complete/{session}` | 管理员 Session + 归属 | 提交 `code/state` 完成 PKCE |
+| POST | `/api/oauth/{service}/poll/{session}` | 管理员 Session + 归属 | 轮询 Device Flow |
+| GET | `/api/oauth/results/{id}` | 管理员 Session + 归属 | 一次性读取结果 |
 | GET | `/auth/callback` | 无浏览器认证；校验 state | Codex 回调路径 |
 | GET | `/callback` | 无浏览器认证；校验 state | 默认兼容回调路径 |
 | GET | `/oauth/code/callback` | 无浏览器认证；校验 state | 额外兼容回调路径 |

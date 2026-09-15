@@ -55,6 +55,12 @@ func setup(t *testing.T) (*Manager, *testStore, *time.Time) {
 	store := &testStore{}
 	policy := DefaultPolicy()
 	policy.FailureThreshold = 1
+	// These contract tests use immediate, single-success recovery. Dedicated
+	// policy tests exercise production cooldowns and multi-success recovery.
+	policy.ApplicationCooldown = time.Minute
+	policy.NetworkRecoverySuccesses = 1
+	policy.ApplicationRecoverySuccesses = 1
+	policy.AutoProbe = false
 	m := NewManager(store, policy)
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	m.now = func() time.Time { return now }

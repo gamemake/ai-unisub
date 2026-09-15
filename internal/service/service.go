@@ -74,6 +74,21 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	}
 	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxy.NewManager(db, policy), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
+	if raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey); err != nil {
+		_ = s.proxy.Close()
+		return nil, fmt.Errorf("load AI catalog: %w", err)
+	} else if len(raw) > 0 {
+		var catalog aiprovider.Catalog
+		if err = json.Unmarshal(raw, &catalog); err != nil {
+			_ = s.proxy.Close()
+			return nil, err
+		}
+		aiprovider.RestoreBuiltinURLs(&catalog)
+		if err = p.SetCatalog(catalog); err != nil {
+			_ = s.proxy.Close()
+			return nil, err
+		}
+	}
 	s.authSvc = &authService{s: s, sessions: map[string]session{}}
 	for _, adapter := range []oauth.OAuthAdapter{adapters.NewGrok(adapters.GrokConfig{}), adapters.NewCodex(adapters.CodexConfig{}), adapters.NewClaude(adapters.ClaudeConfig{}), oauth.NewDummyAdapter()} {
 		if err := s.oauth.Register(adapter); err != nil {
@@ -81,6 +96,7 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 		}
 	}
 	factories := map[string]aiprovider.AIProviderFactory{
+		"api":    aiprovider.APIProviderFactory(s.oauth),
 		"grok":   aiprovider.GrokAIProviderFactory(s.oauth),
 		"codex":  aiprovider.CodexAIProviderFactory(s.oauth),
 		"claude": aiprovider.ClaudeAIProviderFactory(s.oauth),

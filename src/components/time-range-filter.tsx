@@ -25,7 +25,7 @@ export function TimeRangeFilter({ onChange }: { onChange: (value: TimeFilter) =>
     }}>
       <Field label="开始日期"><DatePicker value={from} max={to || undefined} onChange={setFrom} /></Field>
       <Field label="结束日期"><DatePicker value={to} min={from || undefined} onChange={setTo} /></Field>
-      <Button size="icon" type="submit" aria-label="查询" disabled={!from || !to || from > to}><Search /></Button>
+      <Button size="icon" className="size-10" type="submit" aria-label="查询" disabled={!from || !to || from > to}><Search /></Button>
     </form>
   </div>
 }

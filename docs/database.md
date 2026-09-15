@@ -49,6 +49,23 @@ Database 提供 Open、Close 以及各实体读写，应用模块不绕过接口
 
 账号与调用记录的数据库类型不依赖 AIProvider 调用结构，Gateway 在应用层完成转换。数据库保存的 Key 用于认证和调用归属关联；API 返回字段另行筛选，不直接公开整个存储实体。
 
+## 模块配置存储
+
+各模块的全局配置通过统一接口读写，不为 AI Provider 等模块增加专用数据库方法：
+
+```go
+LoadModuleConfig(module string) (json.RawMessage, error)
+SaveModuleConfig(module string, config json.RawMessage) error
+DeleteModuleConfig(module string) error
+```
+
+- 每个模块使用稳定且唯一的名称作为键，例如 AI Provider 使用 `aiprovider`，保存供应商和模型映射配置。
+- SQLite 使用 `module_configs(module PRIMARY KEY, config)` 表；保存以完整 JSON 文档原子覆盖，不合并字段。各模块独立存储。
+- 模块名不能为空或带首尾空白，数据库只校验 JSON 语法。配置结构、默认值、版本迁移和业务校验由所属模块负责。
+- 未配置或已删除时读取返回 `nil, nil`；删除不存在的键也成功。删除持久化配置不会自动修改运行时状态，运行时重载由模块负责。
+- 内存实现读写均复制 JSON，防止调用方修改底层切片；SQLite 直接读写持久化数据。
+- 模块配置与 AI Provider 实例记录、OAuth 凭据分开管理；后两者继续使用原有专用实体接口。
+
 ## OAuth 存储
 
 Database 直接满足 CredentialStore 的 LoadCredential、SaveCredential、DeleteCredential 接口。凭据按 JSON 保存，不新增专用 DatabaseCredentialStore。
@@ -66,6 +83,8 @@ QueryCallTraces 提供分页、筛选与时间范围，列表返回摘要；GetC
 记录包含用于用户关联的 APIKey 信息，管理 API 返回前清空；最终权限由 API Handler 和查询范围共同决定。不存在的详情使用 ErrCallTraceNotFound。
 
 ## 独立 Proxy 包的存储边界
+
+`proxy_health` 按“代理地址 + 应用”保存最新健康状态快照，空应用表示网络状态。该表用于历史状态留存，不在启动时恢复实时熔断状态；实时调度仍由 Proxy 的内存状态决定。
 
 `PersistedProxyGroup`、`PersistedProxy` 和 `ProxyErrorRecord` 使用 Proxy 领域模型的类型别名，保留原 JSON 格式和组读写接口。Database 满足 `proxy.Store`，Proxy 不导入 Database。
 

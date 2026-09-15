@@ -199,6 +199,11 @@ type TimeRange struct {
 // Postgres, or an in-memory store used by tests. AIProvider configurations are
 // instance records, not configuration records for a provider type.
 type Database interface {
+	// Module configurations are opaque JSON documents keyed by module name.
+	// Missing configurations return nil, nil; modules own defaults and schema validation.
+	LoadModuleConfig(module string) (json.RawMessage, error)
+	SaveModuleConfig(module string, config json.RawMessage) error
+	DeleteModuleConfig(module string) error
 	SaveProxyStats([]proxy.Bucket) error
 	ListProxyStats(string, string, time.Time, time.Time) ([]proxy.Bucket, error)
 	Open() error

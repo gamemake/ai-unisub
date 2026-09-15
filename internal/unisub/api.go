@@ -1,6 +1,7 @@
 package unisub
 
 import (
+	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	proxyconfig "ai-unisub/internal/proxy"
@@ -14,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -21,7 +23,7 @@ import (
 // APIModule exposes the authenticated management JSON API described by
 // docs/service-api.md. AIProvider request forwarding remains the responsibility
 // of the gateway module.
-type APIModule struct{}
+type APIModule struct{ mutations sync.Mutex }
 
 func NewAPIModule() *APIModule    { return &APIModule{} }
 func (m *APIModule) Name() string { return "api" }
@@ -62,6 +64,15 @@ func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r
 		return
 	}
 	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Non-admin sessions may only access APIs used by the four personal pages.
+	if !isAdmin(r) {
+		switch parts[0] {
+		case "me", "password", "keys", "calls":
+		default:
+			common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+			return
+		}
+	}
 	switch parts[0] {
 	case "me":
 		if len(parts) == 1 && r.Method == http.MethodGet {
@@ -79,10 +90,21 @@ func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r
 	case "ai-providers", "providers": // Keep the old URL as a compatibility alias.
 		m.aiProviders(ctx, w, r, parts)
 		return
+	case "ai-catalog":
+		m.aiCatalog(ctx, w, r, parts)
+		return
 	case "proxy-groups":
 		m.proxyGroups(ctx, w, r, parts[1:])
 		return
 	case "keys":
+		if len(parts) == 2 && parts[1] == "providers" {
+			if r.Method != http.MethodGet {
+				methodNotAllowed(w)
+				return
+			}
+			m.providerOptions(ctx, w)
+			return
+		}
 		m.keys(ctx, w, r, parts)
 		return
 	case "calls":
@@ -704,6 +726,10 @@ func (m *APIModule) deleteUser(ctx framework.ModuleContext, w http.ResponseWrite
 }
 
 func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
+	if r.Method != http.MethodGet {
+		m.mutations.Lock()
+		defer m.mutations.Unlock()
+	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
 		accounts, err := ctx.Database().ListAccounts()
 		if err != nil {
@@ -839,6 +865,9 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 		common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
 		return
 	}
+	if p, ok := ctx.AIProviders().Get(id); ok {
+		account.Config = canonicalProviderConfig(config, p.Config())
+	}
 	if err = ctx.Database().SaveAccount(account); err != nil {
 		ctx.AIProviders().Remove(id)
 		if credentialID != "" && credentialRaw != nil {
@@ -851,6 +880,10 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 }
 
 func (m *APIModule) deleteAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id string) {
+	if ctx.AIProviders().Referenced(id) {
+		common.WriteError(w, 400, common.MessageAIProviderStillReferenced)
+		return
+	}
 	accounts, err := ctx.Database().ListAccounts()
 	if err != nil {
 		common.WriteError(w, 500, common.MessageCouldNotListAIProviders)
@@ -914,6 +947,8 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 		common.WriteError(w, 404, common.MessageAIProviderNotFound)
 		return
 	}
+	previousConfig := append(json.RawMessage(nil), account.Config...)
+	var createdCredential, retiredCredential string
 	if input.Name != "" {
 		account.Name = input.Name
 	}
@@ -959,6 +994,7 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 				return
 			}
 			config, _, _, _ = normalizeAIProviderConfigWithID(input.Config, credentialID)
+			createdCredential = credentialID
 		}
 		if p, ok := ctx.AIProviders().Get(id); ok {
 			_ = p
@@ -972,16 +1008,43 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 		}
 		oldCredentialID := credentialIDFromConfig(account.Config)
 		account.Config = config
+		if p, ok := ctx.AIProviders().Get(id); ok {
+			account.Config = canonicalProviderConfig(config, p.Config())
+		}
 		if oldCredentialID != "" && oldCredentialID != credentialID && !credentialReferenced(accounts, id, oldCredentialID) {
-			_ = ctx.Database().DeleteCredential(oldCredentialID)
+			retiredCredential = oldCredentialID
 		}
 	}
 	account.UpdatedAt = time.Now().UTC()
 	if err := ctx.Database().SaveAccount(account); err != nil {
+		_ = ctx.AIProviders().UpdateConfig(id, previousConfig)
+		if createdCredential != "" {
+			_ = ctx.Database().DeleteCredential(createdCredential)
+		}
 		common.WriteError(w, 500, common.MessageCouldNotSaveAIProvider)
 		return
 	}
+	if retiredCredential != "" {
+		_ = ctx.Database().DeleteCredential(retiredCredential)
+	}
 	writeJSON(w, 200, publicAccount(ctx.Database(), *account))
+}
+
+func canonicalProviderConfig(raw json.RawMessage, c aiprovider.AIProviderConfig) json.RawMessage {
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &fields)
+	delete(fields, "client_types")
+	if fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	normalized, _ := json.Marshal(c)
+	var values map[string]json.RawMessage
+	_ = json.Unmarshal(normalized, &values)
+	for k, v := range values {
+		fields[k] = v
+	}
+	out, _ := json.Marshal(fields)
+	return out
 }
 
 func credentialReferenced(accounts []database.PersistedAccount, deletedID, credentialID string) bool {

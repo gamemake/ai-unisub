@@ -57,7 +57,7 @@ func TestOAuthCompleteAndCallbackAreBoundToOwner(t *testing.T) {
 	if err := srv.AddModule(&testOAuthModule{NewOAuthFlowModule(), manager}); err != nil {
 		t.Fatal(err)
 	}
-	users := []*database.PersistedUser{{ID: "alice", Name: "alice", Enabled: true, Role: database.UserRoleAdmin}, {ID: "bob", Name: "bob", Enabled: true, Role: database.UserRoleUser}}
+	users := []*database.PersistedUser{{ID: "alice", Name: "alice", Enabled: true, Role: database.UserRoleAdmin}, {ID: "bob", Name: "bob", Enabled: true, Role: database.UserRoleAdmin}}
 	cookies := make([]*http.Cookie, 2)
 	for i, u := range users {
 		_ = db.SaveUser(u)

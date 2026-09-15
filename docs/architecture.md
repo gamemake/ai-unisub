@@ -43,7 +43,7 @@ flowchart TD
 | database | 统一数据库接口、SQLite 持久化与内部缓存 | MemoryDatabase 是内部缓存数据结构，不是并列数据库后端 | [Database](database.md) |
 | proxy | 代理对象、内部 URL 校验、HTTP 传输、代理组、调度与统计 | 不依赖 OAuth、AIProvider、Service 或应用；通过自身 Store 接口使用持久化 | [Proxy](proxy.md) |
 | oauth | 授权协议、Session、Credential、刷新与撤销 | 显式依赖 Proxy，不感知应用路由、用户角色、页面或具体数据库 | [OAuth](oauth.md) |
-| aiprovider | 上游配置、工厂、实例、Account 和调用转发 | 使用 OAuth 与代理能力，不依赖数据库；记录由调用方接收 | [AIProvider](aiprovider.md) |
+| aiprovider | 上游配置、工厂、实例、Account 和调用转发 | 使用 OAuth 与代理能力，不依赖数据库；记录由调用方接收 | [AIProvider](ai-provider.md) |
 | service | 模块机制、路由、AuthService、共享 Manager 和结果存储 | 持有共享依赖，不导入 UniSub；auth.go 的实现契约归本层 | [Service](service.md) |
 | unisub | 应用初始化、四个业务模块、HTTP 参数与业务授权 | 通过 ModuleContext 使用共享能力，负责业务实体转换 | [UniSub](unisub.md) |
 | web | 前端构建资源的嵌入与 fs.FS 访问 | 不承担认证、路由或业务逻辑 | [Static](unisub-static.md) |

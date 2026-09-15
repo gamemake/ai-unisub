@@ -20,7 +20,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 | 通常的业务错误 | `{"error":"英文错误消息"}` |
 | 删除成功 | `204`，无响应体 |
 
-成功读取通常为 `200`，创建为 `201`；参数错误 `400`，未登录 `401`，无权限通常为 `403`，未找到 `404`，内部错误 `500`。部分未知路径或方法使用标准 `http.NotFound`，不是统一 JSON。用量接口的非管理员请求当前落入 `404`。
+成功读取通常为 `200`，创建为 `201`；参数错误 `400`，未登录 `401`，无权限通常为 `403`，未找到 `404`，内部错误 `500`。部分未知路径或方法使用标准 `http.NotFound`，不是统一 JSON。非管理员访问管理接口统一返回 `403`。
 
 ## 登录与登出
 
@@ -40,6 +40,12 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 路由注册采用同属 API 模块的精确 `/api/login`、`/api/logout` 路由（AuthNone）和普通 `/api/` 前缀路由（AuthSession）。精确路径优先匹配，避免登录被 Session 认证拦截；不能为此把整个 `/api/` 改为公开访问。
 
 前端在 `/` 中提交登录，成功后刷新当前用户与受保护数据并显示 Dashboard；登出成功后取消查询、清空用户缓存并显示登录界面。登出请求失败时展示错误，不能宣称服务端会话已失效。会话失效的 401 在原页面切换登录状态，不依赖旧页面路径。
+
+## 普通用户权限
+
+非管理员仅可见个人总览、API Key、调用记录、安全设置。直接访问管理页面地址不会渲染管理界面；后端独立拦截管理 API，包括兼容别名及 OAuth API。个人接口仅允许 `me`、`password`、`keys`、`calls`；Key 和调用记录仍按当前用户校验归属。登录、登出不受此限制。
+
+`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled}],total}`，不包含配置、URL、组成员或凭据；其他方法返回 405。
 
 ## 当前用户与密码
 
@@ -68,19 +74,34 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 | 方法 | 路径 | Body | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/ai-providers` | 无 | 所有登录用户 |
+| GET | `/api/ai-providers` | 无 | 管理员 |
 | POST | `/api/ai-providers` | `name/provider/config` | 管理员 |
 | PUT | `/api/ai-providers/{id}` | `name/provider/config` | 管理员 |
 | DELETE | `/api/ai-providers/{id}` | 无 | 管理员 |
 
 创建必须提供 provider 和有效 config；当前类型为 `codex`、`claude`、`grok`、`dummy`。更新不能改变 provider 类型。config 可以是 JSON 对象，兼容编码为字符串的 JSON 对象。
 
-配置中的内联 `credential` 保存到凭据存储后，账号配置只保存 `credential_id`；提供已有 ID 时验证凭据存在。API Key 认证账号在编辑时省略 `api_key` 可保留原密钥。配置字段与运行时语义见 [AIProvider](aiprovider.md)。
+配置中的内联 `credential` 保存到凭据存储后，账号配置只保存 `credential_id`；提供已有 ID 时验证凭据存在。API Key 认证账号在编辑时省略 `api_key` 可保留原密钥。配置字段与运行时语义见 [AIProvider](ai-provider.md)。
+
+`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（Any、Anthropic、OpenAI、Grok），缺省 Any；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须为 Any 或与所有成员的有效客户端类型相同。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
+
+### 模型供应商与映射
+
+| 方法与路径 | 权限 | 语义 |
+| --- | --- | --- |
+| GET /api/ai-catalog | 管理员 | 返回 `{catalog: {suppliers}, builtin_suppliers}` |
+| PUT /api/ai-catalog | 管理员 | 整体保存 `{suppliers}`；数据库成功后原子更新运行时目录 |
+| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商 `{id, name, claude_url, codex_url, mappings}`；不存在返回 404 |
+| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商，body 为 `{id, name, claude_url, codex_url, mappings}`；路径与 body 的 id 必须一致，其他供应商配置不变；响应格式与目录 GET 一致 |
+
+`suppliers` 和 `builtin_suppliers` 项为 `{id, name, claude_url, codex_url, mappings}`，必须保留 anthropic、openai、grok、deepseek、zhipu、kimi 六项，不能删除或重复。每个供应商内部的 `mappings` 项为 `{client, model, target}`，client 取 Anthropic、OpenAI、Grok；相同客户端、供应商和请求模型名不允许重复。数据库映射优先，删除覆盖项后回退 对应供应商的内置映射；无匹配项时保留请求模型名。
+
+`claude_url`、`codex_url` 为代码维护的只读内置值，Grok 共用 `codex_url`。目录整体 PUT 和单供应商 PUT 修改 URL 均返回 400；模型映射仍可修改。加载数据库时恢复内置 URL，旧 `url` 字段不生效。
 
 当前响应边界：
 
 - config 递归移除 `access_token`、`refresh_token`、`api_key`、`raw`、`credential` 字段。
-- 普通用户列表不附带凭据对象。
+- 普通用户不能读取 AIProvider 管理列表。
 - 管理员列表及创建／更新响应，会在能够加载凭据时附带顶层完整 `credential`。不能把当前行为描述成“所有管理响应均已脱敏”。
 - 凭据存储接口本身不记录用户归属和 service 类型；现有 ID 校验不能被描述成凭据所有权校验。
 - 删除前检查 API Key 引用；仍有 Key 绑定的账号不能删除。删除成功后移除运行时实例，并尝试清理没有其他账号引用的 Credential。
@@ -112,7 +133,7 @@ q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id�
 
 时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 保留原接口的不限时间行为，调用记录页面默认使用 1d。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
 
-列表摘要和详情均包含 session_id。网关依次读取 Session-Id、X-Session-Id、session_id 请求头，缺失时读取 JSON 顶层 session_id；这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串。
+列表摘要和详情均包含 session_id。网关仅按 [AIProvider 原生会话头适配](ai-provider.md) 读取 Claude、Codex、Grok 对应的原生 SessionID，不读取 X-Unisub-Session-ID；未匹配客户端或原生头时留空，不使用通用头或请求正文兜底。调用记录与组内粘性使用相同规则。这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串；组调用的 account_id/provider_type 记录实际执行的成员。
 
 列表返回摘要，详情包含记录的请求／响应信息。响应前清空用于归属判断的 APIKey 字段；普通用户无权读取的详情返回 `404`。当前详情权限依赖仍存在的所属 Key 匹配，不能将它描述成独立的永久历史授权机制。
 

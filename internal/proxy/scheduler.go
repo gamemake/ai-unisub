@@ -73,6 +73,9 @@ func (m *Manager) ResolveProxy(ctx context.Context, groupID, app string, tried [
 	return nil, errors.New("proxy group not found")
 }
 func (m *Manager) admissible(s *State) bool {
+	if s.Probing {
+		return false
+	}
 	return s.Status != "unavailable" && s.Status != "half_open" || (!m.now().Before(s.CooldownUntil) && s.InFlight < m.policy.HalfOpenLimit)
 }
 func (m *Manager) ProxyRetryLimit(groupID string) int {

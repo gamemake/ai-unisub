@@ -14,7 +14,7 @@ import (
 
 func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
 	db := database.NewMemoryDatabase()
-	user := &database.PersistedUser{ID: "user-1", Name: "one", Role: database.UserRoleUser}
+	user := &database.PersistedUser{ID: "user-1", Name: "one", Role: database.UserRoleAdmin}
 	if err := db.SaveUser(user); err != nil {
 		t.Fatal(err)
 	}

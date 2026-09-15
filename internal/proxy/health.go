@@ -37,6 +37,12 @@ func (m *Manager) TestURL(ctx context.Context, address string) (*Entry, error) {
 		m.mu.Unlock()
 		return nil, ErrClosed
 	}
+	s := m.state(e.String(), "")
+	if s.Probing || s.InFlight > 0 {
+		m.mu.Unlock()
+		return nil, ErrUnavailable
+	}
+	s.Probing = true
 	p := m.prober
 	m.probes.Add(1)
 	m.mu.Unlock()
@@ -46,39 +52,77 @@ func (m *Manager) TestURL(ctx context.Context, address string) (*Entry, error) {
 	stopCancel := context.AfterFunc(m.ctx, cancel)
 	defer stopCancel()
 	err = p(ctx, e)
-	if ctx.Err() != nil {
-		return nil, ctx.Err()
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := m.state(e.String(), "")
+	s = m.state(e.String(), "")
+	s.Probing = false
+	if m.ctx.Err() != nil || ctx.Err() == context.Canceled {
+		return nil, ctx.Err()
+	}
 	now := m.now().UTC()
 	s.LastProbe = now
-	if recordErr := m.reserve(e.String(), "", now); recordErr != nil {
-		return nil, recordErr
-	}
-	if recordErr := m.record(stateKey{e.String(), ""}, now, err != nil); recordErr != nil {
-		return nil, recordErr
-	}
-	s.Requests++
+	s.ProbeRequests++
 	result := &Entry{URL: e.String(), Status: "unavailable"}
 	if err == nil {
-		s.Status = "available"
-		s.ConsecutiveFailures = 0
-		s.LastSuccess = now
-		s.CooldownUntil = time.Time{}
-		result.Status = "available"
-		result.Available = true
+		m.markSucceeded(stateKey{e.String(), ""}, now)
+		result.Status = s.Status
+		result.Available = s.Status == "available"
 		result.LastAvailable = &now
 	} else {
-		s.Failures++
-		s.ConsecutiveFailures++
+		s.ProbeFailures++
 		s.Status = "unavailable"
-		s.LastFailure = now
-		s.CooldownUntil = now.Add(m.policy.Cooldown)
+		m.markFailed(stateKey{e.String(), ""}, now)
 		result.LastErrorAt = &now
 	}
 	return result, nil
+}
+
+// Automatic work is network-only. Application recovery never manufactures
+// requests, and all tasks are owned/canceled/waited by Manager.Close.
+func (m *Manager) startDueProbes() {
+	m.mu.Lock()
+	if m.stopped || !m.policy.AutoProbe {
+		m.mu.Unlock()
+		return
+	}
+	groups, err := m.store.ListProxyGroups()
+	if err != nil {
+		m.mu.Unlock()
+		return
+	}
+	active := map[string]bool{}
+	for _, g := range groups {
+		if g.Enabled != nil && !*g.Enabled {
+			continue
+		}
+		for _, e := range g.Proxies {
+			if e.Enabled {
+				active[e.URL] = true
+			}
+		}
+	}
+	running := 0
+	for k, s := range m.states {
+		if k.app == "" && s.Probing {
+			running++
+		}
+	}
+	var addresses []string
+	for k, s := range m.states {
+		if len(addresses)+running >= m.policy.ProbeConcurrency {
+			break
+		}
+		if k.app == "" && active[k.address] && (s.Status == "unavailable" || s.Status == "half_open") && !s.Probing && s.InFlight == 0 && !m.now().Before(s.CooldownUntil) {
+			addresses = append(addresses, k.address)
+		}
+	}
+	// Register launchers before releasing the lifecycle lock; Close cannot race
+	// Wait with an unregistered goroutine. TestURL registers its own probe too.
+	m.probes.Add(len(addresses))
+	m.mu.Unlock()
+	for _, address := range addresses {
+		go func() { defer m.probes.Done(); _, _ = m.TestURL(m.ctx, address) }()
+	}
 }
 func (m *Manager) Test(ctx context.Context, groupID, proxyID string) (*Entry, error) {
 	groups, err := m.List()

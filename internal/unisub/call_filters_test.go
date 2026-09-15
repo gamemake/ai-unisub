@@ -11,16 +11,21 @@ import (
 func TestCallSessionID(t *testing.T) {
 	for _, name := range []string{"Session-Id", "X-Session-Id", "session_id"} {
 		h := http.Header{}
+		h.Set("User-Agent", "codex-tui/1.0")
 		h.Set(name, "header-session")
-		if got := callSessionID(h, []byte(`{"session_id":"body-session"}`)); got != "header-session" {
+		if got := callSessionID(h); got != "header-session" {
 			t.Fatal(name, got)
 		}
+		h.Set("User-Agent", "curl/8.0")
+		if got := callSessionID(h); got != "" {
+			t.Fatal("unmatched client must have empty session", got)
+		}
 	}
-	if got := callSessionID(nil, []byte(`{"session_id":"body-session"}`)); got != "body-session" {
+	if got := callSessionID(nil); got != "" {
 		t.Fatal(got)
 	}
-	if got := callSessionID(nil, []byte(`{"session_id":123}`)); got != "" {
-		t.Fatal("invalid ID accepted")
+	if got := callSessionID(http.Header{"X-Unisub-Session-Id": {"ignored"}}); got != "" {
+		t.Fatal("removed override was read")
 	}
 }
 func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {

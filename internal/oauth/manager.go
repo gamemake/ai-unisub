@@ -298,6 +298,49 @@ func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credent
 	return refreshed.AccessToken, nil
 }
 
+// RecoverAccessToken serializes one refresh after an explicit authentication
+// rejection. Concurrent requests reuse a token already refreshed by a peer.
+func (m *OAuthManager) RecoverAccessToken(ctx context.Context, service, credentialID, rejected string, endpoints ...*proxy.Endpoint) (string, error) {
+	if m == nil || m.store == nil {
+		return "", errors.New("credential store is not configured")
+	}
+	m.mu.Lock()
+	lock := m.refresh[credentialID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		m.refresh[credentialID] = lock
+	}
+	m.mu.Unlock()
+	lock.Lock()
+	defer lock.Unlock()
+	raw, err := m.store.LoadCredential(credentialID)
+	if err != nil {
+		return "", err
+	}
+	var c OAuthCredential
+	if err = json.Unmarshal(raw, &c); err != nil {
+		return "", err
+	}
+	if c.AccessToken != "" && c.AccessToken != rejected {
+		return c.AccessToken, nil
+	}
+	if c.RefreshToken == "" {
+		return "", errors.New("credential cannot be refreshed")
+	}
+	refreshed, err := m.Refresh(ctx, service, &c, endpoints...)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(refreshed)
+	if err != nil {
+		return "", err
+	}
+	if err = m.store.SaveCredential(credentialID, encoded); err != nil {
+		return "", err
+	}
+	return refreshed.AccessToken, nil
+}
+
 func (m *OAuthManager) Revoke(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) error {
 	a, err := m.adapter(service)
 	if err != nil {

@@ -35,6 +35,10 @@ func (m *OAuthFlowModule) Init(ctx framework.ModuleContext) error {
 }
 
 func (m *OAuthFlowModule) api(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
+	if !isAdmin(r) {
+		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		return
+	}
 	parts := strings.Split(strings.TrimPrefix(strings.TrimSuffix(r.URL.Path, "/"), "/api/oauth/"), "/")
 	if len(parts) == 3 && parts[1] == "status" && r.Method == http.MethodGet {
 		principal, ok := framework.PrincipalFromContext(r.Context())
@@ -144,7 +148,8 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	}
 	redirect := callbackURL(ctx.Config(), r, service)
 	var input struct {
-		Proxy string `json:"proxy"`
+		Proxy        string `json:"proxy"`
+		ProxyGroupID string `json:"proxy_group_id"`
 	}
 	if err := decodeOptionalJSON(r, &input); err != nil {
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidJSONBody)
@@ -152,6 +157,21 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	}
 	reqCtx := r.Context()
 	var endpoint *proxy.Endpoint
+	if input.ProxyGroupID != "" {
+		if input.Proxy != "" {
+			common.WriteError(w, 400, "choose proxy_group_id or proxy, not both")
+			return
+		}
+		var err error
+		endpoint, err = ctx.Proxy().ResolveProxy(reqCtx, input.ProxyGroupID, service, nil)
+		if err != nil {
+			common.WriteError(w, 503, common.MessageInvalidProxy)
+			return
+		}
+		// Authorization may be interactive and outlive a probe lease. Selection
+		// does not prove health; release admission without reporting success.
+		defer func() { _ = ctx.Proxy().ReportProxy(endpoint, service, proxy.Canceled) }()
+	}
 	if strings.TrimSpace(input.Proxy) != "" {
 		var err error
 		endpoint, err = proxy.NewEndpoint(input.Proxy)

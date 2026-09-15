@@ -19,6 +19,12 @@ type AIProviderManager struct {
 	aiProviders   map[string]AIProvider
 	accounts      map[string]*Account
 	proxyResolver ProxyResolver
+	adapters      map[string]string
+	catalog       Catalog
+	bindings      map[string]affinityBinding
+	health        map[string]*memberHealth
+	revisions     map[string]uint64
+	revision      uint64
 }
 
 func (m *AIProviderManager) SetProxyResolver(resolver ProxyResolver) {
@@ -45,6 +51,11 @@ func NewAIProviderManager() *AIProviderManager {
 		factories:   make(map[string]AIProviderFactory),
 		aiProviders: make(map[string]AIProvider),
 		accounts:    make(map[string]*Account),
+		adapters:    make(map[string]string),
+		catalog:     Catalog{Suppliers: SupplierConfigs()},
+		bindings:    make(map[string]affinityBinding),
+		health:      make(map[string]*memberHealth),
+		revisions:   make(map[string]uint64),
 	}
 }
 
@@ -86,10 +97,17 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	m.mu.RLock()
 	factory, ok := m.factories[aiProviderType]
 	m.mu.RUnlock()
+	if aiProviderType == "group" {
+		factory, ok = newGroup, true
+	}
 	if !ok {
 		return nil, errors.New("provider type is not registered")
 	}
 
+	config, err := prepareConfig(instanceID, aiProviderType, config)
+	if err != nil {
+		return nil, err
+	}
 	aiprovider, err := factory(instanceID, config)
 	if err != nil {
 		return nil, err
@@ -109,6 +127,12 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	if _, exists := m.aiProviders[instanceID]; exists {
 		return nil, errors.New("provider instance ID is already in use")
 	}
+	if err := m.validateRelations(instanceID, aiprovider.Config()); err != nil {
+		return nil, err
+	}
+	m.adapters[instanceID] = aiProviderType
+	m.revision++
+	m.revisions[instanceID] = m.revision
 	m.aiProviders[instanceID] = aiprovider
 	if m.accounts == nil {
 		m.accounts = make(map[string]*Account)
@@ -150,6 +174,14 @@ func (m *AIProviderManager) Remove(instanceID string) (AIProvider, bool) {
 			delete(m.accounts, instanceID)
 		}
 		delete(m.aiProviders, instanceID)
+		delete(m.adapters, instanceID)
+		delete(m.health, instanceID)
+		delete(m.revisions, instanceID)
+		for k, b := range m.bindings {
+			if b.id == instanceID {
+				delete(m.bindings, k)
+			}
+		}
 	}
 	return aiprovider, ok
 }
@@ -162,11 +194,22 @@ func (m *AIProviderManager) GetAccount(id string) (*Account, bool) {
 }
 
 func (m *AIProviderManager) UpdateConfig(id string, config json.RawMessage) error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	a, ok := m.accounts[id]
 	if !ok {
 		return ErrUnavailable
+	}
+	config, err := prepareConfig(id, m.adapters[id], config)
+	if err != nil {
+		return err
+	}
+	c, err := decodeAIProviderConfig(id, config)
+	if err != nil {
+		return err
+	}
+	if err = m.validateRelations(id, c); err != nil {
+		return err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -174,5 +217,11 @@ func (m *AIProviderManager) UpdateConfig(id string, config json.RawMessage) erro
 		return err
 	}
 	a.wake()
+	m.revision++
+	m.revisions[id] = m.revision
+	delete(m.health, id)
+	for k := range m.bindings {
+		delete(m.bindings, k)
+	}
 	return nil
 }

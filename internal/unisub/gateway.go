@@ -5,9 +5,11 @@ import (
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -31,21 +33,13 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		common.WriteError(w, 401, common.MessageUnauthorized)
 		return
 	}
-	p, ok := ctx.AIProviders().Get(principal.Account.ID)
-	if !ok {
-		common.WriteError(w, 503, common.MessageAIProviderUnavailable)
+	if _, err := aiprovider.SessionID(r.Header); err != nil {
+		common.WriteError(w, 400, err.Error())
 		return
 	}
-	account, ok := ctx.AIProviders().GetAccount(principal.Account.ID)
-	if !ok {
-		common.WriteError(w, 503, common.MessageAIProviderUnavailable)
-		return
-	}
-	config := p.Config()
-	target, err := upstreamURL(config.APIEndpoint, principal.Account.AIProvider, config.AuthType, r.URL)
-	if err != nil {
-		common.WriteError(w, 502, common.MessageInvalidUpstreamEndpoint)
-		return
+	userID := ""
+	if principal.User != nil {
+		userID = principal.User.ID
 	}
 	timeout := ctx.Config().GatewayRequestTimeout
 	if timeout <= 0 {
@@ -53,9 +47,53 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	}
 	requestContext, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
+	selected, err := ctx.AIProviders().Select(principal.Account.ID, userID, r.Header, r.URL.Path, nil)
+	if err != nil {
+		status := 503
+		if errors.Is(err, aiprovider.ErrClientDenied) {
+			status = 403
+		}
+		common.WriteError(w, status, err.Error())
+		return
+	}
+	var result *aiprovider.AIProviderCallTrace
+	defer func() { ctx.AIProviders().ReportSelection(selected, result, requestContext.Err() != nil) }()
+	config := selected.Provider.Config()
+	endpoint := config.APIEndpoint
+	if endpoint == "" && config.AuthType == aiprovider.AuthTypeAPIKey {
+		endpoint = ctx.AIProviders().DefaultURL(config.Supplier, aiprovider.EndpointClient(r.URL.Path))
+		if endpoint == "" && config.Supplier != "" {
+			common.WriteError(w, 502, "supplier has no built-in URL for this protocol")
+			return
+		}
+	}
+	target, err := upstreamURL(endpoint, selected.Adapter, config.AuthType, r.URL)
+	if err != nil {
+		common.WriteError(w, 502, common.MessageInvalidUpstreamEndpoint)
+		return
+	}
 	output := &gatewayWriter{ResponseWriter: w}
 	outbound := r.Clone(aiprovider.WithResponseWriter(requestContext, output))
 	outbound.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	var originalBody []byte
+	{
+		body, readErr := io.ReadAll(outbound.Body)
+		_ = outbound.Body.Close()
+		if readErr != nil {
+			var limit *http.MaxBytesError
+			status := 400
+			if errors.As(readErr, &limit) {
+				status = 413
+			}
+			common.WriteError(w, status, "invalid request body")
+			return
+		}
+		originalBody = append([]byte(nil), body...)
+		body = mapRequestModel(ctx.AIProviders(), r.Header, outbound.Header, config.Supplier, body)
+		outbound.Body = io.NopCloser(bytes.NewReader(body))
+		outbound.ContentLength = int64(len(body))
+		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	}
 	outbound.URL, outbound.Host, outbound.RequestURI = target, target.Host, ""
 	for _, value := range outbound.Header.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
@@ -67,10 +105,11 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	}
 	started := time.Now().UTC()
 	recorded := false
-	err = account.Handle(outbound, func(trace *aiprovider.AIProviderCallTrace) {
+	recorder := func(trace *aiprovider.AIProviderCallTrace) {
 		if trace == nil {
 			return
 		}
+		result = trace
 		recorded = true
 		if !output.written {
 			status := trace.ResponseStatus
@@ -103,22 +142,72 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
-		saved := &database.PersistedCallTrace{ID: newID(), APIKey: apiKey, AccountID: principal.Account.ID, AIProviderType: principal.Account.AIProvider, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
+		saved := &database.PersistedCallTrace{ID: newID(), APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
 		if output.status >= 400 {
 			saved.HTTPErrorCode = output.status
 		}
-		saved.SessionID = callSessionID(r.Header, trace.RequestBody)
+		saved.SessionID = callSessionID(r.Header)
 		if trace.HTTPErrorInfo != "" {
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
 		}
 		if err := ctx.Database().RecordCallTrace(saved); err != nil {
 			log.Printf("record gateway call %s: %v", requestID, err)
 		}
-	}, ctx.Config().GatewayQueueLimit)
+	}
+	var tried []string
+	root, _ := ctx.AIProviders().Get(principal.Account.ID)
+	for attempt := 0; attempt < 3; attempt++ {
+		var retryTrace *aiprovider.AIProviderCallTrace
+		canSwitch := root != nil && root.Config().Kind == "group" && attempt < 2
+		err = selected.Account.Handle(outbound, func(trace *aiprovider.AIProviderCallTrace) {
+			if canSwitch && trace != nil && trace.RetrySafe && !output.written {
+				retryTrace = trace
+				return
+			}
+			recorder(trace)
+		}, ctx.Config().GatewayQueueLimit)
+		if !canSwitch || output.written || requestContext.Err() != nil || (retryTrace == nil && !errors.Is(err, aiprovider.ErrQueueFull) && !errors.Is(err, aiprovider.ErrQueueTimeout)) {
+			break
+		}
+		tried = append(tried, selected.ID)
+		ctx.AIProviders().ReportSelection(selected, retryTrace, false)
+		next, selectErr := ctx.AIProviders().Select(principal.Account.ID, userID, r.Header, r.URL.Path, tried)
+		if selectErr != nil {
+			if retryTrace != nil {
+				recorder(retryTrace)
+				result = nil
+			}
+			break
+		}
+		selected = next
+		result = nil
+		config = selected.Provider.Config()
+		endpoint = config.APIEndpoint
+		if endpoint == "" && config.AuthType == aiprovider.AuthTypeAPIKey {
+			endpoint = ctx.AIProviders().DefaultURL(config.Supplier, aiprovider.EndpointClient(r.URL.Path))
+			if endpoint == "" && config.Supplier != "" {
+				common.WriteError(w, 502, "supplier has no built-in URL for this protocol")
+				return
+			}
+		}
+		target, err = upstreamURL(endpoint, selected.Adapter, config.AuthType, r.URL)
+		if err != nil {
+			break
+		}
+		outbound.URL, outbound.Host = target, target.Host
+		body := originalBody
+		body = mapRequestModel(ctx.AIProviders(), r.Header, outbound.Header, config.Supplier, body)
+		outbound.Body = io.NopCloser(bytes.NewReader(body))
+		outbound.ContentLength = int64(len(body))
+		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	}
 	if err != nil && !output.written {
 		status := http.StatusServiceUnavailable
 		message := common.MessageAIProviderUnavailable
 		switch {
+		case errors.Is(err, aiprovider.ErrClientDenied):
+			status = http.StatusForbidden
+			message = err.Error()
 		case errors.Is(err, aiprovider.ErrQueueFull):
 			status = http.StatusTooManyRequests
 			message = common.MessageAIProviderQueueFull
@@ -137,19 +226,9 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 }
 
 // Session IDs identify upstream client conversations, not Dashboard login sessions.
-func callSessionID(headers http.Header, body []byte) string {
-	for _, name := range []string{"Session-Id", "X-Session-Id", "session_id"} {
-		if value := strings.TrimSpace(headers.Get(name)); value != "" {
-			return value
-		}
-	}
-	var input struct {
-		SessionID string `json:"session_id"`
-	}
-	if json.Unmarshal(body, &input) == nil {
-		return strings.TrimSpace(input.SessionID)
-	}
-	return ""
+func callSessionID(headers http.Header) string {
+	session, _ := aiprovider.SessionID(headers)
+	return session
 }
 func upstreamURL(endpoint, name, auth string, incoming *url.URL) (*url.URL, error) {
 	if endpoint == "" {
@@ -225,4 +304,33 @@ func (w *gatewayWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Always map from the original request on each member attempt, not the prior
+// supplier's mapped name. Grok also carries a model override in its headers.
+func mapRequestModel(manager *aiprovider.AIProviderManager, original, outbound http.Header, supplier string, body []byte) []byte {
+	client := aiprovider.DetectClient(original)
+	if client == aiprovider.ClientGrok {
+		if model := original.Get("X-Grok-Model-Override"); model != "" {
+			outbound.Set("X-Grok-Model-Override", manager.MapModel(client, supplier, model))
+		}
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil {
+		return body
+	}
+	var model string
+	if json.Unmarshal(fields["model"], &model) != nil || model == "" {
+		return body
+	}
+	mapped := manager.MapModel(client, supplier, model)
+	if mapped == model {
+		return body
+	}
+	fields["model"], _ = json.Marshal(mapped)
+	result, err := json.Marshal(fields)
+	if err != nil {
+		return body
+	}
+	return result
 }

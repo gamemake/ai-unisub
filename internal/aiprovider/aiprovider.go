@@ -16,23 +16,26 @@ type ProxyResolver interface {
 
 // AIProviderConfig is the configuration of one concrete provider instance.
 //
-// A provider is a transparent HTTP forwarder. Only authentication-related
-// request headers may be replaced or added; the request body, URL, method,
-// query, and all other headers must be forwarded unchanged.
+// Forwarding preserves the request except authentication, gateway-only headers
+// and explicitly configured model mappings.
 type AIProviderConfig struct {
-	ID           string   `json:"id"`
-	Name         string   `json:"name"`
-	Labels       []string `json:"labels"`
-	ProxyGroupID string   `json:"proxy_group_id,omitempty"`
-	// Proxy is retained for backward-compatible configs; new configs should use ProxyGroupID.
-	Proxy                    string `json:"proxy,omitempty"`
-	APIEndpoint              string `json:"api_endpoint"`
-	Enabled                  bool   `json:"enabled"`
-	MaxConcurrentConnections int    `json:"max_concurrent_connections"`
-	QueueTimeoutSeconds      int    `json:"queue_timeout_seconds"`
-	AuthType                 string `json:"auth_type"`
-	CredentialID             string `json:"credential_id,omitempty"`
-	APIKey                   string `json:"api_key,omitempty"`
+	Kind                          string        `json:"kind,omitempty"`
+	Supplier                      string        `json:"supplier,omitempty"`
+	ClientType                    ClientType    `json:"client_type"`
+	OfficialOnly                  bool          `json:"official_only,omitempty"`
+	Members                       []GroupMember `json:"members,omitempty"`
+	ProxyApplicationErrorStatuses []int         `json:"proxy_application_error_statuses,omitempty"`
+	ID                            string        `json:"id"`
+	Name                          string        `json:"name"`
+	Labels                        []string      `json:"labels"`
+	ProxyGroupID                  string        `json:"proxy_group_id,omitempty"`
+	APIEndpoint                   string        `json:"api_endpoint"`
+	Enabled                       bool          `json:"enabled"`
+	MaxConcurrentConnections      int           `json:"max_concurrent_connections"`
+	QueueTimeoutSeconds           int           `json:"queue_timeout_seconds"`
+	AuthType                      string        `json:"auth_type"`
+	CredentialID                  string        `json:"credential_id,omitempty"`
+	APIKey                        string        `json:"api_key,omitempty"`
 }
 
 // UsageItem is one ordered name/value pair returned by a provider.
@@ -48,6 +51,7 @@ type UsageItem struct {
 // Header and body values are kept raw so recorders can inspect the original
 // data without relying on a provider-specific representation.
 type AIProviderCallTrace struct {
+	RetrySafe              bool // No upstream execution occurred; only pre-send failures set this.
 	ResponseStatus         int
 	URL                    string
 	HTTPErrorCode          int
@@ -69,8 +73,7 @@ type AIProviderCallTrace struct {
 type APICallRecorder func(*AIProviderCallTrace)
 
 // AIProvider forwards an HTTP request to a subscription-backed service.
-// Implementations must preserve the request and response as-is, apart from
-// authentication-related request headers.
+// Implementations preserve the protocol; model mapping is not protocol conversion.
 type AIProvider interface {
 	Config() AIProviderConfig
 	// UpdateConfig updates mutable provider-specific settings. The AIProviderConfig.ID

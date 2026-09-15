@@ -65,7 +65,7 @@ DEV 读取本地前端构建目录；PRD 使用可执行文件中的嵌入资源
 | 独立代理包设计 | [Proxy](docs/proxy.md) |
 | 持久化 | [Database](docs/database.md) |
 | OAuth 协议与 CLI | [OAuth](docs/oauth.md) |
-| AI 上游与运行时账号 | [AIProvider](docs/aiprovider.md) |
+| AI 上游与运行时账号 | [AIProvider](docs/ai-provider.md) |
 | 公共工具 | [Common](docs/common.md) |
 | UniSub 应用模块 | [Static](docs/unisub-static.md)、[API](docs/unisub-api.md)、[OAuthFlow](docs/unisub-oauthflow.md)、[Gateway](docs/unisub-gateway.md) |
 | UI 组件 | [组件说明](src/components/ui/README.md) |

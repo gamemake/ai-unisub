@@ -73,6 +73,16 @@ func (s *SQLiteDatabase) Open() error {
 		return err
 	}
 	s.db = db
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS proxy_health (address TEXT NOT NULL, application TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(address,application))`); err != nil {
+		db.Close()
+		s.db = nil
+		return err
+	}
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS module_configs (module TEXT PRIMARY KEY, config TEXT NOT NULL)`); err != nil {
+		db.Close()
+		s.db = nil
+		return err
+	}
 	if err = s.loadMemory(); err != nil {
 		db.Close()
 		s.db = nil

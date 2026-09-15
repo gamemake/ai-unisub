@@ -1,10 +1,12 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, User } from './types'
+import type { Account, AICatalog, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Supplier, Usage, User } from './types'
 const id = encodeURIComponent
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
+export const useAICatalog = () => useQuery({ queryKey: ['ai-catalog'], queryFn: ({ signal }) => request<AICatalogResponse>('/api/ai-catalog', { signal }) })
+export const useProviderOptions = () => useQuery({ queryKey: ['provider-options'], queryFn: ({ signal }) => request<List<Pick<Account, 'id' | 'name' | 'provider' | 'enabled'>>>('/api/keys/providers', { signal }) })
 export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }) => request<List<APIKey>>('/api/keys', { signal }) })
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: ({ signal }) => request<List<User>>('/api/users', { signal }) })
 export const useProxies = (enabled = true) => useQuery({ queryKey: ['proxies'], enabled, queryFn: ({ signal }) => request<ProxyGroup[] | null>('/api/proxy-groups', { signal }) })
@@ -14,6 +16,8 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
   return useMutation({ mutationFn: action, onSuccess: async () => { await Promise.all(invalidate.map(key => queryClient.invalidateQueries({ queryKey: [key] }))) } })
 }
 export const actions = {
+  saveAISupplier: (input: Supplier) => request<AICatalogResponse>('/api/ai-catalog/' + encodeURIComponent(input.id), json('PUT', input)),
+  saveAICatalog: (input: AICatalog) => request<AICatalogResponse>('/api/ai-catalog', json('PUT', input)),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: string; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
@@ -30,7 +34,7 @@ export const actions = {
   testProxy: (input: { group_id?: string; proxy_id?: string; url?: string }) => request<Proxy>('/api/proxy-groups/test', json('POST', input)),
   proxyErrors: (input: { group_id: string; proxy_id: string }) => request<Proxy>('/api/proxy-groups/errors?' + new URLSearchParams(input)),
   callDetail: (call: Call) => request<Record<string, unknown>>('/api/calls/' + id(call.started_at.slice(0, 10).replaceAll('-', '')) + '/' + id(call.id)),
-  oauthStart: (input: { aiProvider: string; proxy?: string }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', { proxy: input.proxy })),
+  oauthStart: (input: { aiProvider: string; proxy_group_id?: string }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', { proxy_group_id: input.proxy_group_id })),
   oauthPoll: (input: { aiProvider: string; session_id: string }) => request<{ status: string; result_id?: string; interval_seconds?: number }>(`/api/oauth/${id(input.aiProvider)}/poll/${id(input.session_id)}`, json('POST', {})),
   oauthComplete: (input: { aiProvider: string; session_id: string; code: string; state: string }) => request<{ result_id: string }>(`/api/oauth/${id(input.aiProvider)}/complete/${id(input.session_id)}`, json('POST', input)),
   oauthResult: (key: string) => request<{ result: unknown }>('/api/oauth/results/' + id(key)),

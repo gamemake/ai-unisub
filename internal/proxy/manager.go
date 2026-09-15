@@ -16,25 +16,45 @@ var ErrClosed = errors.New("proxy manager is closed")
 var ErrStatsCapacity = errors.New("proxy statistics capacity reached")
 
 type Policy struct {
-	FailureThreshold int
-	Cooldown         time.Duration
-	HalfOpenLimit    int
-	MaxBuckets       int
-	ProbeTimeout     time.Duration
+	FailureThreshold             int
+	NetworkFailureThreshold      int
+	ApplicationFailureThreshold  int
+	Cooldown                     time.Duration
+	HalfOpenLimit                int
+	MaxBuckets                   int
+	ProbeTimeout                 time.Duration
+	Window                       time.Duration
+	MinSamples                   int64
+	NetworkFailureRate           float64
+	ApplicationFailureRate       float64
+	ApplicationCooldown          time.Duration
+	NetworkRecoverySuccesses     int
+	ApplicationRecoverySuccesses int
+	MaxProbeInterval             time.Duration
+	AutoProbe                    bool
+	ProbeConcurrency             int
 }
 
-func DefaultPolicy() Policy { return Policy{3, time.Minute, 1, 10000, 12 * time.Second} }
+func DefaultPolicy() Policy {
+	return Policy{FailureThreshold: 3, Cooldown: 30 * time.Second, HalfOpenLimit: 1, MaxBuckets: 10000, ProbeTimeout: 12 * time.Second, Window: 5 * time.Minute, MinSamples: 5, NetworkFailureRate: .5, ApplicationFailureRate: .5, ApplicationCooldown: 5 * time.Minute, NetworkRecoverySuccesses: 2, ApplicationRecoverySuccesses: 2, MaxProbeInterval: 10 * time.Minute, AutoProbe: true, ProbeConcurrency: 4}
+}
 
 type State struct {
-	Status              string    `json:"status"`
-	Requests            int64     `json:"requests"`
-	Failures            int64     `json:"failures"`
-	ConsecutiveFailures int       `json:"consecutive_failures"`
-	LastSuccess         time.Time `json:"last_success"`
-	LastFailure         time.Time `json:"last_failure"`
-	CooldownUntil       time.Time `json:"cooldown_until"`
-	InFlight            int       `json:"half_open_in_flight"`
-	LastProbe           time.Time `json:"last_probe"`
+	Status              string     `json:"status"`
+	Requests            int64      `json:"requests"`
+	Failures            int64      `json:"failures"`
+	ConsecutiveFailures int        `json:"consecutive_failures"`
+	LastSuccess         time.Time  `json:"last_success"`
+	LastFailure         time.Time  `json:"last_failure"`
+	CooldownUntil       time.Time  `json:"cooldown_until"`
+	InFlight            int        `json:"half_open_in_flight"`
+	LastProbe           time.Time  `json:"last_probe"`
+	ProbeRequests       int64      `json:"probe_requests"`
+	ProbeFailures       int64      `json:"probe_failures"`
+	RecoverySuccesses   int        `json:"recovery_successes"`
+	Backoff             int        `json:"backoff"`
+	Probing             bool       `json:"probing"`
+	LastError           ErrorClass `json:"last_error,omitempty"`
 }
 type stateKey struct{ address, app string }
 type bucketKey struct {
@@ -44,10 +64,11 @@ type bucketKey struct {
 type ErrorClass string
 
 const (
-	Success          ErrorClass = ""
-	NetworkError     ErrorClass = "network"
-	ApplicationError ErrorClass = "application"
-	Canceled         ErrorClass = "canceled"
+	Success            ErrorClass = ""
+	NetworkError       ErrorClass = "network"
+	ApplicationError   ErrorClass = "application"
+	ApplicationIgnored ErrorClass = "application_ignored"
+	Canceled           ErrorClass = "canceled"
 )
 
 type Prober func(context.Context, *Endpoint) error
@@ -72,6 +93,7 @@ type Manager struct {
 }
 
 func NewManager(store Store, policy Policy) *Manager {
+	policy = normalizePolicy(policy)
 	if policy.FailureThreshold < 1 || policy.Cooldown <= 0 || policy.HalfOpenLimit < 1 || policy.MaxBuckets < 2 || policy.ProbeTimeout <= 0 {
 		panic("invalid proxy policy")
 	}
@@ -82,12 +104,16 @@ func NewManager(store Store, policy Policy) *Manager {
 		defer close(m.done)
 		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
+		probeTicker := time.NewTicker(time.Second)
+		defer probeTicker.Stop()
 		for {
 			select {
 			case <-m.stop:
 				return
 			case <-ticker.C:
 				_ = m.Flush()
+			case <-probeTicker.C:
+				m.startDueProbes()
 			}
 		}
 	}()
@@ -117,6 +143,14 @@ func (m *Manager) List() ([]Group, error) {
 				continue
 			}
 			s := m.state(e.String(), "")
+			network := *s
+			p.Network = &network
+			p.Applications = map[string]State{}
+			for key, state := range m.states {
+				if key.address == e.String() && key.app != "" {
+					p.Applications[key.app] = *state
+				}
+			}
 			p.Status = s.Status
 			p.Available = s.Status == "available"
 			if !s.LastSuccess.IsZero() {

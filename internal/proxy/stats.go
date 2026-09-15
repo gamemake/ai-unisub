@@ -27,7 +27,7 @@ func (m *Manager) ReportProxy(e *Endpoint, app string, class ErrorClass) error {
 	if class == Canceled {
 		return nil
 	}
-	if class != Success && class != NetworkError && class != ApplicationError {
+	if class != Success && class != NetworkError && class != ApplicationError && class != ApplicationIgnored {
 		return errors.New("invalid proxy error class")
 	}
 	keys := []stateKey{{e.String(), ""}}
@@ -38,34 +38,22 @@ func (m *Manager) ReportProxy(e *Endpoint, app string, class ErrorClass) error {
 		return err
 	}
 	for _, k := range keys {
+		// A network failure never reached the application and is not an
+		// application sample (including the failure-rate denominator).
+		if k.app != "" && (class == NetworkError || class == ApplicationIgnored) {
+			continue
+		}
 		failed := class == NetworkError || (k.app != "" && class == ApplicationError)
 		s := m.state(k.address, k.app)
 		s.Requests++
-		// Count the attempted application request, but do not infer an application
-		// outage from a network failure or reset its existing recovery state.
-		if k.app != "" && class == NetworkError {
-			s.Failures++
-			if err := m.record(k, now, true); err != nil {
-				return err
-			}
-			continue
+		if err := m.record(k, now, failed); err != nil {
+			return err
 		}
 		if failed {
 			s.Failures++
-			s.ConsecutiveFailures++
-			s.LastFailure = now
-			if s.ConsecutiveFailures >= m.policy.FailureThreshold || s.Status == "half_open" {
-				s.Status = "unavailable"
-				s.CooldownUntil = now.Add(m.policy.Cooldown)
-			}
+			m.markFailed(k, now)
 		} else {
-			s.ConsecutiveFailures = 0
-			s.LastSuccess = now
-			s.Status = "available"
-			s.CooldownUntil = time.Time{}
-		}
-		if err := m.record(k, now, failed); err != nil {
-			return err
+			m.markSucceeded(k, now)
 		}
 	}
 	return nil
@@ -162,6 +150,9 @@ func (m *Manager) History(e *Endpoint, app string, from, to time.Time) ([]Bucket
 func (m *Manager) Flush() error { m.mu.Lock(); defer m.mu.Unlock(); return m.flushLocked() }
 func (m *Manager) flushLocked() error {
 	m.prune(m.now())
+	if err := m.saveHealthLocked(); err != nil {
+		return err
+	}
 	if len(m.pending) == 0 {
 		return nil
 	}

@@ -12,14 +12,16 @@ import (
 // MemoryDatabase stores accounts, users, and API keys in memory. Call traces
 // are deliberately ignored by this implementation.
 type MemoryDatabase struct {
-	proxyStats  map[proxyStatsKey]proxy.Bucket
-	mu          sync.RWMutex
-	opened      bool
-	accounts    map[string]PersistedAccount
-	users       map[string]PersistedUser
-	apiKeys     map[string]PersistedAPIKey
-	credentials map[string]json.RawMessage
-	proxyGroups map[string]PersistedProxyGroup
+	moduleConfigs map[string]json.RawMessage
+	proxyHealth   map[string]proxy.HealthRecord
+	proxyStats    map[proxyStatsKey]proxy.Bucket
+	mu            sync.RWMutex
+	opened        bool
+	accounts      map[string]PersistedAccount
+	users         map[string]PersistedUser
+	apiKeys       map[string]PersistedAPIKey
+	credentials   map[string]json.RawMessage
+	proxyGroups   map[string]PersistedProxyGroup
 }
 
 func validateAccount(value *PersistedAccount) error {

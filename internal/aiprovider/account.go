@@ -123,6 +123,9 @@ func (a *Account) Handle(r *http.Request, recorder APICallRecorder, queueLimit i
 		return err
 	}
 	defer release()
+	if !AllowsClient(a.aiprovider.Config(), DetectClient(r.Header)) {
+		return ErrClientDenied
+	}
 	a.aiprovider.Handle(r, recorder)
 	return nil
 }

@@ -15,16 +15,18 @@ type Group struct {
 }
 
 type Entry struct {
-	ID            string        `json:"id"`
-	Name          string        `json:"name"`
-	URL           string        `json:"url"`
-	Remark        string        `json:"remark"`
-	Enabled       bool          `json:"enabled"`
-	Status        string        `json:"status"`
-	Available     bool          `json:"available"`
-	LastAvailable *time.Time    `json:"last_available,omitempty"`
-	LastErrorAt   *time.Time    `json:"last_error_at,omitempty"`
-	ErrorRecords  []ErrorRecord `json:"error_records,omitempty"`
+	Network       *State           `json:"network,omitempty"`
+	Applications  map[string]State `json:"applications,omitempty"`
+	ID            string           `json:"id"`
+	Name          string           `json:"name"`
+	URL           string           `json:"url"`
+	Remark        string           `json:"remark"`
+	Enabled       bool             `json:"enabled"`
+	Status        string           `json:"status"`
+	Available     bool             `json:"available"`
+	LastAvailable *time.Time       `json:"last_available,omitempty"`
+	LastErrorAt   *time.Time       `json:"last_error_at,omitempty"`
+	ErrorRecords  []ErrorRecord    `json:"error_records,omitempty"`
 }
 
 type ErrorRecord struct {

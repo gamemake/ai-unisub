@@ -60,6 +60,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			}
 			req := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
+			// A generic header without a recognized client must not create a session.
 			req.Header.Set("Session-Id", "conversation-test")
 			req.AddCookie(cookie)
 			result := httptest.NewRecorder()
@@ -68,7 +69,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 				t.Fatalf("forward: %d %s", result.Code, result.Body.String())
 			}
 			traces, count, err := s.Database().QueryCallTraces("", "", nil, 1, 10, nil)
-			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "conversation-test" {
+			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "" {
 				t.Fatalf("trace: %#v count=%d err=%v", traces, count, err)
 			}
 			trace, err := s.Database().GetCallTrace(traces[0].StartedAt, traces[0].ID)

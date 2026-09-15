@@ -1,7 +1,6 @@
 package aiprovider
 
 import (
-	proxyconfig "ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -46,9 +45,6 @@ func decodeAIProviderConfig(id string, raw json.RawMessage) (AIProviderConfig, e
 			return AIProviderConfig{}, err
 		}
 	}
-	if err := validateProxy(config.Proxy); err != nil {
-		return AIProviderConfig{}, err
-	}
 	config.APIKey = strings.TrimSpace(config.APIKey)
 	if config.CredentialID == "" {
 		var nested struct {
@@ -70,18 +66,18 @@ func decodeAIProviderConfig(id string, raw json.RawMessage) (AIProviderConfig, e
 	if config.MaxConcurrentConnections == 0 {
 		config.MaxConcurrentConnections = 1
 	}
+	if err := validateRoutingConfig(&config); err != nil {
+		return AIProviderConfig{}, err
+	}
+	for _, status := range config.ProxyApplicationErrorStatuses {
+		if status < 400 || status > 599 {
+			return AIProviderConfig{}, errors.New("proxy application error status must be 400 through 599")
+		}
+	}
 	if config.QueueTimeoutSeconds < 0 {
 		return AIProviderConfig{}, errors.New("queue_timeout_seconds must not be negative")
 	}
 	return config, nil
-}
-
-func validateProxy(proxy string) error {
-	if strings.TrimSpace(proxy) == "" {
-		return nil
-	}
-	_, err := proxyconfig.NewEndpoint(proxy)
-	return err
 }
 
 func validateEndpoint(endpoint string) error {

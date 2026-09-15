@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -35,6 +36,7 @@ func New(cfg Config) (*service.Service, error) {
 	if err != nil {
 		return fail(err)
 	}
+	sort.SliceStable(accounts, func(i, j int) bool { return accounts[i].AIProvider != "group" && accounts[j].AIProvider == "group" })
 	for _, account := range accounts {
 		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config); err != nil {
 			return fail(fmt.Errorf("load provider %s: %w", account.ID, err))

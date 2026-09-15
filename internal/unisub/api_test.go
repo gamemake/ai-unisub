@@ -126,10 +126,10 @@ func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
 		return w
 	}
 
-	if got := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"proxy":"ftp://127.0.0.1:21"}}`); got.Code != http.StatusBadRequest {
-		t.Fatalf("invalid proxy: status=%d body=%s", got.Code, got.Body.String())
+	if got := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"proxy":"ftp://127.0.0.1:21"}}`); got.Code != http.StatusCreated {
+		t.Fatalf("ignored proxy must not reject provider: status=%d body=%s", got.Code, got.Body.String())
 	}
-	created := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"enabled":false,"proxy":"http://127.0.0.1:8080","max_concurrent_connections":4,"queue_timeout_seconds":15}}`)
+	created := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"enabled":false,"proxy_group_id":"proxy-one","max_concurrent_connections":4,"queue_timeout_seconds":15}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create provider: status=%d body=%s", created.Code, created.Body.String())
 	}
@@ -142,13 +142,13 @@ func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
 	}
 	id, _ := createdBody["id"].(string)
 	listed := request(http.MethodGet, "/api/ai-providers", "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":false`) || !strings.Contains(listed.Body.String(), `"proxy":"http://127.0.0.1:8080"`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":false`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":"proxy-one"`) {
 		t.Fatalf("list provider: status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	if err := db.SaveCredential("cred-1", json.RawMessage(`{"service":"dummy","access_token":"secret-token","refresh_token":"secret-refresh","email":"dummy@example.test"}`)); err != nil {
 		t.Fatal(err)
 	}
-	withCred := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"credential_id":"cred-1","enabled":false,"proxy":"http://127.0.0.1:8080"}}`)
+	withCred := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"credential_id":"cred-1","enabled":false,"proxy_group_id":"proxy-one"}}`)
 	if withCred.Code != http.StatusOK {
 		t.Fatalf("attach credential: status=%d body=%s", withCred.Code, withCred.Body.String())
 	}
@@ -156,19 +156,19 @@ func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"access_token":"secret-token"`) || !strings.Contains(listed.Body.String(), `"email":"dummy@example.test"`) {
 		t.Fatalf("list missing OAuthCredential: status=%d body=%s", listed.Code, listed.Body.String())
 	}
-	updated := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"enabled":true,"proxy":"socks5://127.0.0.1:1080","max_concurrent_connections":2,"queue_timeout_seconds":30}}`)
+	updated := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"enabled":true,"proxy_group_id":"proxy-two","max_concurrent_connections":2,"queue_timeout_seconds":30}}`)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update provider: status=%d body=%s", updated.Code, updated.Body.String())
 	}
 	listed = request(http.MethodGet, "/api/ai-providers", "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":true`) || !strings.Contains(listed.Body.String(), `"proxy":"socks5://127.0.0.1:1080"`) || !strings.Contains(listed.Body.String(), `"max_concurrent_connections":2`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":true`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":"proxy-two"`) || !strings.Contains(listed.Body.String(), `"max_concurrent_connections":2`) {
 		t.Fatalf("updated list: status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	p, ok := s.AIProviders().Get(id)
 	if !ok {
 		t.Fatal("runtime provider missing")
 	}
-	if !p.Config().Enabled || p.Config().Proxy != "socks5://127.0.0.1:1080" || p.Config().MaxConcurrentConnections != 2 || p.Config().QueueTimeoutSeconds != 30 {
+	if !p.Config().Enabled || p.Config().ProxyGroupID != "proxy-two" || p.Config().MaxConcurrentConnections != 2 || p.Config().QueueTimeoutSeconds != 30 {
 		t.Fatalf("runtime config: %+v", p.Config())
 	}
 }

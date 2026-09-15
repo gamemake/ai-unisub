@@ -86,7 +86,7 @@ src/components/ui/ shadcn/ui 源码组件
 public/          公共静态资源
 ```
 
-AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/aiprovider.md)。
+AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/ai-provider.md)。
 
 代理能力位于独立的 `internal/proxy` 包，统一包含代理对象构造与内部 URL 校验、HTTP 传输配置和代理管理；`oauth` 显式依赖代理包，通过参数接收代理对象，不用 Context 隐式传递代理，`common` 不保留代理文件或工具。Service 注入代理管理能力，UniSub API 提供管理入口，AIProvider 通过窄接口调用。代理组配置沿用原存储表示，新增 `proxy_stats` 保存幂等的 10 分钟聚合；策略与接口见 [Proxy 设计](docs/proxy.md)。
 
@@ -114,4 +114,4 @@ npm run test:e2e
 
 网关保持响应状态和流式字节；调用记录中的响应体最多保存前 1 MiB，完整响应仍发送给客户端。WebSocket upgrade 尚未实现。真实平台的账号可用性与模型能力需要使用对应账号验证；本地自动化测试使用模拟上游。
 
-项目协作约定见 [AGENT.md](AGENT.md)。详细设计入口：[UniSub](docs/unisub.md)、[框架](docs/service.md)、[数据库](docs/database.md)、[AI Provider](docs/aiprovider.md)、[OAuth](docs/oauth.md)、[公共工具](docs/common.md)。
+项目协作约定见 [AGENT.md](AGENT.md)。详细设计入口：[UniSub](docs/unisub.md)、[框架](docs/service.md)、[数据库](docs/database.md)、[AI Provider](docs/ai-provider.md)、[OAuth](docs/oauth.md)、[公共工具](docs/common.md)。
