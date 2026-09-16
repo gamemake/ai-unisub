@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"maps"
 	"sync"
 	"time"
 
@@ -48,11 +49,9 @@ func (s *OAuthResultStore) Put(result OAuthResult) (string, error) {
 	}
 	id := hex.EncodeToString(raw[:])
 	s.mu.Lock()
-	for key, value := range s.values {
-		if !value.expiresAt.After(time.Now()) {
-			delete(s.values, key)
-		}
-	}
+	maps.DeleteFunc(s.values, func(_ string, value oauthResultValue) bool {
+		return !value.expiresAt.After(time.Now())
+	})
 	s.values[id] = oauthResultValue{subjectID: result.SubjectID, result: result, expiresAt: time.Now().Add(s.ttl)}
 	s.mu.Unlock()
 	return id, nil

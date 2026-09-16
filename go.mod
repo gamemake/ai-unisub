@@ -1,6 +1,6 @@
 module ai-unisub
 
-go 1.26
+go 1.27.1
 
 require modernc.org/sqlite v1.39.1
 

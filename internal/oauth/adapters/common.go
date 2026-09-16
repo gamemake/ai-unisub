@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,9 +25,7 @@ func credential(token tokenResponse) (*oauth.OAuthCredential, error) {
 		return nil, errors.New("oauth response has no access token")
 	}
 	result := &oauth.OAuthCredential{AccessToken: token.AccessToken, RefreshToken: token.RefreshToken, TokenType: token.TokenType}
-	if result.TokenType == "" {
-		result.TokenType = "Bearer"
-	}
+	result.TokenType = cmp.Or(result.TokenType, "Bearer")
 	if token.Expires > 0 {
 		result.ExpiresAt = time.Now().Add(time.Duration(token.Expires) * time.Second).UTC()
 	}

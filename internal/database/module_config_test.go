@@ -46,7 +46,7 @@ func TestModuleConfigIsolation(t *testing.T) {
 			if err := db.DeleteModuleConfig(""); err == nil {
 				t.Fatal("accepted empty module deletion")
 			}
-			for i := 0; i < 2; i++ {
+			for range 2 {
 				if err := db.DeleteModuleConfig("aiprovider"); err != nil {
 					t.Fatal(err)
 				}
@@ -72,7 +72,7 @@ func TestModuleConfigAndProxyHealthPersistAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := proxy.HealthRecord{Address: "http://localhost:8001", Application: "claude", State: proxy.State{Status: "unavailable", Failures: 2, LastError: proxy.ApplicationError}, UpdatedAt: time.Now().UTC()}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := db.SaveProxyHealth([]proxy.HealthRecord{record}); err != nil {
 			t.Fatal(err)
 		}

@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"ai-unisub/internal/proxy"
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -38,11 +37,11 @@ func TestClaudeAuthorizationURLAndJSONExchange(t *testing.T) {
 	}))
 	defer server.Close()
 	adapter := NewClaude(ClaudeConfig{AuthorizeURL: "https://auth.test/authorize", TokenURL: server.URL, ClientID: "test-client", HTTPClient: server.Client()})
-	started, err := adapter.BuildAuthorizationURL(context.Background(), oauth.AuthorizationInput{State: "state", CodeVerifier: "verifier", RedirectURI: "http://127.0.0.1/callback"})
+	started, err := adapter.BuildAuthorizationURL(t.Context(), oauth.AuthorizationInput{State: "state", CodeVerifier: "verifier", RedirectURI: "http://127.0.0.1/callback"})
 	if err != nil || !strings.Contains(started.AuthorizationURL, "code_challenge_method=S256") || !strings.Contains(started.AuthorizationURL, "state=state") {
 		t.Fatalf("authorization url=%q err=%v", started.AuthorizationURL, err)
 	}
-	credential, err := adapter.Exchange(context.Background(), "code", "state", "verifier", "http://127.0.0.1/callback")
+	credential, err := adapter.Exchange(t.Context(), "code", "state", "verifier", "http://127.0.0.1/callback")
 	if err != nil || credential.AccessToken != "claude-access" || credential.RefreshToken != "claude-refresh" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
@@ -72,14 +71,14 @@ func TestGrokDevicePendingAndToken(t *testing.T) {
 	}))
 	defer server.Close()
 	adapter := NewGrok(GrokConfig{Issuer: server.URL, ClientID: "test-client", HTTPClient: server.Client()})
-	start, err := adapter.StartDeviceAuthorization(context.Background(), oauth.DeviceStartInput{Service: oauth.OAuthServiceGrok})
+	start, err := adapter.StartDeviceAuthorization(t.Context(), oauth.DeviceStartInput{Service: oauth.OAuthServiceGrok})
 	if err != nil || start.DeviceCode != "device" {
 		t.Fatalf("start=%+v err=%v", start, err)
 	}
-	if _, err := adapter.PollDeviceToken(context.Background(), start.DeviceCode); err != oauth.ErrAuthorizationPending {
+	if _, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode); err != oauth.ErrAuthorizationPending {
 		t.Fatalf("pending err=%v", err)
 	}
-	credential, err := adapter.PollDeviceToken(context.Background(), start.DeviceCode)
+	credential, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode)
 	if err != nil || credential.AccessToken != "grok-access" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}

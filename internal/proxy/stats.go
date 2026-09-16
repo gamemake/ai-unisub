@@ -2,12 +2,23 @@ package proxy
 
 import (
 	"errors"
-	"sort"
+	"maps"
+	"slices"
 	"time"
 )
 
 // ReportProxy is called exactly once for each admitted attempt, including cancellation.
 func (m *Manager) ReportProxy(e *Endpoint, app string, class ErrorClass) error {
+	return m.ReportProxyResult(e, app, class, nil, 0)
+}
+
+// ReportProxyResult preserves the health classification while logging the
+// underlying failure and HTTP status once per attempt. Never pass response bodies.
+func (m *Manager) ReportProxyResult(e *Endpoint, app string, class ErrorClass, cause error, status int) (err error) {
+	defer func() { LogError("report_result", e, app, err) }()
+	if class == Success || class == NetworkError || class == ApplicationError || class == ApplicationIgnored || class == Canceled {
+		logResult(e, app, class, cause, status)
+	}
 	if e == nil {
 		return nil
 	}
@@ -51,9 +62,9 @@ func (m *Manager) ReportProxy(e *Endpoint, app string, class ErrorClass) error {
 		}
 		if failed {
 			s.Failures++
-			m.markFailed(k, now)
+			m.markFailed(k, now, "request", false)
 		} else {
-			m.markSucceeded(k, now)
+			m.markSucceeded(k, now, "request")
 		}
 	}
 	return nil
@@ -122,11 +133,9 @@ func (m *Manager) record(k stateKey, now time.Time, failed bool) error {
 	return nil
 }
 func (m *Manager) prune(now time.Time) {
-	for k := range m.minutes {
-		if !k.at.After(now.Truncate(time.Minute).Add(-10 * time.Minute)) {
-			delete(m.minutes, k)
-		}
-	}
+	maps.DeleteFunc(m.minutes, func(k bucketKey, _ Bucket) bool {
+		return !k.at.After(now.Truncate(time.Minute).Add(-10 * time.Minute))
+	})
 }
 func (m *Manager) Recent(e *Endpoint, app string) []Bucket {
 	m.mu.Lock()
@@ -138,16 +147,23 @@ func (m *Manager) Recent(e *Endpoint, app string) []Bucket {
 			out = append(out, b)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].StartAt.Before(out[j].StartAt) })
+	slices.SortFunc(out, func(a, b Bucket) int { return a.StartAt.Compare(b.StartAt) })
 	return out
 }
 func (m *Manager) History(e *Endpoint, app string, from, to time.Time) ([]Bucket, error) {
 	if err := m.Flush(); err != nil {
 		return nil, err
 	}
-	return m.store.ListProxyStats(e.String(), app, from, to)
+	buckets, err := m.store.ListProxyStats(e.String(), app, from, to)
+	LogError("list_stats", e, app, err)
+	return buckets, err
 }
-func (m *Manager) Flush() error { m.mu.Lock(); defer m.mu.Unlock(); return m.flushLocked() }
+func (m *Manager) Flush() (err error) {
+	defer func() { logOperationError("flush", "", "", "", err) }()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.flushLocked()
+}
 func (m *Manager) flushLocked() error {
 	m.prune(m.now())
 	if err := m.saveHealthLocked(); err != nil {
@@ -156,17 +172,12 @@ func (m *Manager) flushLocked() error {
 	if len(m.pending) == 0 {
 		return nil
 	}
-	values := make([]Bucket, 0, len(m.pending))
-	for _, b := range m.pending {
-		values = append(values, b)
-	}
+	values := slices.Collect(maps.Values(m.pending))
 	if err := m.store.SaveProxyStats(values); err != nil {
 		return err
 	}
-	for k := range m.pending {
-		if k.at.Before(m.now().UTC().Truncate(10 * time.Minute)) {
-			delete(m.pending, k)
-		}
-	}
+	maps.DeleteFunc(m.pending, func(k bucketKey, _ Bucket) bool {
+		return k.at.Before(m.now().UTC().Truncate(10 * time.Minute))
+	})
 	return nil
 }

@@ -2,12 +2,14 @@
 package unisub
 
 import (
+	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"ai-unisub/internal/web"
+	"cmp"
 	"fmt"
 	"io/fs"
 	"os"
-	"sort"
+	"slices"
 	"strings"
 )
 
@@ -36,7 +38,15 @@ func New(cfg Config) (*service.Service, error) {
 	if err != nil {
 		return fail(err)
 	}
-	sort.SliceStable(accounts, func(i, j int) bool { return accounts[i].AIProvider != "group" && accounts[j].AIProvider == "group" })
+	slices.SortStableFunc(accounts, func(a, b database.PersistedAccount) int {
+		if (a.AIProvider == "group") == (b.AIProvider == "group") {
+			return 0
+		}
+		if a.AIProvider == "group" {
+			return 1
+		}
+		return -1
+	})
 	for _, account := range accounts {
 		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config); err != nil {
 			return fail(fmt.Errorf("load provider %s: %w", account.ID, err))
@@ -56,10 +66,7 @@ func staticFiles(cfg Config) (fs.FS, error) {
 	case "", "PRD", "PROD":
 		files = web.Files()
 	case "DEV":
-		dir := cfg.WebDir
-		if dir == "" {
-			dir = "internal/web/dist"
-		}
+		dir := cmp.Or(cfg.WebDir, "internal/web/dist")
 		files = os.DirFS(dir)
 	default:
 		return nil, fmt.Errorf("invalid UNISUB_MODE %q: use DEV or PRD", cfg.Mode)

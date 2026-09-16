@@ -43,7 +43,7 @@ func TestDummyDeviceOAuthFlow(t *testing.T) {
 	if err := manager.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	started, err := manager.Start(context.Background(), adapter.Service(), "user-1", "http://dummy.test/callback")
+	started, err := manager.Start(t.Context(), adapter.Service(), "user-1", "http://dummy.test/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,17 +51,17 @@ func TestDummyDeviceOAuthFlow(t *testing.T) {
 		t.Fatalf("unexpected dummy start result: %+v", started)
 	}
 
-	if _, err := manager.Poll(context.Background(), started.SessionID); !errors.Is(err, ErrAuthorizationPending) {
+	if _, err := manager.Poll(t.Context(), started.SessionID); !errors.Is(err, ErrAuthorizationPending) {
 		t.Fatalf("first poll error=%v, want pending", err)
 	}
-	credential, err := manager.Poll(context.Background(), started.SessionID)
+	credential, err := manager.Poll(t.Context(), started.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if credential.AccessToken != "dummy-access-token" {
 		t.Fatalf("unexpected dummy credential: %+v", credential)
 	}
-	if _, err := manager.Poll(context.Background(), started.SessionID); !errors.Is(err, ErrSessionNotFound) {
+	if _, err := manager.Poll(t.Context(), started.SessionID); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("replay poll error=%v, want session not found", err)
 	}
 }

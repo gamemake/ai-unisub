@@ -3,6 +3,8 @@ package aiprovider
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 )
 
@@ -33,10 +35,7 @@ func (m *AIProviderManager) SetProxyResolver(resolver ProxyResolver) {
 	}
 	m.mu.Lock()
 	m.proxyResolver = resolver
-	xs := make([]AIProvider, 0, len(m.aiProviders))
-	for _, p := range m.aiProviders {
-		xs = append(xs, p)
-	}
+	xs := slices.Collect(maps.Values(m.aiProviders))
 	m.mu.Unlock()
 	for _, p := range xs {
 		if x, ok := p.(interface{ SetProxyResolver(ProxyResolver) }); ok {
@@ -177,11 +176,7 @@ func (m *AIProviderManager) Remove(instanceID string) (AIProvider, bool) {
 		delete(m.adapters, instanceID)
 		delete(m.health, instanceID)
 		delete(m.revisions, instanceID)
-		for k, b := range m.bindings {
-			if b.id == instanceID {
-				delete(m.bindings, k)
-			}
-		}
+		maps.DeleteFunc(m.bindings, func(_ string, b affinityBinding) bool { return b.id == instanceID })
 	}
 	return aiprovider, ok
 }
@@ -220,8 +215,6 @@ func (m *AIProviderManager) UpdateConfig(id string, config json.RawMessage) erro
 	m.revision++
 	m.revisions[id] = m.revision
 	delete(m.health, id)
-	for k := range m.bindings {
-		delete(m.bindings, k)
-	}
+	clear(m.bindings)
 	return nil
 }

@@ -3,12 +3,13 @@ package service
 import (
 	"ai-unisub/internal/common"
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -76,15 +77,13 @@ func (r *router) handler(s *Service) http.Handler {
 			statusWriter := &responseWriter{ResponseWriter: w}
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					log.Printf("service request panic route=%s method=%s path=%s panic=%v", best.options.Name, q.Method, q.URL.Path, recovered)
+					common.ModuleLogger("service").Error("request_panic", fmt.Sprintf("route=%s method=%s path=%s panic=%v", best.options.Name, q.Method, q.URL.Path, recovered))
 					if statusWriter.status == 0 {
 						common.WriteError(statusWriter, http.StatusInternalServerError, common.MessageInternalServerError)
 					}
 				}
-				if statusWriter.status == 0 {
-					statusWriter.status = http.StatusOK
-				}
-				log.Printf("service request route=%s method=%s path=%s status=%d duration=%s", best.options.Name, q.Method, q.URL.Path, statusWriter.status, time.Since(started))
+				statusWriter.status = cmp.Or(statusWriter.status, http.StatusOK)
+				common.ModuleLogger("service").Info("http_access", fmt.Sprintf("route=%s method=%s path=%s status=%d duration=%d ms", best.options.Name, q.Method, q.URL.Path, statusWriter.status, time.Since(started).Milliseconds()))
 			}()
 			requestID := q.Header.Get("X-Request-ID")
 			if requestID == "" {

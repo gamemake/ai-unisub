@@ -3,6 +3,7 @@ package adapters
 import (
 	"ai-unisub/internal/proxy"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -23,15 +24,9 @@ type ClaudeConfig struct {
 type ClaudeAdapter struct{ config ClaudeConfig }
 
 func NewClaude(config ClaudeConfig) *ClaudeAdapter {
-	if config.AuthorizeURL == "" {
-		config.AuthorizeURL = "https://claude.com/cai/oauth/authorize"
-	}
-	if config.TokenURL == "" {
-		config.TokenURL = "https://platform.claude.com/v1/oauth/token"
-	}
-	if config.ClientID == "" {
-		config.ClientID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-	}
+	config.AuthorizeURL = cmp.Or(config.AuthorizeURL, "https://claude.com/cai/oauth/authorize")
+	config.TokenURL = cmp.Or(config.TokenURL, "https://platform.claude.com/v1/oauth/token")
+	config.ClientID = cmp.Or(config.ClientID, "9d1c250a-e61b-44d9-88ed-5944d1962f5e")
 	if len(config.Scopes) == 0 {
 		config.Scopes = []string{"org:create_api_key", "user:profile", "user:inference", "user:sessions:claude_code", "user:mcp_servers", "user:file_upload"}
 	}
@@ -53,9 +48,7 @@ func (a *ClaudeAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential,
 	if err != nil {
 		return nil, err
 	}
-	if result.RefreshToken == "" {
-		result.RefreshToken = old.RefreshToken
-	}
+	result.RefreshToken = cmp.Or(result.RefreshToken, old.RefreshToken)
 	result.AccountID, result.AccountName, result.Email = old.AccountID, old.AccountName, old.Email
 	return result, nil
 }

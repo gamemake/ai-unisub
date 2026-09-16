@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -151,11 +152,11 @@ func (s *Service) Close() error {
 		return nil
 	}
 	s.closed = true
-	ms := append([]Module(nil), s.modules...)
+	ms := slices.Clone(s.modules)
 	s.mu.Unlock()
 	var first error
-	for i := len(ms) - 1; i >= 0; i-- {
-		if e := ms[i].Close(); e != nil && first == nil {
+	for _, m := range slices.Backward(ms) {
+		if e := m.Close(); e != nil && first == nil {
 			first = e
 		}
 	}

@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"ai-unisub/internal/proxy"
+	"cmp"
 	"context"
 	"net/http"
 	"net/url"
@@ -18,15 +19,9 @@ type CodexConfig struct {
 type CodexAdapter struct{ config CodexConfig }
 
 func NewCodex(config CodexConfig) *CodexAdapter {
-	if config.AuthorizeURL == "" {
-		config.AuthorizeURL = "https://auth.openai.com/oauth/authorize"
-	}
-	if config.TokenURL == "" {
-		config.TokenURL = "https://auth.openai.com/oauth/token"
-	}
-	if config.ClientID == "" {
-		config.ClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
-	}
+	config.AuthorizeURL = cmp.Or(config.AuthorizeURL, "https://auth.openai.com/oauth/authorize")
+	config.TokenURL = cmp.Or(config.TokenURL, "https://auth.openai.com/oauth/token")
+	config.ClientID = cmp.Or(config.ClientID, "app_EMoamEEZ73f0CkXaXp7hrann")
 	if len(config.Scopes) == 0 {
 		config.Scopes = []string{"openid", "profile", "email", "offline_access"}
 	}

@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"net/url"
@@ -63,9 +64,7 @@ func decodeAIProviderConfig(id string, raw json.RawMessage) (AIProviderConfig, e
 	if config.MaxConcurrentConnections < 0 {
 		return AIProviderConfig{}, errors.New("max_concurrent_connections must not be negative")
 	}
-	if config.MaxConcurrentConnections == 0 {
-		config.MaxConcurrentConnections = 1
-	}
+	config.MaxConcurrentConnections = cmp.Or(config.MaxConcurrentConnections, 1)
 	if err := validateRoutingConfig(&config); err != nil {
 		return AIProviderConfig{}, err
 	}

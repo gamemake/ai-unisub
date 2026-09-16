@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 )
 
@@ -47,7 +49,7 @@ func main() {
 			fmt.Fprint(os.Stderr, usageText)
 			return
 		}
-		fmt.Fprintln(os.Stderr, "error:", err)
+		common.ModuleLogger("cmd/dummy").Error("command_failed", err.Error())
 		if errors.Is(err, errUsage) {
 			fmt.Fprint(os.Stderr, usageText)
 		}
@@ -56,15 +58,15 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	if err := common.InitLogging(common.LogConfig{Output: stderr}); err != nil {
+		return err
+	}
 	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
 		return usageErrorf("API key is required as the first argument")
 	}
 	apiKey := strings.TrimSpace(args[0])
 
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		databaseURL = defaultDatabaseURL
-	}
+	databaseURL := cmp.Or(os.Getenv("DATABASE_URL"), defaultDatabaseURL)
 
 	flags := flag.NewFlagSet("dummy", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -83,7 +85,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return usageErrorf("unexpected argument %q", flags.Arg(0))
 	}
-	fmt.Fprintf(stdout, "parameters: api_key=%q database_url=%q count=%d\n", apiKey, databaseURL, count)
+	common.ModuleLogger("cmd/dummy").Info("generation_started", fmt.Sprintf("parameters: api_key=%q database_url=%q count=%d", apiKey, databaseURL, count))
 
 	db, err := database.NewDatabase(databaseURL)
 	if err != nil {
@@ -99,7 +101,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	rng := mathrand.New(mathrand.NewSource(time.Now().UnixNano()))
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if err := recordDummyCall(db, key, account, i, rng); err != nil {
 			return fmt.Errorf("record %d: %w", i+1, err)
 		}

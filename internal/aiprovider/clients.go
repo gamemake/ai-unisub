@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	"cmp"
 	"errors"
 	"net/http"
 	"regexp"
@@ -65,10 +66,7 @@ func effectiveClient(c AIProviderConfig) ClientType {
 		}
 		return ""
 	}
-	if c.ClientType == "" {
-		return ClientAny
-	}
-	return c.ClientType
+	return cmp.Or(c.ClientType, ClientAny)
 }
 func AllowsClient(c AIProviderConfig, client ClientType) bool {
 	allowed := effectiveClient(c)
@@ -91,9 +89,7 @@ func validateRoutingConfig(c *AIProviderConfig) error {
 	if c.OfficialOnly && c.Kind != "subscription" {
 		return errors.New("official-only requires a subscription")
 	}
-	if c.ClientType == "" {
-		c.ClientType = ClientAny
-	}
+	c.ClientType = cmp.Or(c.ClientType, ClientAny)
 	switch c.ClientType {
 	case ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok:
 	default:

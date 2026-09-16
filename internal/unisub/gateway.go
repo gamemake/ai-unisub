@@ -6,10 +6,11 @@ import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -79,9 +80,8 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		body, readErr := io.ReadAll(outbound.Body)
 		_ = outbound.Body.Close()
 		if readErr != nil {
-			var limit *http.MaxBytesError
 			status := 400
-			if errors.As(readErr, &limit) {
+			if _, ok := errors.AsType[*http.MaxBytesError](readErr); ok {
 				status = 413
 			}
 			common.WriteError(w, status, "invalid request body")
@@ -94,7 +94,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	}
 	outbound.URL, outbound.Host, outbound.RequestURI = target, target.Host, ""
 	for _, value := range outbound.Header.Values("Connection") {
-		for _, name := range strings.Split(value, ",") {
+		for name := range strings.SplitSeq(value, ",") {
 			outbound.Header.Del(strings.TrimSpace(name))
 		}
 	}
@@ -110,16 +110,11 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		result = trace
 		recorded = true
 		if !output.written {
-			status := trace.ResponseStatus
-			if status == 0 {
-				status = trace.HTTPErrorCode
-			}
+			status := cmp.Or(trace.ResponseStatus, trace.HTTPErrorCode)
 			if status == 0 && trace.HTTPErrorInfo != "" {
 				status = http.StatusBadGateway
 			}
-			if status == 0 {
-				status = http.StatusOK
-			}
+			status = cmp.Or(status, http.StatusOK)
 			if trace.HTTPErrorInfo != "" && len(trace.ResponseBody) == 0 {
 				common.WriteError(output, status, common.MessageUpstreamRequestFailed)
 			} else {
@@ -149,12 +144,12 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
 		}
 		if err := ctx.Database().RecordCallTrace(saved); err != nil {
-			log.Printf("record gateway call %s: %v", requestID, err)
+			common.ModuleLogger("gateway").Error("record_call_failed", fmt.Sprintf("record gateway call %s: %v", requestID, err))
 		}
 	}
 	var tried []string
 	root, _ := ctx.AIProviders().Get(principal.Account.ID)
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		var retryTrace *aiprovider.AIProviderCallTrace
 		canSwitch := root != nil && root.Config().Kind == "group" && attempt < 2
 		err = selected.Account.Handle(outbound, func(trace *aiprovider.AIProviderCallTrace) {
@@ -252,10 +247,7 @@ func upstreamURL(endpoint, name, auth string, incoming *url.URL) (*url.URL, erro
 	// Base URLs commonly already end with /v1; append the official relative path
 	// without duplicating the version segment, preserving escaped resource IDs.
 	suffix := strings.TrimPrefix(incoming.EscapedPath(), "/v1")
-	prefix := strings.TrimRight(base.EscapedPath(), "/")
-	if prefix == "" {
-		prefix = "/v1"
-	}
+	prefix := cmp.Or(strings.TrimRight(base.EscapedPath(), "/"), "/v1")
 	rawPath := prefix + suffix
 	base.Path, err = url.PathUnescape(rawPath)
 	if err != nil {

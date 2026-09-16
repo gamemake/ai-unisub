@@ -23,7 +23,12 @@ func (e *Endpoint) String() string {
 	}
 	return e.address
 }
-func NewEndpoint(address string) (*Endpoint, error) {
+func NewEndpoint(address string) (endpoint *Endpoint, err error) {
+	defer func() { logOperationError("parse_endpoint", address, "", "", err) }()
+	return newEndpoint(address)
+}
+
+func newEndpoint(address string) (*Endpoint, error) {
 	address = strings.TrimSpace(address)
 	invalid := errors.New(common.MessageInvalidProxy)
 	if address == "" || strings.IndexFunc(address, unicode.IsSpace) >= 0 {

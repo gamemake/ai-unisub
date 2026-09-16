@@ -59,7 +59,7 @@ func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	endpoint, _ := proxy.NewEndpoint("socks5://127.0.0.1:1080")
-	start, err := m.Start(context.Background(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", endpoint)
+	start, err := m.Start(t.Context(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,21 +67,21 @@ func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
 	if err != nil || session.Proxy.String() != "socks5://127.0.0.1:1080" {
 		t.Fatalf("session proxy=%q err=%v", session.Proxy, err)
 	}
-	if _, err := m.Complete(context.Background(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
+	if _, err := m.Complete(t.Context(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
 		t.Fatalf("state error=%v", err)
 	}
 	s, err := m.session(start.SessionID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := m.Complete(context.Background(), start.SessionID, "code", s.State)
+	credential, err := m.Complete(t.Context(), start.SessionID, "code", s.State)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if credential.AccessToken != "access" {
 		t.Fatalf("credential=%+v", credential)
 	}
-	if _, err := m.Complete(context.Background(), start.SessionID, "code", s.State); !errors.Is(err, ErrSessionNotFound) {
+	if _, err := m.Complete(t.Context(), start.SessionID, "code", s.State); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("replay error=%v", err)
 	}
 }
@@ -91,7 +91,7 @@ func TestManagerSessionLookupBindsStateAndSubject(t *testing.T) {
 	if err := m.Register(&testAdapter{service: OAuthServiceClaude}); err != nil {
 		t.Fatal(err)
 	}
-	start, err := m.Start(context.Background(), OAuthServiceClaude, "user-1", "http://127.0.0.1/callback")
+	start, err := m.Start(t.Context(), OAuthServiceClaude, "user-1", "http://127.0.0.1/callback")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +116,13 @@ func TestManagerRefreshesCredentialOnceConcurrently(t *testing.T) {
 	m := NewManager(store)
 	_ = m.Register(adapter)
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			token, err := m.GetValidAccessToken(context.Background(), OAuthServiceClaude, "id")
+	for range 8 {
+		wg.Go(func() {
+			token, err := m.GetValidAccessToken(t.Context(), OAuthServiceClaude, "id")
 			if err != nil || token != "refreshed" {
 				t.Errorf("token=%q err=%v", token, err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	adapter.mu.Lock()

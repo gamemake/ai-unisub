@@ -66,8 +66,8 @@ func TestCallTraceFiltersAndSessionMigration(t *testing.T) {
 		{"no substring", CallTraceFilter{Search: "session"}, 0}, {"no wildcard", CallTraceFilter{Search: "%"}, 0},
 		{"admin username", CallTraceFilter{Search: "alice", SearchUsernames: true}, 2}, {"member username disabled", CallTraceFilter{Search: "alice", UserName: "alice"}, 0},
 		{"member isolation", CallTraceFilter{UserName: "alice", Search: "session-b"}, 0},
-		{"account", CallTraceFilter{AccountID: "account-a"}, 2}, {"success", CallTraceFilter{Code: callCode(0)}, 2}, {"failure", CallTraceFilter{Code: callCode(500)}, 1},
-		{"combined", CallTraceFilter{Search: "alice", SearchUsernames: true, AccountID: "account-a", Code: callCode(0), TimeRange: &TimeRange{Start: now.Add(-time.Hour), End: now}}, 1},
+		{"account", CallTraceFilter{AccountID: "account-a"}, 2}, {"success", CallTraceFilter{Code: new(0)}, 2}, {"failure", CallTraceFilter{Code: new(500)}, 1},
+		{"combined", CallTraceFilter{Search: "alice", SearchUsernames: true, AccountID: "account-a", Code: new(0), TimeRange: &TimeRange{Start: now.Add(-time.Hour), End: now}}, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -94,5 +94,3 @@ func TestCallTraceFiltersAndSessionMigration(t *testing.T) {
 		t.Fatal("old trace without session", err)
 	}
 }
-
-func callCode(value int) *int { return &value }

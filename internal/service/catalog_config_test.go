@@ -4,6 +4,7 @@ import (
 	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/database"
 	"encoding/json"
+	"maps"
 	"testing"
 )
 
@@ -16,9 +17,7 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 		var suppliers []map[string]any
 		for _, builtin := range aiprovider.SupplierConfigs() {
 			item := map[string]any{"id": builtin.ID, "name": builtin.Name}
-			for key, value := range fields {
-				item[key] = value
-			}
+			maps.Copy(item, fields)
 			suppliers = append(suppliers, item)
 		}
 		raw, _ := json.Marshal(map[string]any{"suppliers": suppliers})

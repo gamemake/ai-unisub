@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ func (m *MemoryDatabase) SaveModuleConfig(module string, raw json.RawMessage) er
 	if m.moduleConfigs == nil {
 		m.moduleConfigs = make(map[string]json.RawMessage)
 	}
-	m.moduleConfigs[module] = append(json.RawMessage(nil), raw...)
+	m.moduleConfigs[module] = slices.Clone(raw)
 	return nil
 }
 func (m *MemoryDatabase) DeleteModuleConfig(module string) error {

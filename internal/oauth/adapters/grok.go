@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"ai-unisub/internal/proxy"
+	"cmp"
 	"context"
 	"errors"
 	"net/http"
@@ -20,15 +21,9 @@ type GrokConfig struct {
 type GrokAdapter struct{ config GrokConfig }
 
 func NewGrok(config GrokConfig) *GrokAdapter {
-	if config.Issuer == "" {
-		config.Issuer = "https://auth.x.ai"
-	}
-	if config.ClientID == "" {
-		config.ClientID = "b1a00492-073a-47ea-816f-4c329264a828"
-	}
-	if config.ClientVersion == "" {
-		config.ClientVersion = "0.2.114"
-	}
+	config.Issuer = cmp.Or(config.Issuer, "https://auth.x.ai")
+	config.ClientID = cmp.Or(config.ClientID, "b1a00492-073a-47ea-816f-4c329264a828")
+	config.ClientVersion = cmp.Or(config.ClientVersion, "0.2.114")
 	if len(config.Scopes) == 0 {
 		config.Scopes = []string{
 			"openid", "profile", "email", "offline_access", "grok-cli:access", "api:access",
@@ -71,10 +66,7 @@ func (a *GrokAdapter) StartDeviceAuthorization(ctx context.Context, input oauth.
 	if response.DeviceCode == "" {
 		return oauth.DeviceAuthorizationResult{}, errors.New("Grok device authorization returned no device code")
 	}
-	uri := response.VerificationURIComplete
-	if uri == "" {
-		uri = response.VerificationURI
-	}
+	uri := cmp.Or(response.VerificationURIComplete, response.VerificationURI)
 	interval := time.Duration(response.Interval) * time.Second
 	if interval <= 0 {
 		interval = 5 * time.Second

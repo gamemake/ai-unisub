@@ -39,7 +39,7 @@ flowchart TD
 
 | 包 | 职责 | 关键边界 | 文档 |
 | --- | --- | --- | --- |
-| common | 公共错误消息与 JSON 错误输出 | 不承担代理职责，不包含 proxy.go | [Common](common.md) |
+| common | 公共错误消息、JSON 错误输出与统一日志 | 不承担代理职责，不包含 proxy.go | [Common](common.md) |
 | database | 统一数据库接口、SQLite 持久化与内部缓存 | MemoryDatabase 是内部缓存数据结构，不是并列数据库后端 | [Database](database.md) |
 | proxy | 代理对象、内部 URL 校验、HTTP 传输、代理组、调度与统计 | 不依赖 OAuth、AIProvider、Service 或应用；通过自身 Store 接口使用持久化 | [Proxy](proxy.md) |
 | oauth | 授权协议、Session、Credential、刷新与撤销 | 显式依赖 Proxy，不感知应用路由、用户角色、页面或具体数据库 | [OAuth](oauth.md) |

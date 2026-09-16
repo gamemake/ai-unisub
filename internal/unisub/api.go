@@ -6,12 +6,14 @@ import (
 	"ai-unisub/internal/database"
 	proxyconfig "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -461,10 +463,7 @@ func (m *APIModule) usage(ctx framework.ModuleContext, w http.ResponseWriter, r 
 		if user, found := userByID[id]; found {
 			name, role, enabled = user.Name, string(user.Role), user.Enabled
 		}
-		groupID := id
-		if groupID == "" {
-			groupID = "__unassigned__"
-		}
+		groupID := cmp.Or(id, "__unassigned__")
 		row := groups[groupID]
 		if row == nil {
 			row = &userUsageRow{UserID: id, Username: name, Role: role, Enabled: enabled}
@@ -1040,9 +1039,7 @@ func canonicalProviderConfig(raw json.RawMessage, c aiprovider.AIProviderConfig)
 	normalized, _ := json.Marshal(c)
 	var values map[string]json.RawMessage
 	_ = json.Unmarshal(normalized, &values)
-	for k, v := range values {
-		fields[k] = v
-	}
+	maps.Copy(fields, values)
 	out, _ := json.Marshal(fields)
 	return out
 }

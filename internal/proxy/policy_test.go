@@ -29,11 +29,11 @@ func TestWindowRateAndIndependentApplicationRecovery(t *testing.T) {
 	if m.Snapshot(e, "").Status != "available" {
 		t.Fatal("application failure broke network")
 	}
-	if _, err := m.ResolveProxy(context.Background(), "g", "codex", nil); err != nil {
+	if _, err := m.ResolveProxy(t.Context(), "g", "codex", nil); err != nil {
 		t.Fatal("other application quarantined", err)
 	}
 	m.SetProber(func(context.Context, *Endpoint) error { return nil })
-	_, _ = m.TestURL(context.Background(), e.String())
+	_, _ = m.TestURL(t.Context(), e.String())
 	if m.Snapshot(e, "").Requests != 5 || m.Snapshot(e, "").ProbeRequests != 1 {
 		t.Fatal("probe mixed into business statistics")
 	}
@@ -69,7 +69,7 @@ func TestAutomaticProbesAreNetworkOnlyAndRecoverInStages(t *testing.T) {
 	saveGroup(t, m, "g", "http://localhost:8001", "http://localhost:8002")
 	first := resolve(t, m, "g", "a")
 	_ = m.ReportProxy(first, "a", ApplicationError)
-	second, err := m.ResolveProxy(context.Background(), "g", "a", nil)
+	second, err := m.ResolveProxy(t.Context(), "g", "a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestNetworkProbeBackoffAndApplicationNoTraffic(t *testing.T) {
 	first := m.Snapshot(e, "").CooldownUntil.Sub(*now)
 	*now = now.Add(time.Minute)
 	m.SetProber(func(context.Context, *Endpoint) error { return errors.New("offline") })
-	_, _ = m.TestURL(context.Background(), e.String())
+	_, _ = m.TestURL(t.Context(), e.String())
 	if delay := m.Snapshot(e, "").CooldownUntil.Sub(*now); delay <= first || delay > m.policy.MaxProbeInterval {
 		t.Fatal("backoff not bounded/increasing", delay)
 	}

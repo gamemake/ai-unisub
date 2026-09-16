@@ -84,7 +84,7 @@ func saveGroup(t *testing.T, m *Manager, id string, addresses ...string) {
 }
 func resolve(t *testing.T, m *Manager, group, app string) *Endpoint {
 	t.Helper()
-	e, err := m.ResolveProxy(context.Background(), group, app, nil)
+	e, err := m.ResolveProxy(t.Context(), group, app, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,17 +104,17 @@ func TestPrioritySharedHealthAndApplicationIsolation(t *testing.T) {
 	if err := m.ReportProxy(first, "app-a", ApplicationError); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(context.Background(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("application failure not shared across groups")
 	}
 	if other := resolve(t, m, "two", "app-b"); other.String() != first.String() {
 		t.Fatal("application failure leaked")
 	}
 	m.SetProber(func(context.Context, *Endpoint) error { return nil })
-	if _, err := m.TestURL(context.Background(), first.String()); err != nil {
+	if _, err := m.TestURL(t.Context(), first.String()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(context.Background(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("network probe cleared application failure")
 	}
 	*now = now.Add(2 * time.Minute)
@@ -125,7 +125,7 @@ func TestPrioritySharedHealthAndApplicationIsolation(t *testing.T) {
 	if err := m.ReportProxy(first, "app-a", NetworkError); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(context.Background(), "two", "app-b", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), "two", "app-b", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("network failure not global")
 	}
 	if m.Snapshot(first, "app-a").Status != "available" {
@@ -145,37 +145,35 @@ func TestHalfOpenQuotaCancellationAndNoBypass(t *testing.T) {
 	var admitted atomic.Int32
 	leases := make(chan *Endpoint, 20)
 	var wg sync.WaitGroup
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if selected, err := m.ResolveProxy(context.Background(), "one", "a", nil); err == nil {
+	for range 20 {
+		wg.Go(func() {
+			if selected, err := m.ResolveProxy(t.Context(), "one", "a", nil); err == nil {
 				admitted.Add(1)
 				leases <- selected
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if admitted.Load() != 1 {
 		t.Fatalf("half-open admitted %d", admitted.Load())
 	}
 	_ = m.ReportProxy(e, "a", Canceled)
-	if _, err := m.ResolveProxy(context.Background(), "one", "a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), "one", "a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("unrelated cancellation released a half-open lease")
 	}
 	_ = m.ReportProxy(<-leases, "a", Canceled)
 	e = resolve(t, m, "one", "a")
 	_ = m.ReportProxy(e, "a", Success)
-	if _, err := m.ResolveProxy(context.Background(), "one", "a", []string{e.String()}); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), "one", "a", []string{e.String()}); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("retried an attempted address")
 	}
-	if direct, err := m.ResolveProxy(context.Background(), "", "a", nil); err != nil || direct != nil {
+	if direct, err := m.ResolveProxy(t.Context(), "", "a", nil); err != nil || direct != nil {
 		t.Fatal("empty group must leave proxy unspecified")
 	}
-	if _, err := m.ResolveProxy(context.Background(), "missing", "a", nil); err == nil {
+	if _, err := m.ResolveProxy(t.Context(), "missing", "a", nil); err == nil {
 		t.Fatal("missing group silently bypassed")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := m.ResolveProxy(ctx, "one", "a", nil); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
@@ -256,11 +254,8 @@ func TestEndpointValidationAndClientIsolation(t *testing.T) {
 		t.Fatal("nil endpoint changed client")
 	}
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for i := range 2 {
+		wg.Go(func() {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(210 + i) }))
 			defer srv.Close()
 			e, _ := NewEndpoint(srv.URL)
@@ -275,10 +270,10 @@ func TestEndpointValidationAndClientIsolation(t *testing.T) {
 			if resp.StatusCode != 210+i || client.Timeout != base.Timeout {
 				t.Error("proxy client isolation failed")
 			}
-		}()
+		})
 	}
 	wg.Wait()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", "http://destination.invalid", nil)
 	if _, err := Client(base, a).Do(req); !errors.Is(err, context.Canceled) {
@@ -291,7 +286,7 @@ func TestCloseCancelsProbeAndCanRetryPersistence(t *testing.T) {
 	started := make(chan struct{})
 	finished := make(chan error, 1)
 	m.SetProber(func(ctx context.Context, e *Endpoint) error { close(started); <-ctx.Done(); return ctx.Err() })
-	go func() { _, err := m.TestURL(context.Background(), "http://localhost:8080"); finished <- err }()
+	go func() { _, err := m.TestURL(t.Context(), "http://localhost:8080"); finished <- err }()
 	<-started
 	e, _ := NewEndpoint("http://localhost:8080")
 	if err := m.ReportProxy(e, "a", Success); err != nil {

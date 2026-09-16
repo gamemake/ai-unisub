@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"ai-unisub/internal/proxy"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -229,21 +230,11 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	if refreshed == nil || refreshed.AccessToken == "" {
 		return nil, errors.New("oauth refresh returned no access token")
 	}
-	if refreshed.RefreshToken == "" {
-		refreshed.RefreshToken = credential.RefreshToken
-	}
-	if refreshed.TokenType == "" {
-		refreshed.TokenType = credential.TokenType
-	}
-	if refreshed.AccountID == "" {
-		refreshed.AccountID = credential.AccountID
-	}
-	if refreshed.AccountName == "" {
-		refreshed.AccountName = credential.AccountName
-	}
-	if refreshed.Email == "" {
-		refreshed.Email = credential.Email
-	}
+	refreshed.RefreshToken = cmp.Or(refreshed.RefreshToken, credential.RefreshToken)
+	refreshed.TokenType = cmp.Or(refreshed.TokenType, credential.TokenType)
+	refreshed.AccountID = cmp.Or(refreshed.AccountID, credential.AccountID)
+	refreshed.AccountName = cmp.Or(refreshed.AccountName, credential.AccountName)
+	refreshed.Email = cmp.Or(refreshed.Email, credential.Email)
 	return refreshed, nil
 }
 

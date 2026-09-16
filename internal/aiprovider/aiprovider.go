@@ -22,7 +22,7 @@ type AIProviderConfig struct {
 	Kind                          string        `json:"kind,omitempty"`
 	Supplier                      string        `json:"supplier,omitempty"`
 	ClientType                    ClientType    `json:"client_type"`
-	OfficialOnly                  bool          `json:"official_only,omitempty"`
+	OfficialOnly                  bool          `json:"official_only,omitzero"`
 	Members                       []GroupMember `json:"members,omitempty"`
 	ProxyApplicationErrorStatuses []int         `json:"proxy_application_error_statuses,omitempty"`
 	ID                            string        `json:"id"`

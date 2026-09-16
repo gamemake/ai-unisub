@@ -1,11 +1,11 @@
 package oauth
 
 import (
+	"ai-unisub/internal/common"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 )
 
@@ -13,9 +13,9 @@ const maxOAuthBodyBytes = 1 << 20
 
 func readJSONResponse(response *http.Response, value any) ([]byte, error) {
 	if response.Request != nil {
-		log.Printf("[oauth] outbound response method=%s url=%s status=%d", response.Request.Method, response.Request.URL, response.StatusCode)
+		common.ModuleLogger("oauth").Info("outbound_response", fmt.Sprintf("method=%s url=%s status=%d", response.Request.Method, response.Request.URL, response.StatusCode))
 	} else {
-		log.Printf("[oauth] outbound response status=%d", response.StatusCode)
+		common.ModuleLogger("oauth").Info("outbound_response", fmt.Sprintf("status=%d", response.StatusCode))
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxOAuthBodyBytes+1))

@@ -1,6 +1,7 @@
 package adapters
 
 import (
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/proxy"
 	"crypto/sha256"
 	"encoding/base64"
@@ -8,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -33,17 +33,17 @@ func clientWithProxy(base *http.Client, endpoints ...*proxy.Endpoint) *http.Clie
 }
 func readResponseDo(client *http.Client, req *http.Request, out any) ([]byte, error) {
 	started := time.Now()
-	log.Printf("[oauth] outbound request method=%s url=%s", req.Method, safeURL(req.URL))
+	common.ModuleLogger("oauth").Debug("outbound_request", fmt.Sprintf("method=%s url=%s", req.Method, safeURL(req.URL)))
 	if client == nil {
 		client = http.DefaultClient
 	}
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Printf("[oauth] outbound response method=%s url=%s error=%v duration=%s", req.Method, safeURL(req.URL), err, time.Since(started))
+		common.ModuleLogger("oauth").Error("outbound_request_failed", fmt.Sprintf("method=%s url=%s error=%v duration=%d ms", req.Method, safeURL(req.URL), err, time.Since(started).Milliseconds()))
 		return nil, err
 	}
-	log.Printf("[oauth] outbound response method=%s url=%s status=%d duration=%s", req.Method, safeURL(req.URL), resp.StatusCode, time.Since(started))
+	common.ModuleLogger("oauth").Info("outbound_response", fmt.Sprintf("method=%s url=%s status=%d duration=%d ms", req.Method, safeURL(req.URL), resp.StatusCode, time.Since(started).Milliseconds()))
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20+1))
 	if err != nil || len(body) > 1<<20 {

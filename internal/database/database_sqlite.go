@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -395,10 +396,8 @@ func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpEr
 	}
 	var startTime, endTime *time.Time
 	if timeRange != nil {
-		start := timeRange.Start.UTC()
-		end := timeRange.End.UTC()
-		startTime = &start
-		endTime = &end
+		startTime = new(timeRange.Start.UTC())
+		endTime = new(timeRange.End.UTC())
 	}
 	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'call_traces_%'`)
 	if err != nil {
@@ -432,7 +431,7 @@ func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpEr
 
 	offset := (page - 1) * pageSize
 	query := "SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM (" + unionQuery + ") ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?"
-	queryArgs := append(append([]any(nil), args...), pageSize, offset)
+	queryArgs := append(slices.Clone(args), pageSize, offset)
 	rows, err = s.db.Query(query, queryArgs...)
 	if err != nil {
 		return nil, 0, err

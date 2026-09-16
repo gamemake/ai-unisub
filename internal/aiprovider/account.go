@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 )
@@ -102,11 +103,8 @@ func (a *Account) acquire(ctx context.Context, queueLimit int) (func(), error) {
 		err = ErrQueueTimeout
 	}
 	a.mu.Lock()
-	for i, waiter := range a.waiters {
-		if waiter == ready {
-			a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
-			break
-		}
+	if i := slices.Index(a.waiters, ready); i >= 0 {
+		a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
 	}
 	// A release may have granted a slot concurrently with cancellation.
 	if ready.granted {

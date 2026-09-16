@@ -25,7 +25,7 @@ func waitQueue(t *testing.T, a *Account, count int) {
 func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 	p, _ := NewDummyAIProvider("p", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`))
 	a := &Account{aiprovider: p}
-	release, err := a.acquire(context.Background(), 2)
+	release, err := a.acquire(t.Context(), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 	releases := make(chan func(), 2)
 	for i := 1; i <= 2; i++ {
 		go func(n int) {
-			release, err := a.acquire(context.Background(), 2)
+			release, err := a.acquire(t.Context(), 2)
 			if err != nil {
 				t.Error(err)
 				return
@@ -43,7 +43,7 @@ func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 		}(i)
 		waitQueue(t, a, i)
 	}
-	if _, err := a.acquire(context.Background(), 2); !errors.Is(err, ErrQueueFull) {
+	if _, err := a.acquire(t.Context(), 2); !errors.Is(err, ErrQueueFull) {
 		t.Fatalf("queue full: %v", err)
 	}
 	release()
@@ -55,8 +55,8 @@ func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 		t.Fatalf("FIFO second=%d", got)
 	}
 	(<-releases)()
-	release, _ = a.acquire(context.Background(), 1)
-	ctx, cancel := context.WithCancel(context.Background())
+	release, _ = a.acquire(t.Context(), 1)
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() { _, err := a.acquire(ctx, 1); done <- err }()
 	waitQueue(t, a, 1)
@@ -78,10 +78,10 @@ func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := manager.GetAccount("p")
-	release, _ := a.acquire(context.Background(), 100)
+	release, _ := a.acquire(t.Context(), 100)
 	granted := make(chan func(), 1)
 	go func() {
-		r, err := a.acquire(context.Background(), 100)
+		r, err := a.acquire(t.Context(), 100)
 		if err != nil {
 			t.Error(err)
 		}
@@ -93,7 +93,7 @@ func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 	}
 	release2 := <-granted
 	waiting := make(chan error, 1)
-	go func() { _, err := a.acquire(context.Background(), 100); waiting <- err }()
+	go func() { _, err := a.acquire(t.Context(), 100); waiting <- err }()
 	waitQueue(t, a, 1)
 	if err := manager.UpdateConfig("p", json.RawMessage(`{"enabled":false,"max_concurrent_connections":2}`)); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 	if a.active != 0 {
 		t.Fatal("disabling leaked execution slots")
 	}
-	if _, err := a.acquire(context.Background(), 100); !errors.Is(err, ErrUnavailable) {
+	if _, err := a.acquire(t.Context(), 100); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("disabled account admitted request: %v", err)
 	}
 }

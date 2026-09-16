@@ -1,13 +1,16 @@
 package aiprovider
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"maps"
 	"math/rand/v2"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -88,12 +91,7 @@ func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, er
 		c.Supplier = supplier
 	}
 	if c.Supplier != "" {
-		found := false
-		for _, s := range BuiltinSuppliers() {
-			if s.ID == c.Supplier {
-				found = true
-			}
-		}
+		found := slices.ContainsFunc(BuiltinSuppliers(), func(s Supplier) bool { return s.ID == c.Supplier })
 		if !found {
 			return nil, errors.New("unknown supplier")
 		}
@@ -124,9 +122,7 @@ func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, er
 		seen := map[string]bool{}
 		for i := range c.Members {
 			member := &c.Members[i]
-			if member.Weight == 0 {
-				member.Weight = 3
-			}
+			member.Weight = cmp.Or(member.Weight, 3)
 			if member.ID == "" || member.ID == id || seen[member.ID] || member.Weight < 1 || member.Weight > 5 {
 				return nil, errors.New("invalid group member or weight")
 			}
@@ -139,9 +135,7 @@ func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, er
 	normalized, _ := json.Marshal(c)
 	var values map[string]json.RawMessage
 	_ = json.Unmarshal(normalized, &values)
-	for k, v := range values {
-		fields[k] = v
-	}
+	maps.Copy(fields, values)
 	return json.Marshal(fields)
 }
 
@@ -151,7 +145,7 @@ func (m *AIProviderManager) validateRelations(id string, c AIProviderConfig) err
 		configs[key] = p.Config()
 	}
 	configs[id] = c
-	for _, group := range configs {
+	for group := range maps.Values(configs) {
 		if group.Kind != "group" {
 			continue
 		}
@@ -170,7 +164,7 @@ func (m *AIProviderManager) validateRelations(id string, c AIProviderConfig) err
 func (m *AIProviderManager) Referenced(id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	for _, p := range m.aiProviders {
+	for p := range maps.Values(m.aiProviders) {
 		for _, member := range p.Config().Members {
 			if member.ID == id {
 				return true
@@ -233,13 +227,7 @@ func (m *AIProviderManager) Select(id, user string, headers http.Header, path st
 		if !cc.Enabled || !AllowsClient(cc, client) || (c.Kind == "group" && !compatibleProtocol(cc, m.adapters[member.ID], path)) {
 			continue
 		}
-		skip := false
-		for _, t := range tried {
-			if t == member.ID {
-				skip = true
-			}
-		}
-		if skip {
+		if slices.Contains(tried, member.ID) {
 			continue
 		}
 		health := m.health[member.ID]
@@ -262,16 +250,12 @@ func (m *AIProviderManager) Select(id, user string, headers http.Header, path st
 	if session != "" && c.Kind == "group" {
 		sum := sha256.Sum256([]byte(user + "\x00" + id + "\x00" + string(client) + "\x00" + session))
 		key = hex.EncodeToString(sum[:])
-		for k, b := range m.bindings {
-			if now.Sub(b.last) >= 30*time.Minute {
-				delete(m.bindings, k)
-			}
-		}
+		maps.DeleteFunc(m.bindings, func(_ string, b affinityBinding) bool {
+			return now.Sub(b.last) >= 30*time.Minute
+		})
 		b := m.bindings[key]
-		for _, choice := range choices {
-			if choice == b.id {
-				selected = choice
-			}
+		if slices.Contains(choices, b.id) {
+			selected = b.id
 		}
 	}
 	if selected == "" {
@@ -339,10 +323,7 @@ func (m *AIProviderManager) ReportSelection(s Selection, trace *AIProviderCallTr
 	if canceled || trace == nil {
 		return
 	}
-	status := trace.ResponseStatus
-	if status == 0 {
-		status = trace.HTTPErrorCode
-	}
+	status := cmp.Or(trace.ResponseStatus, trace.HTTPErrorCode)
 	failed := false
 	now := time.Now()
 	var failure struct {

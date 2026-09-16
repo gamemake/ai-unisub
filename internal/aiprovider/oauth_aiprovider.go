@@ -3,12 +3,14 @@ package aiprovider
 import (
 	"ai-unisub/internal/proxy"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -112,10 +114,7 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	groupID, resolver := p.config.ProxyGroupID, p.resolver
 	p.mu.RUnlock()
 	config := p.Config()
-	application := config.Supplier
-	if application == "" {
-		application = service
-	}
+	application := cmp.Or(config.Supplier, service)
 	if config.AuthType == AuthTypeAPIKey && config.Supplier != "" {
 		service = config.Supplier
 		if service == "anthropic" {
@@ -137,6 +136,7 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	}
 	if groupID != "" && resolver == nil {
 		trace.HTTPErrorInfo = "proxy resolver is unavailable"
+		proxy.LogError("resolve", nil, application, errors.New(trace.HTTPErrorInfo))
 		if recorder != nil {
 			recorder(trace)
 		}
@@ -148,7 +148,7 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	}
 	if err != nil {
 		if resolver != nil && groupID != "" {
-			_ = resolver.ReportProxy(endpoint, application, proxy.Canceled)
+			_ = proxy.ReportResult(resolver, endpoint, application, proxy.Canceled, err, 0)
 		}
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		trace.RetrySafe = true
@@ -192,7 +192,7 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 			refreshed, refreshErr := p.manager.RecoverAccessToken(req.Context(), service, credentialID, token, endpoint)
 			if refreshErr == nil {
 				if resolver != nil && groupID != "" {
-					if reportErr := resolver.ReportProxy(endpoint, application, proxy.ApplicationIgnored); reportErr != nil {
+					if reportErr := proxy.ReportResult(resolver, endpoint, application, proxy.ApplicationIgnored, nil, response.StatusCode); reportErr != nil {
 						response.Body.Close()
 						err = reportErr
 						break
@@ -216,8 +216,8 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 				response, err = client.Do(req)
 			}
 		}
-		var dialError *net.OpError
-		safe := errors.As(err, &dialError) && dialError.Op == "dial"
+		dialError, isDialError := errors.AsType[*net.OpError](err)
+		safe := isDialError && dialError.Op == "dial"
 		trace.RetrySafe = safe
 		retryable := safe || ((req.Method == http.MethodGet || req.Method == http.MethodHead) && (err != nil || (response != nil && response.StatusCode >= 500)))
 		if resolver != nil && groupID != "" {
@@ -234,17 +234,18 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 				if response.StatusCode >= 400 {
 					class = proxy.ApplicationIgnored
 				}
-				for _, status := range config.ProxyApplicationErrorStatuses {
-					if response.StatusCode == status {
-						class = proxy.ApplicationError
-						break
-					}
+				if slices.Contains(config.ProxyApplicationErrorStatuses, response.StatusCode) {
+					class = proxy.ApplicationError
 				}
 			}
 			if req.Context().Err() != nil {
 				class = proxy.Canceled
 			}
-			if reportErr := resolver.ReportProxy(endpoint, application, class); reportErr != nil {
+			status := 0
+			if response != nil {
+				status = response.StatusCode
+			}
+			if reportErr := proxy.ReportResult(resolver, endpoint, application, class, err, status); reportErr != nil {
 				maxRetries = 0
 			}
 			tried = append(tried, endpoint.String())
@@ -291,6 +292,9 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		trace.ResponseBody, err = io.ReadAll(response.Body)
 	}
 	if err != nil {
+		if endpoint != nil {
+			proxy.LogError("read_response", endpoint, application, err)
+		}
 		trace.HTTPErrorInfo = err.Error()
 	}
 	if response.StatusCode >= 400 {

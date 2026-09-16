@@ -2,6 +2,7 @@ package aiprovider
 
 import (
 	"ai-unisub/internal/oauth"
+	"cmp"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -26,9 +27,7 @@ func NewGrokAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManag
 	if err != nil {
 		return nil, err
 	}
-	if config.OAuth.CredentialID == "" {
-		config.OAuth.CredentialID = config.CredentialID
-	}
+	config.OAuth.CredentialID = cmp.Or(config.OAuth.CredentialID, config.CredentialID)
 	return &GrokAIProvider{oauthAIProvider: base, oauth: config.OAuth}, nil
 }
 func GrokAIProviderFactory(manager *oauth.OAuthManager) AIProviderFactory {
@@ -39,9 +38,7 @@ func (p *GrokAIProvider) UpdateConfig(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return err
 	}
-	if config.OAuth.CredentialID == "" {
-		config.OAuth.CredentialID = config.CredentialID
-	}
+	config.OAuth.CredentialID = cmp.Or(config.OAuth.CredentialID, config.CredentialID)
 	if err := p.update(raw); err != nil {
 		return err
 	}

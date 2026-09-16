@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/oauth"
 	"ai-unisub/internal/oauth/adapters"
 )
@@ -42,7 +44,7 @@ func main() {
 			fmt.Fprint(os.Stderr, usageText)
 			os.Exit(2)
 		}
-		fmt.Fprintln(os.Stderr, "error:", err)
+		common.ModuleLogger("cmd/oauth").Error("command_failed", err.Error())
 		os.Exit(1)
 	}
 }
@@ -56,6 +58,9 @@ func newManager(store oauth.CredentialStore) *oauth.OAuthManager {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
+	if err := common.InitLogging(common.LogConfig{Output: stderr}); err != nil {
+		return err
+	}
 	if len(args) < 1 {
 		return errUsage
 	}
@@ -90,8 +95,8 @@ func option(args []string, name string) string {
 		if value == "--"+name && i+1 < len(args) {
 			return args[i+1]
 		}
-		if strings.HasPrefix(value, "--"+name+"=") {
-			return strings.TrimPrefix(value, "--"+name+"=")
+		if after, ok := strings.CutPrefix(value, "--"+name+"="); ok {
+			return after
 		}
 	}
 	return ""
@@ -101,7 +106,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 	if provider != oauth.OAuthServiceGrok && provider != oauth.OAuthServiceCodex && provider != oauth.OAuthServiceClaude {
 		return fmt.Errorf("unsupported provider %q", provider)
 	}
-	logCLI(stderr, "starting OAuth login: provider=%s", provider)
+	common.ModuleLogger("cmd/oauth").Info("login_started", fmt.Sprintf("starting OAuth login: provider=%s", provider))
 	callbackPath := "/callback"
 	if provider == oauth.OAuthServiceCodex {
 		callbackPath = "/auth/callback"
@@ -116,18 +121,18 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		}
 		defer listener.Close()
 		redirect = "http://" + listener.Addr().String() + callbackPath
-		logCLI(stderr, "callback server reserved: %s", redirect)
+		common.ModuleLogger("cmd/oauth").Info("callback_listening", fmt.Sprintf("callback server reserved: %s", redirect))
 	}
 	manager := newManager(nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	logCLI(stderr, "requesting authorization from %s", provider)
+	common.ModuleLogger("cmd/oauth").Info("authorization_started", fmt.Sprintf("requesting authorization from %s", provider))
 	start, err := manager.Start(ctx, provider, "", redirect)
 	if err != nil {
-		logCLI(stderr, "authorization request failed: %v", err)
+		common.ModuleLogger("cmd/oauth").Error("authorization_failed", fmt.Sprintf("authorization request failed: %v", err))
 		return err
 	}
-	logCLI(stderr, "authorization request completed")
+	common.ModuleLogger("cmd/oauth").Info("authorization_completed", "authorization request completed")
 	fmt.Fprintf(stderr, "OAuth authorization URL: %s\n", start.AuthorizationURL)
 	if start.UserCode != "" {
 		fmt.Fprintf(stderr, "User code: %s\n", start.UserCode)
@@ -140,17 +145,17 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		pollCount := 0
 		for {
 			pollCount++
-			logCLI(stderr, "polling device authorization: attempt=%d", pollCount)
+			common.ModuleLogger("cmd/oauth").Info("device_poll_started", fmt.Sprintf("polling device authorization: attempt=%d", pollCount))
 			credential, err := manager.Poll(ctx, start.SessionID)
 			if err == nil {
-				logCLI(stderr, "device authorization completed")
+				common.ModuleLogger("cmd/oauth").Info("device_authorized", "device authorization completed")
 				return finishCredential(credential, provider, output, stdout, stderr)
 			}
 			if !errors.Is(err, oauth.ErrAuthorizationPending) && !errors.Is(err, oauth.ErrSlowDown) {
-				logCLI(stderr, "device authorization failed: %v", err)
+				common.ModuleLogger("cmd/oauth").Error("device_authorization_failed", fmt.Sprintf("device authorization failed: %v", err))
 				return err
 			}
-			logCLI(stderr, "authorization is still pending")
+			common.ModuleLogger("cmd/oauth").Info("authorization_pending", "authorization is still pending")
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -162,7 +167,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		code, state string
 		err         error
 	}, 1)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := &http.Server{ErrorLog: common.ModuleLogger("cmd/oauth").StandardLogger(slog.LevelError, "http_server_error"), Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != callbackPath {
 			http.NotFound(w, r)
 			return
@@ -182,29 +187,25 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		_, _ = io.WriteString(w, "OAuth authorization completed. You may close this window.")
 	})}
 	go server.Serve(listener)
-	logCLI(stderr, "waiting for browser callback")
+	common.ModuleLogger("cmd/oauth").Info("callback_waiting", "waiting for browser callback")
 	defer server.Shutdown(context.Background())
 	select {
 	case result := <-callback:
 		if result.err != nil {
-			logCLI(stderr, "browser callback failed: %v", result.err)
+			common.ModuleLogger("cmd/oauth").Error("callback_failed", fmt.Sprintf("browser callback failed: %v", result.err))
 			return result.err
 		}
-		logCLI(stderr, "browser callback received")
+		common.ModuleLogger("cmd/oauth").Info("callback_received", "browser callback received")
 		credential, err := manager.Complete(ctx, start.SessionID, result.code, result.state)
 		if err != nil {
-			logCLI(stderr, "token exchange failed: %v", err)
+			common.ModuleLogger("cmd/oauth").Error("token_exchange_failed", fmt.Sprintf("token exchange failed: %v", err))
 			return err
 		}
-		logCLI(stderr, "OAuth login completed")
+		common.ModuleLogger("cmd/oauth").Info("login_completed", "OAuth login completed")
 		return finishCredential(credential, provider, output, stdout, stderr)
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-}
-
-func logCLI(stderr io.Writer, format string, values ...any) {
-	fmt.Fprintf(stderr, "[oauth] "+format+"\n", values...)
 }
 
 func finishCredential(credential *oauth.OAuthCredential, provider, output string, stdout, stderr io.Writer) error {
@@ -220,7 +221,7 @@ func finishCredential(credential *oauth.OAuthCredential, provider, output string
 		if err := (oauth.FileCredentialStore{}).SaveCredential(output, raw); err != nil {
 			return err
 		}
-		fmt.Fprintf(stderr, "OAuth credential saved to %s\n", output)
+		common.ModuleLogger("cmd/oauth").Info("credential_saved", fmt.Sprintf("OAuth credential saved to %s", output))
 		return nil
 	}
 	encoder := json.NewEncoder(stdout)

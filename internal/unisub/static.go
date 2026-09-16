@@ -64,7 +64,7 @@ func (m *StaticModule) asset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	for _, part := range strings.Split(name, "/") {
+	for part := range strings.SplitSeq(name, "/") {
 		if strings.HasPrefix(part, ".") {
 			http.NotFound(w, r)
 			return

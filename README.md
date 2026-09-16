@@ -8,7 +8,7 @@ Go + SQLite AI 网关，统一管理 OpenAI/Codex、Anthropic/Claude、Grok 的�
 
 ## 开发环境
 
-- Go 1.26（以 `go.mod` 为准）
+- Go 1.27.1（以 `go.mod` 为准）
 - Node.js 24、npm（依赖版本锁定在 `package-lock.json`）
 
 首次启动前必须先构建前端；`internal/web/dist` 是被忽略的生成目录，不需要提交。

@@ -35,10 +35,8 @@ func TestConcurrentSessionEndpointsRemainBound(t *testing.T) {
 	second, _ := proxy.NewEndpoint("socks5h://localhost:9002")
 	var wg sync.WaitGroup
 	for _, endpoint := range []*proxy.Endpoint{first, second, nil} {
-		wg.Add(1)
-		go func(e *proxy.Endpoint) {
-			defer wg.Done()
-			start, err := m.Start(context.Background(), a.Service(), "subject", "http://callback", e)
+		wg.Go(func() {
+			start, err := m.Start(t.Context(), a.Service(), "subject", "http://callback", endpoint)
 			if err != nil {
 				t.Error(err)
 				return
@@ -48,10 +46,10 @@ func TestConcurrentSessionEndpointsRemainBound(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			if _, err = m.Complete(context.Background(), start.SessionID, "code", session.State); err != nil {
+			if _, err = m.Complete(t.Context(), start.SessionID, "code", session.State); err != nil {
 				t.Error(err)
 			}
-		}(endpoint)
+		})
 	}
 	wg.Wait()
 	seen := map[*proxy.Endpoint]bool{}

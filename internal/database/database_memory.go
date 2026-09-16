@@ -2,9 +2,11 @@ package database
 
 import (
 	"ai-unisub/internal/proxy"
+	"cmp"
 	"encoding/json"
 	"errors"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 )
@@ -63,10 +65,10 @@ func (m *MemoryDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedProxyGroup, 0, len(m.proxyGroups))
-	for _, v := range m.proxyGroups {
+	for v := range maps.Values(m.proxyGroups) {
 		result = append(result, cloneProxyGroup(v))
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	slices.SortFunc(result, func(a, b PersistedProxyGroup) int { return cmp.Compare(a.ID, b.ID) })
 	return result, nil
 }
 func (m *MemoryDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
@@ -119,7 +121,7 @@ func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) error 
 	if m.credentials == nil {
 		m.credentials = make(map[string]json.RawMessage)
 	}
-	m.credentials[id] = append(json.RawMessage(nil), value...)
+	m.credentials[id] = slices.Clone(value)
 	return nil
 }
 
@@ -160,10 +162,10 @@ func (m *MemoryDatabase) ListAccounts() ([]PersistedAccount, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedAccount, 0, len(m.accounts))
-	for _, account := range m.accounts {
+	for account := range maps.Values(m.accounts) {
 		result = append(result, cloneAccount(account))
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	slices.SortFunc(result, func(a, b PersistedAccount) int { return cmp.Compare(a.ID, b.ID) })
 	return result, nil
 }
 
@@ -190,11 +192,7 @@ func (m *MemoryDatabase) DeleteAccount(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.accounts, id)
-	for key, value := range m.apiKeys {
-		if value.AccountID == id {
-			delete(m.apiKeys, key)
-		}
-	}
+	maps.DeleteFunc(m.apiKeys, func(_ string, value PersistedAPIKey) bool { return value.AccountID == id })
 	return nil
 }
 
@@ -205,10 +203,10 @@ func (m *MemoryDatabase) ListUsers() ([]PersistedUser, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedUser, 0, len(m.users))
-	for _, user := range m.users {
+	for user := range maps.Values(m.users) {
 		result = append(result, cloneUser(user))
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	slices.SortFunc(result, func(a, b PersistedUser) int { return cmp.Compare(a.ID, b.ID) })
 	return result, nil
 }
 
@@ -239,11 +237,7 @@ func (m *MemoryDatabase) DeleteUser(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.users, id)
-	for key, value := range m.apiKeys {
-		if value.UserID == id {
-			delete(m.apiKeys, key)
-		}
-	}
+	maps.DeleteFunc(m.apiKeys, func(_ string, value PersistedAPIKey) bool { return value.UserID == id })
 	return nil
 }
 
@@ -254,12 +248,12 @@ func (m *MemoryDatabase) ListAPIKeys(userID string) ([]PersistedAPIKey, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedAPIKey, 0)
-	for _, key := range m.apiKeys {
+	for key := range maps.Values(m.apiKeys) {
 		if userID == "" || key.UserID == userID {
 			result = append(result, key)
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	slices.SortFunc(result, func(a, b PersistedAPIKey) int { return cmp.Compare(a.ID, b.ID) })
 	return result, nil
 }
 
@@ -308,8 +302,7 @@ func cloneUser(value PersistedUser) PersistedUser {
 }
 func cloneProxyGroup(value PersistedProxyGroup) PersistedProxyGroup {
 	if value.Enabled != nil {
-		enabled := *value.Enabled
-		value.Enabled = &enabled
+		value.Enabled = new(*value.Enabled)
 	}
 	value.Proxies = append([]PersistedProxy(nil), value.Proxies...)
 	for i := range value.Proxies {

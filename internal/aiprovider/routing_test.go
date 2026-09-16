@@ -113,17 +113,15 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	ids := make(chan string, 40)
-	for i := 0; i < 40; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 40 {
+		wg.Go(func() {
 			s, e := m.Select("g", "user", h, "/v1/responses", nil)
 			if e != nil {
 				t.Error(e)
 				return
 			}
 			ids <- s.ID
-		}()
+		})
 	}
 	wg.Wait()
 	close(ids)

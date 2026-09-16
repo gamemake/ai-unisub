@@ -57,9 +57,9 @@ func parseUsage(trace *AIProviderCallTrace) {
 		trace.Model = request.Model
 	}
 	parseUsageJSON(trace, trace.ResponseBody)
-	for _, line := range bytes.Split(trace.ResponseBody, []byte("\n")) {
-		if bytes.HasPrefix(line, []byte("data:")) {
-			parseUsageJSON(trace, bytes.TrimSpace(line[5:]))
+	for line := range bytes.SplitSeq(trace.ResponseBody, []byte("\n")) {
+		if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
+			parseUsageJSON(trace, bytes.TrimSpace(data))
 		}
 	}
 }
@@ -80,11 +80,7 @@ func (s *streamCapture) Write(p []byte) (int, error) {
 		return n, nil
 	}
 	for len(p) > 0 {
-		end := bytes.IndexByte(p, '\n')
-		part := p
-		if end >= 0 {
-			part = p[:end]
-		}
+		part, rest, found := bytes.Cut(p, []byte("\n"))
 		if !s.dropping {
 			if len(s.pending)+len(part) > 1<<20 {
 				s.pending = nil
@@ -93,15 +89,17 @@ func (s *streamCapture) Write(p []byte) (int, error) {
 				s.pending = append(s.pending, part...)
 			}
 		}
-		if end < 0 {
+		if !found {
 			break
 		}
-		if !s.dropping && bytes.HasPrefix(s.pending, []byte("data:")) {
-			parseUsageJSON(s.trace, bytes.TrimSpace(s.pending[5:]))
+		if !s.dropping {
+			if data, ok := bytes.CutPrefix(s.pending, []byte("data:")); ok {
+				parseUsageJSON(s.trace, bytes.TrimSpace(data))
+			}
 		}
 		s.pending = s.pending[:0]
 		s.dropping = false
-		p = p[end+1:]
+		p = rest
 	}
 	return n, nil
 }

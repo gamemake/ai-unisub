@@ -64,7 +64,7 @@ func TestGatewayGroupNativeAffinityAndRestrictions(t *testing.T) {
 	id2 := addRoutingProvider(t, s, cookie, "second", "api", config(second.URL))
 	group := addRoutingProvider(t, s, cookie, "group", "group", map[string]any{"client_type": "OpenAI", "members": []map[string]any{{"id": id1}, {"id": id2}}})
 	key := routingKey(t, s, cookie, group)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"incoming","input":"hello"}`))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Authorization", "Bearer "+key)

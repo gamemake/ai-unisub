@@ -127,10 +127,11 @@ func newID() string {
 	return hex.EncodeToString(b[:])
 }
 func clone[T any](v T) T { b, _ := json.Marshal(v); var out T; _ = json.Unmarshal(b, &out); return out }
-func (m *Manager) List() ([]Group, error) {
+func (m *Manager) List() (groups []Group, err error) {
+	defer func() { logOperationError("list_groups", "", "", "", err) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	groups, err := m.store.ListProxyGroups()
+	groups, err = m.store.ListProxyGroups()
 	if err != nil {
 		return nil, err
 	}
@@ -138,13 +139,13 @@ func (m *Manager) List() ([]Group, error) {
 	for i := range groups {
 		for j := range groups[i].Proxies {
 			p := &groups[i].Proxies[j]
-			e, err := NewEndpoint(p.URL)
+			e, err := newEndpoint(p.URL)
 			if err != nil {
+				logOperationError("list_endpoint", p.URL, groups[i].ID, "", err)
 				continue
 			}
 			s := m.state(e.String(), "")
-			network := *s
-			p.Network = &network
+			p.Network = new(*s)
 			p.Applications = map[string]State{}
 			for key, state := range m.states {
 				if key.address == e.String() && key.app != "" {
@@ -154,18 +155,23 @@ func (m *Manager) List() ([]Group, error) {
 			p.Status = s.Status
 			p.Available = s.Status == "available"
 			if !s.LastSuccess.IsZero() {
-				t := s.LastSuccess
-				p.LastAvailable = &t
+				p.LastAvailable = new(s.LastSuccess)
 			}
 			if !s.LastFailure.IsZero() {
-				t := s.LastFailure
-				p.LastErrorAt = &t
+				p.LastErrorAt = new(s.LastFailure)
 			}
 		}
 	}
 	return groups, nil
 }
-func (m *Manager) Save(g *Group) error {
+func (m *Manager) Save(g *Group) (err error) {
+	defer func() {
+		group := ""
+		if g != nil {
+			group = g.ID
+		}
+		logOperationError("save_group", "", group, "", err)
+	}()
 	if g == nil || strings.TrimSpace(g.ID) == "" || strings.TrimSpace(g.Name) == "" {
 		return errors.New("proxy group ID and name are required")
 	}
@@ -177,7 +183,7 @@ func (m *Manager) Save(g *Group) error {
 	ids := map[string]bool{}
 	for i := range value.Proxies {
 		p := &value.Proxies[i]
-		e, err := NewEndpoint(p.URL)
+		e, err := newEndpoint(p.URL)
 		if err != nil {
 			return err
 		}
@@ -205,7 +211,8 @@ func (m *Manager) Save(g *Group) error {
 	*g = clone(value)
 	return nil
 }
-func (m *Manager) Delete(id string) error {
+func (m *Manager) Delete(id string) (err error) {
+	defer func() { logOperationError("delete_group", "", id, "", err) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.stopped {

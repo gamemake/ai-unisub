@@ -8,7 +8,7 @@ import (
 func TestStreamUsageAfterTraceLimitAndAcrossChunks(t *testing.T) {
 	trace := &AIProviderCallTrace{}
 	capture := &streamCapture{trace: trace, sse: true}
-	for i := 0; i < 2048; i++ {
+	for range 2048 {
 		_, _ = capture.Write([]byte("data: " + strings.Repeat("x", 1024) + "\n\n"))
 	}
 	for _, part := range []string{`data: {"response":{"model":"m","usage":{"input_tokens":100,`, `"output_tokens":20,"input_tokens_details":{"cached_tokens":50}}}}`, "\n\n"} {

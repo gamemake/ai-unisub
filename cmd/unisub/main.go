@@ -1,36 +1,47 @@
 package main
 
 import (
-	"log"
+	"cmp"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/service"
 	"ai-unisub/internal/unisub"
 )
 
 func main() {
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "sqlite://./data/ai-unisub.db"
+	if err := run(); err != nil {
+		common.ModuleLogger("cmd/unisub").Error("server_failed", err.Error())
+		os.Exit(1)
 	}
-	adminUsername := os.Getenv("ADMIN_USERNAME")
-	if adminUsername == "" {
-		adminUsername = "admin"
+}
+
+func run() error {
+	if err := common.InitLogging(common.LogConfig{}); err != nil {
+		return err
 	}
-	adminPassword := os.Getenv("ADMIN_PASSWORD")
-	if adminPassword == "" {
-		adminPassword = "admin12345"
-	}
+	dbURL := cmp.Or(os.Getenv("DATABASE_URL"), "sqlite://./data/ai-unisub.db")
+	adminUsername := cmp.Or(os.Getenv("ADMIN_USERNAME"), "admin")
+	adminPassword := cmp.Or(os.Getenv("ADMIN_PASSWORD"), "admin12345")
 	srv, err := unisub.New(unisub.Config{Service: service.Config{DatabaseURL: dbURL, AdminUsername: adminUsername, AdminPassword: adminPassword, OAuthCallbackBaseURL: os.Getenv("OAUTH_CALLBACK_BASE_URL")}, Mode: os.Getenv("UNISUB_MODE"), WebDir: os.Getenv("UNISUB_WEB_DIR")})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
-	defer srv.Close()
-	addr := os.Getenv("LISTEN_ADDR")
-	if addr == "" {
-		addr = ":8080"
+	defer func() {
+		if err := srv.Close(); err != nil {
+			common.ModuleLogger("cmd/unisub").Error("shutdown_failed", err.Error())
+		}
+	}()
+	addr := cmp.Or(os.Getenv("LISTEN_ADDR"), ":8080")
+	logger := common.ModuleLogger("cmd/unisub")
+	logger.Info("server_starting", fmt.Sprintf("AI UniSub listening on %s", addr))
+	server := &http.Server{Addr: addr, Handler: srv.Handler(), ErrorLog: logger.StandardLogger(slog.LevelError, "http_server_error")}
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
 	}
-	log.Printf("AI UniSub listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, srv.Handler()))
+	return nil
 }

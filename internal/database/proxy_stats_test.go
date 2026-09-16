@@ -15,7 +15,7 @@ func TestProxyStatsIdempotentAcrossReopen(t *testing.T) {
 	}
 	at := time.Now().UTC().Truncate(10 * time.Minute)
 	b := proxy.Bucket{Address: "http://localhost:8080", Application: "app", StartAt: at, Source: "process-one", Requests: 3, Failures: 1}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if err := db.SaveProxyStats([]proxy.Bucket{b}); err != nil {
 			t.Fatal(err)
 		}
