@@ -140,6 +140,9 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	if x, ok := aiprovider.(interface{ SetProxyResolver(ProxyResolver) }); ok {
 		x.SetProxyResolver(m.proxyResolver)
 	}
+	if x, ok := aiprovider.(interface{ setQuotaSupplier(func(string) Supplier) }); ok {
+		x.setQuotaSupplier(m.quotaSupplier)
+	}
 	return aiprovider, nil
 }
 

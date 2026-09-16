@@ -78,6 +78,9 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 | POST | `/api/ai-providers` | `name/provider/config` | 管理员 |
 | PUT | `/api/ai-providers/{id}` | `name/provider/config` | 管理员 |
 | DELETE | `/api/ai-providers/{id}` | 无 | 管理员 |
+| POST | `/api/ai-providers/{id}/refresh-quota` | 无；主动查询并更新缓存 | 管理员 |
+
+`GET /api/ai-providers` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/ai-providers/{id}/refresh-quota`，查询成功后更新缓存并返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。
 
 创建必须提供 provider 和有效 config；当前类型为 `codex`、`claude`、`grok`、`dummy`。更新不能改变 provider 类型。config 可以是 JSON 对象，兼容编码为字符串的 JSON 对象。
 
@@ -174,3 +177,13 @@ API 使用 Database、AIProviderManager、代理管理和认证能力。浏览�
 现有相关测试位于 `internal/unisub/api_test.go`、`auth_test.go`、`aiprovider_compatibility_test.go` 和 Dashboard 端到端测试。文档核对重点为角色差异、Key 归属、配置保存、列表包装、调用查询与代理接口，不将未执行的测试写成已通过。
 
 登录与登出的验证包括公开路径优先级、普通 API 仍要求会话、登录错误、Cookie 设置与清除、重复登出、方法限制，以及所有认证交互不返回页面重定向。`auth_api_test.go` 验证上述 HTTP 契约。
+
+### Provider 用量／余额展示
+
+订阅 quota 统一返回时间维度、已用百分比和 UTC 重置时间；API 余额仍保留原始字段和数值文本。查询错误通过接口错误返回，不放入 quota 数据。详细结构与单位规则见 [Quota 设计](ai-provider-quota.md)。
+
+订阅使用 `subscription` 数组，每项为 `{time_dimension, usage, reset_at}`；API 余额使用 `items: [{name, value, source?}]`。Grok 周／月 billing 转换为两个时间窗口，两次查询全部成功才更新缓存；任一失败保留旧快照。正常 response 可部分更新同一窗口。
+
+主动刷新直接返回单个 provider 的 `Quota`（`subscription` 或 `items`，及 `cache_status`、`updated_at`），列表项的 `quota` 使用相同结构，不使用 snapshot 包装。不存在成员 quota 结构；Group 不展示额度，也不提供刷新按钮。`fresh` 表示缓存项均未过期，`stale` 表示部分或全部项已过期，`missing` 表示没有缓存。
+
+Group 或不支持查询的普通 provider，POST 返回 501；缺少凭据／账号 ID 或自定义上游不匹配返回 400，认证失败返回 502，限流返回 429；其他查询失败返回不含原始上游详情的错误，未知 provider 返回 404。GET 不触发 Fetch；两种响应均禁止 HTTP 缓存。已实现 Codex／Claude／Grok 订阅用量、DeepSeek／Moonshot 余额；Dummy POST 返回 Claude 格式的随机模拟数据。成功查询写入实例内存缓存，GET 返回同一份数据及 fresh／stale 状态，初次未命中返回 missing。TTL 为 5 分钟，重启后为空，失败查询保留旧数据，配置更新使缓存失效。

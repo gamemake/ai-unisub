@@ -47,5 +47,7 @@ func (p *ClaudeAIProvider) UpdateConfig(raw json.RawMessage) error {
 func (p *ClaudeAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 	p.handle(oauth.OAuthServiceClaude, p.Config().CredentialID, r, rec)
 }
-func (p *ClaudeAIProvider) FetchUsage(ctx context.Context) ([]UsageItem, error) { return p.usage(ctx) }
-func (p *ClaudeAIProvider) ResetUsage(ctx context.Context) error                { return p.reset(ctx) }
+func (p *ClaudeAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
+	return p.quota(ctx, "anthropic")
+}
+func (p *ClaudeAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

@@ -1,10 +1,16 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, User } from './types'
+import type { Account, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, Quota, User } from './types'
 const id = encodeURIComponent
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
+export function useFetchQuota() {
+  const client = useQueryClient()
+  return useMutation({ mutationFn: actions.fetchQuota, onSuccess: (data, providerID) => {
+    client.setQueryData<List<Account>>(['ai-providers'], current => current && ({ ...current, items: current.items.map(account => account.id === providerID ? { ...account, quota: data } : account) }))
+  } })
+}
 export const useAICatalog = () => useQuery({ queryKey: ['ai-catalog'], queryFn: ({ signal }) => request<AICatalogResponse>('/api/ai-catalog', { signal }) })
 export const useProviderOptions = () => useQuery({ queryKey: ['provider-options'], queryFn: ({ signal }) => request<List<Pick<Account, 'id' | 'name' | 'provider' | 'enabled'>>>('/api/keys/providers', { signal }) })
 export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }) => request<List<APIKey>>('/api/keys', { signal }) })
@@ -16,6 +22,7 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
   return useMutation({ mutationFn: action, onSuccess: async () => { await Promise.all(invalidate.map(key => queryClient.invalidateQueries({ queryKey: [key] }))) } })
 }
 export const actions = {
+  fetchQuota: (providerID: string) => request<Quota>(`/api/ai-providers/${id(providerID)}/refresh-quota`, json('POST')),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: string; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),

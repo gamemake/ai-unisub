@@ -725,6 +725,10 @@ func (m *APIModule) deleteUser(ctx framework.ModuleContext, w http.ResponseWrite
 }
 
 func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
+	if len(parts) == 3 && parts[2] == "refresh-quota" {
+		m.refreshAIProviderQuota(ctx, w, r, parts[1])
+		return
+	}
 	if r.Method != http.MethodGet {
 		m.mutations.Lock()
 		defer m.mutations.Unlock()
@@ -740,6 +744,15 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 			item := publicAccount(nil, a)
 			if isAdmin(r) {
 				item = publicAccount(ctx.Database(), a)
+				if a.AIProvider != "group" {
+					if provider, ok := ctx.AIProviders().Get(a.ID); ok {
+						if quota := provider.GetCachedQuota(); quota != nil {
+							item["quota"] = quota
+						}
+					} else {
+						item["quota"] = &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
+					}
+				}
 			}
 			items = append(items, item)
 		}

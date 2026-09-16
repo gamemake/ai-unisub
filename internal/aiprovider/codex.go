@@ -47,5 +47,7 @@ func (p *CodexAIProvider) UpdateConfig(raw json.RawMessage) error {
 func (p *CodexAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 	p.handle(oauth.OAuthServiceCodex, p.Config().CredentialID, r, rec)
 }
-func (p *CodexAIProvider) FetchUsage(ctx context.Context) ([]UsageItem, error) { return p.usage(ctx) }
-func (p *CodexAIProvider) ResetUsage(ctx context.Context) error                { return p.reset(ctx) }
+func (p *CodexAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
+	return p.quota(ctx, "openai")
+}
+func (p *CodexAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

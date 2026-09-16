@@ -35,7 +35,7 @@
 | 智谱 | https://open.bigmodel.cn/api/anthropic/v1 | https://open.bigmodel.cn/api/paas/v4 |
 | Kimi | https://api.moonshot.cn/anthropic/v1 | https://api.moonshot.cn/v1 |
 
-持久化使用 `aiprovider` 模块配置键，结构为 `{"suppliers":[{"id":"…","name":"…","claude_url":"…","codex_url":"…"}]}`。供应商名称配置可通过管理 API 保存；旧配置中不属于此结构的字段不会加载到运行时目录，也不会出现在后续保存结果中。
+持久化使用 `aiprovider` 模块配置键，基础结构为 `{"suppliers":[{"id":"…","name":"…","claude_url":"…","codex_url":"…"}]}`；每项还可携带可选 `subscription_usage_header_overrides` 和 `api_usage_header_overrides`，只保存订阅／API 查询的非认证请求头覆盖项，目前不执行查询。供应商名称和该可选结构可通过管理 API 保存；旧配置中不属于已定义结构的字段不会加载到运行时目录，也不会出现在后续保存结果中。
 
 模型供应商页面（`/#ai-catalog`）展示供应商和默认服务地址，点击整行打开详情（`/#ai-catalog/{id}`）。详情展示 Claude 与 Codex / Grok 的只读地址，支持刷新恢复、关闭按钮和 Escape 关闭，不提供编辑或保存按钮。
 
@@ -130,7 +130,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 
 | 类型 | 职责 |
 | --- | --- |
-| AIProvider | Config、UpdateConfig、Handle、FetchUsage、ResetUsage |
+| AIProvider | Config、UpdateConfig、Handle、FetchQuota、GetCachedQuota、ResetUsage；已接入部分真实查询与内存缓存，Dummy Fetch 返回随机演示数据 |
 | AIProviderConfig | 单个实例的公共配置 |
 | AIProviderFactory | 根据 ID 与 JSON 创建具体实例 |
 | AIProviderManager | 注册工厂、创建／恢复／更新／删除实例 |
@@ -140,6 +140,27 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 具体实现包括 Codex、Claude、Grok、APIProvider、组和 Dummy。前端页面是 `src/pages/ai-providers.tsx`，供应商只读详情页面为 `src/pages/ai-catalog.tsx`；管理接口与缓存键分别为 /api/ai-providers、ai-providers。
 
 兼容协议包括 /api/providers、旧 #providers/#accounts 页面入口、JSON 字段 provider/provider_type 和已有 SQLite 列名；这些不是 Go 类型名。OAuth CLI 的 provider 标识也保持其协议含义。
+
+## 用量与余额查询接口
+
+订阅 quota 统一返回时间维度、已用百分比和 UTC 重置时间；API 余额仍保留原始字段和数值文本。查询错误通过接口错误返回，不放入 quota 数据。详细结构与单位规则见 [Quota 设计](ai-provider-quota.md)。
+
+**严格定义：订阅返回当前套餐使用量，其他非 group provider 返回账户余额；group 不查询、不返回 quota，也不聚合成员数据。不提供历史用量或费用报表，也不以它们替代余额。不再使用 `UsageQuery` 或时间／模型筛选入参。**
+
+**AIProvider 实例提供两个接口签名：`FetchQuota(context.Context) (*Quota, error)` 与 `GetCachedQuota() *Quota`。** 定义位于 [internal/aiprovider/aiprovider.go](../internal/aiprovider/aiprovider.go)。目标行为分别为主动查询并更新缓存、仅读取缓存；已实现 Codex／Claude／Grok 订阅查询和 DeepSeek／Moonshot 余额查询；其他组合明确返回不支持。Dummy 返回随机演示数据并写入缓存。缓存为实例内存存储，TTL 5 分钟，过期保留旧数据，服务重启后清空；配置变更使缓存失效。Group 的查询返回不支持，缓存读取返回 nil；管理列表省略其 quota 字段，界面不展示额度和刷新按钮。
+
+用量展示快照与缓存读取结果采用单层结构：`Quota` 订阅返回 `subscription: [{time_dimension, usage, reset_at}]`，API 余额保留 `items: [{name, value, source?}]`、必填 `cache_status` 和可选 `updated_at`，不包含成员结果或成员错误。`name/value` 仅供展示，不用于调度计算。数据类型与默认请求头分别定义于 [quota.go](../internal/aiprovider/quota.go) 和 [catalog_defaults.go](../internal/aiprovider/catalog_defaults.go)。适配器、测试替身及前端类型已同步；Supplier 的 `subscription_usage_header_overrides` 和 `api_usage_header_overrides` 仅保存非认证请求头覆盖项并支持深拷贝，由现有 JSON 配置流程承载。已新增管理员查询路由和网页展示；五家供应商查询路径、凭据注入及内存缓存读写已实现，其他供应商范围见独立设计文档。网页入口见非组 AI Provider 的“用量 / 余额”，打开时仅读缓存，点击“刷新”主动查询。
+
+按以下职责划分（供应商支持范围见独立设计文档）：
+
+- **AIProvider** 的 `FetchQuota` 根据订阅／API 业务类型分派查询，成功后更新缓存并返回数据；`GetCachedQuota` 只返回缓存快照及未命中／新鲜／过期状态，不访问上游、不隐式刷新。主动刷新失败保留旧缓存并返回错误，不将旧数据伪装成成功结果。实例提供凭据引用、账号范围和代理配置，不按认证方式判断业务类型。
+- **模型供应商 Supplier** 只保存订阅与 API 两类查询的非认证 Header 覆盖项；**SupplierAdapter** 分别实现 `QuerySubscriptionUsage` 和 `QueryAPIBalance`，负责厂商请求构造与响应转换。两类查询均为可选能力。
+- **OAuth / Credential** 提供有效令牌及账号身份。查询 URL、HTTP 方法和默认 Headers 由代码固定，供应商仅保存 Header 覆盖项；Token、Cookie、查询密钥和账号／组织／团队 ID 不保存在供应商公共配置中，由实例上下文动态注入。
+- **组类型** 只负责成员路由，不参与 quota 查询和展示；**Account** 保持并发与队列职责。本系统调用记录统计与订阅用量／非订阅余额查询分开，历史用量和费用不纳入这两个入口。
+
+本文只记录查询入口位置、职责归属与当前实现边界；详细设计以独立的 [AIProvider 用量与余额查询设计](ai-provider-quota.md) 为准。该文档反向引用本文，并集中维护返回结构、配置规则、各供应商查询 URL／HTTP 方法／Headers、参数来源与接口核实状态，避免在两处重复维护接口清单。`ResetUsage` 不属于该只读查询设计的通用能力。
+
+目标设计还包括从正常模型响应中被动采集用量：Body／SSE 的 Token 消耗记入本次调用，订阅供应商额度 Headers 更新订阅用量快照（非订阅仅采集明确余额），并与 `FetchQuota` 主动刷新配合。当前已解析 Token 用量并保存原始响应 Headers，已将已知 Claude／Codex／Grok 额度 Headers 转换为缓存展示项；三家订阅的字段、证据与处理规则见 [响应用量采集](ai-provider-quota.md#3-订阅-quota-获取方法)。
 
 ## 配置
 

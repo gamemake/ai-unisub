@@ -238,6 +238,22 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	return refreshed, nil
 }
 
+// CredentialAccountID reads the existing account scope without refreshing tokens.
+func (m *OAuthManager) CredentialAccountID(credentialID string) (string, error) {
+	if m == nil || m.store == nil {
+		return "", errors.New("credential store is not configured")
+	}
+	raw, err := m.store.LoadCredential(credentialID)
+	if err != nil {
+		return "", err
+	}
+	var credential OAuthCredential
+	if err := json.Unmarshal(raw, &credential); err != nil {
+		return "", err
+	}
+	return credential.AccountID, nil
+}
+
 func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credentialID string, endpoints ...*proxy.Endpoint) (string, error) {
 	if m == nil || m.store == nil {
 		return "", errors.New("credential store is not configured")

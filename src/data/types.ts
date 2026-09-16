@@ -1,12 +1,16 @@
+import type { Quota } from './quota'
+export type * from './quota'
+
 export interface User { id: string; name: string; role: 'admin' | 'user'; enabled?: boolean; server_version?: string; created_at?: string }
 export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
 export interface GroupMember { id: string; weight: number }
-export interface Supplier { id: string; name: string; claude_url: string; codex_url: string }
+// Only fixed, non-authentication header overrides; request defaults live in Go.
+export interface Supplier { id: string; name: string; claude_url: string; codex_url: string; subscription_usage_header_overrides?: Record<string, string>; api_usage_header_overrides?: Record<string, string> }
 export interface AICatalog { suppliers: Supplier[] }
 export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supplier[] }
 export interface AIProviderConfig { kind?: 'subscription' | 'api' | 'group'; supplier?: string; client_type?: ClientType; official_only?: boolean; members?: GroupMember[]; auth_type?: string; api_endpoint?: string; api_key?: string; credential_id?: string; credential?: unknown; oauth?: { credential_id?: string }; proxy_group_id?: string; enabled?: boolean; max_concurrent_connections?: number; queue_timeout_seconds?: number; [key: string]: unknown }
 // Wire DTO: provider/provider_type retain their serialized names for existing clients and data.
-export interface Account { id: string; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown }
+export interface Account { id: string; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown; quota?: Quota }
 export interface APIKey { id: string; name: string; account_id: string; key: string; valid_seconds: number; created_at: string; expires_at?: string }
 export interface ProxyHealth { status: string; requests: number; failures: number; consecutive_failures: number; cooldown_until?: string; probe_requests: number; probe_failures: number }
 export interface Proxy { id?: string; url: string; enabled: boolean; status?: string; last_available?: string; network?: ProxyHealth; applications?: Record<string, ProxyHealth>; error_records?: { start_at: string; count: number }[] }

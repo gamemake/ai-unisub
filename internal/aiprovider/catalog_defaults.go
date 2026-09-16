@@ -1,5 +1,13 @@
 package aiprovider
 
+// Code-owned defaults for usage requests. Treat as read-only: callers copy
+// before applying supplier overrides and externally supplied authentication.
+// Vendor-specific protocol headers belong to the corresponding query code.
+var defaultQuotaRequestHeaders = map[string]string{
+	"Accept":       "application/json",
+	"Content-Type": "application/json",
+}
+
 // SupplierConfigs returns the built-in supplier names and service endpoints.
 func SupplierConfigs() []Supplier {
 	return []Supplier{

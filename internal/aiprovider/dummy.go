@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sync"
+	"time"
 )
 
 // DummyAIProvider is a local provider for demos and development. It does not
 // contact an upstream service; it records the request and returns a trace.
 type DummyAIProvider struct {
-	mu     sync.RWMutex
-	config AIProviderConfig
+	mu         sync.RWMutex
+	config     AIProviderConfig
+	quotaCache quotaCache
 }
 
 func NewDummyAIProvider(id string, raw json.RawMessage) (*DummyAIProvider, error) {
@@ -37,6 +40,7 @@ func (p *DummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	}
 	p.mu.Lock()
 	p.config = config
+	p.quotaCache.invalidate()
 	p.mu.Unlock()
 	return nil
 }
@@ -46,7 +50,34 @@ func (p *DummyAIProvider) Handle(r *http.Request, recorder APICallRecorder) {
 		recorder(&AIProviderCallTrace{URL: r.URL.String(), OriginalRequestHeaders: r.Header.Clone(), RequestBody: body, Model: "dummy-model", ResponseStatus: 200, ResponseHeaders: http.Header{"Content-Type": {"application/json"}}, ResponseBody: []byte(`{"model":"dummy-model","choices":[{"message":{"role":"assistant","content":"UniSub dummy response"}}]}`)})
 	}
 }
-func (p *DummyAIProvider) FetchUsage(context.Context) ([]UsageItem, error) {
-	return []UsageItem{{Name: "requests", Value: "0"}}, nil
+func (p *DummyAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	p.mu.RLock()
+	stamp := p.quotaCache.begin()
+	p.mu.RUnlock()
+	// The demo uses the same normalized 5h/weekly windows as Claude.
+	result := &Quota{
+		Subscription: []SubscriptionQuotaItem{
+			{TimeDimension: "5h", Usage: float64(rand.IntN(101)), ResetAt: now.Add(time.Duration(1+rand.IntN(300)) * time.Minute)},
+			{TimeDimension: "weekly", Usage: float64(rand.IntN(101)), ResetAt: now.Add(time.Duration(1+rand.IntN(10080)) * time.Minute)},
+		},
+		CacheStatus: QuotaCacheFresh,
+		UpdatedAt:   now,
+	}
+	stamp.observed = now
+	updates := []subscriptionUpdate{
+		{key: "five_hour", item: result.Subscription[0], hasUsage: true, hasReset: true},
+		{key: "seven_day", item: result.Subscription[1], hasUsage: true, hasReset: true},
+	}
+	if !p.quotaCache.putSubscription(stamp, updates, false) {
+		return nil, ErrQuotaSuperseded
+	}
+	return result, nil
+}
+func (p *DummyAIProvider) GetCachedQuota() *Quota {
+	return p.quotaCache.get()
 }
 func (p *DummyAIProvider) ResetUsage(context.Context) error { return nil }

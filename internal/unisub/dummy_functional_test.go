@@ -33,8 +33,11 @@ func (p *dummyAIProvider) Handle(r *http.Request, recorder aiprovider.APICallRec
 		recorder(&aiprovider.AIProviderCallTrace{URL: r.URL.String(), RequestBody: body, Model: "dummy-model"})
 	}
 }
-func (p *dummyAIProvider) FetchUsage(context.Context) ([]aiprovider.UsageItem, error) {
-	return []aiprovider.UsageItem{{Name: "requests", Value: "1"}}, nil
+func (p *dummyAIProvider) FetchQuota(context.Context) (*aiprovider.Quota, error) {
+	return nil, aiprovider.ErrQuotaNotImplemented
+}
+func (p *dummyAIProvider) GetCachedQuota() *aiprovider.Quota {
+	return &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
 }
 func (p *dummyAIProvider) ResetUsage(context.Context) error { return nil }
 

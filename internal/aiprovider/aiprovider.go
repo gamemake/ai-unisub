@@ -38,12 +38,6 @@ type AIProviderConfig struct {
 	APIKey                        string        `json:"api_key,omitempty"`
 }
 
-// UsageItem is one ordered name/value pair returned by a provider.
-type UsageItem struct {
-	Name  string
-	Value string
-}
-
 // AIProviderCallTrace contains the complete request/response data collected by a
 // AIProvider. It is owned by the provider layer and deliberately contains no
 // database or caller-authentication metadata. The outer request layer may
@@ -80,6 +74,12 @@ type AIProvider interface {
 	// value is assigned at creation time and must not be changed.
 	UpdateConfig(json.RawMessage) error
 	Handle(*http.Request, APICallRecorder)
-	FetchUsage(context.Context) ([]UsageItem, error)
+	// FetchQuota queries current subscription usage or non-subscription balance.
+	// Groups return ErrQuotaUnsupported. Historical usage/costs and cached fallback are excluded.
+	FetchQuota(context.Context) (*Quota, error)
+	// GetCachedQuota only reads the cache, without network or token refresh.
+	// Groups return nil because they do not own quota.
+	// It always returns a non-nil result, with missing status on a cache miss.
+	GetCachedQuota() *Quota
 	ResetUsage(context.Context) error
 }

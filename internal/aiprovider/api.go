@@ -41,5 +41,7 @@ func (p *APIProvider) Handle(r *http.Request, rec APICallRecorder) {
 	}
 	p.handle(service, "", r, rec)
 }
-func (p *APIProvider) FetchUsage(ctx context.Context) ([]UsageItem, error) { return p.usage(ctx) }
-func (p *APIProvider) ResetUsage(ctx context.Context) error                { return p.reset(ctx) }
+func (p *APIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
+	return p.quota(ctx, "")
+}
+func (p *APIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

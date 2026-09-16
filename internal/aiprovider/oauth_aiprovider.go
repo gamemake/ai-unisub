@@ -13,16 +13,19 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"ai-unisub/internal/oauth"
 )
 
 type oauthAIProvider struct {
-	mu       sync.RWMutex
-	config   AIProviderConfig
-	manager  *oauth.OAuthManager
-	client   *http.Client
-	resolver ProxyResolver
+	mu            sync.RWMutex
+	config        AIProviderConfig
+	manager       *oauth.OAuthManager
+	client        *http.Client
+	resolver      ProxyResolver
+	quotaCache    quotaCache
+	quotaSupplier func(string) Supplier
 }
 
 func (p *oauthAIProvider) SetProxyResolver(r ProxyResolver) {
@@ -80,6 +83,7 @@ func (p *oauthAIProvider) update(raw json.RawMessage) error {
 		p.client = client
 	}
 	p.config = cloneAIProviderConfig(next)
+	p.quotaCache.invalidate()
 	return nil
 }
 
@@ -113,7 +117,10 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	p.mu.RLock()
 	groupID, resolver := p.config.ProxyGroupID, p.resolver
 	p.mu.RUnlock()
-	config := p.Config()
+	p.mu.RLock()
+	config := cloneAIProviderConfig(p.config)
+	quotaStamp := p.quotaCache.begin()
+	p.mu.RUnlock()
 	application := cmp.Or(config.Supplier, service)
 	if config.AuthType == AuthTypeAPIKey && config.Supplier != "" {
 		service = config.Supplier
@@ -276,6 +283,10 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	}
 	defer response.Body.Close()
 	trace.ResponseHeaders = response.Header.Clone()
+	if response.StatusCode >= 200 && response.StatusCode < 300 || response.StatusCode == http.StatusTooManyRequests {
+		quotaStamp.observed = time.Now().UTC()
+		p.quotaCache.putSubscription(quotaStamp, subscriptionHeaderUpdates(config, service, response.Header, quotaStamp.observed), true)
+	}
 	trace.ResponseStatus = response.StatusCode
 	if w := responseWriter(req.Context()); w != nil {
 		for key, values := range response.Header {
@@ -333,8 +344,10 @@ func hopHeader(key string) bool {
 	}
 	return false
 }
-func (p *oauthAIProvider) usage(context.Context) ([]UsageItem, error) { return []UsageItem{}, nil }
-func (p *oauthAIProvider) reset(context.Context) error                { return nil }
+func (p *oauthAIProvider) GetCachedQuota() *Quota {
+	return p.quotaCache.get()
+}
+func (p *oauthAIProvider) reset(context.Context) error { return nil }
 
 func cloneAIProviderConfig(config AIProviderConfig) AIProviderConfig {
 	config.Labels = append([]string(nil), config.Labels...)

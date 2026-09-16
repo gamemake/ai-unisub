@@ -52,8 +52,11 @@ func (g *groupProvider) Handle(_ *http.Request, rec APICallRecorder) {
 		rec(&AIProviderCallTrace{HTTPErrorCode: 503, HTTPErrorInfo: "group requires member routing"})
 	}
 }
-func (g *groupProvider) FetchUsage(context.Context) ([]UsageItem, error) {
-	return nil, errors.New("usage is recorded per member")
+func (g *groupProvider) FetchQuota(context.Context) (*Quota, error) {
+	return nil, ErrQuotaUnsupported
+}
+func (g *groupProvider) GetCachedQuota() *Quota {
+	return nil
 }
 func (g *groupProvider) ResetUsage(context.Context) error {
 	return errors.New("reset usage per member")

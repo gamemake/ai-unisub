@@ -48,5 +48,7 @@ func (p *GrokAIProvider) UpdateConfig(raw json.RawMessage) error {
 func (p *GrokAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 	p.handle(oauth.OAuthServiceGrok, p.Config().CredentialID, r, rec)
 }
-func (p *GrokAIProvider) FetchUsage(ctx context.Context) ([]UsageItem, error) { return p.usage(ctx) }
-func (p *GrokAIProvider) ResetUsage(ctx context.Context) error                { return p.reset(ctx) }
+func (p *GrokAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
+	return p.quota(ctx, "grok")
+}
+func (p *GrokAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

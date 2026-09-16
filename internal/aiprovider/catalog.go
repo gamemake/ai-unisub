@@ -2,6 +2,8 @@ package aiprovider
 
 import (
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 )
 
@@ -10,6 +12,10 @@ type Supplier struct {
 	Name      string `json:"name"`
 	ClaudeURL string `json:"claude_url"`
 	CodexURL  string `json:"codex_url"`
+	// Only non-authentication header overrides are persisted. Request defaults
+	// and endpoint behavior are code-owned; credentials are injected externally.
+	SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides,omitempty"`
+	APIUsageHeaderOverrides          map[string]string `json:"api_usage_header_overrides,omitempty"`
 }
 type Catalog struct {
 	Suppliers []Supplier `json:"suppliers"`
@@ -25,6 +31,9 @@ func ValidateCatalog(c Catalog) error {
 	}
 	seen := map[string]bool{}
 	for _, s := range c.Suppliers {
+		if !validQuotaHeaders(s.SubscriptionUsageHeaderOverrides) || !validQuotaHeaders(s.APIUsageHeaderOverrides) {
+			return errors.New("usage header overrides contain invalid or authentication headers")
+		}
 		if known[s.ID].ID == "" || seen[s.ID] || strings.TrimSpace(s.Name) == "" {
 			return errors.New("invalid or duplicate supplier")
 		}
@@ -44,9 +53,14 @@ func (m *AIProviderManager) Catalog() Catalog {
 	return cloneCatalog(m.catalog)
 }
 func cloneCatalog(c Catalog) Catalog {
-	c.Suppliers = append([]Supplier{}, c.Suppliers...)
+	c.Suppliers = slices.Clone(c.Suppliers)
+	for i := range c.Suppliers {
+		c.Suppliers[i].SubscriptionUsageHeaderOverrides = maps.Clone(c.Suppliers[i].SubscriptionUsageHeaderOverrides)
+		c.Suppliers[i].APIUsageHeaderOverrides = maps.Clone(c.Suppliers[i].APIUsageHeaderOverrides)
+	}
 	return c
 }
+
 func (m *AIProviderManager) SetCatalog(c Catalog) error {
 	if err := ValidateCatalog(c); err != nil {
 		return err
@@ -54,6 +68,11 @@ func (m *AIProviderManager) SetCatalog(c Catalog) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.catalog = cloneCatalog(c)
+	for _, provider := range m.aiProviders {
+		if cached, ok := provider.(interface{ invalidateQuotaCache() }); ok {
+			cached.invalidateQuotaCache()
+		}
+	}
 	return nil
 }
 func (m *AIProviderManager) DefaultURL(supplier string, client ClientType) string {
