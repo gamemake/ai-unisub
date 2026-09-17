@@ -134,7 +134,7 @@ func (m *MemoryDatabase) RecordProxyLog(value *PersistedProxyLog) error {
 	return errors.New("proxy logs are not supported by memory database")
 }
 
-func (m *MemoryDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error) {
+func (m *MemoryDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
 	if m == nil {
 		return nil, 0, errors.New("memory database is nil")
 	}
@@ -317,7 +317,7 @@ func (m *MemoryDatabase) DeleteAPIKey(id string) error {
 
 func (m *MemoryDatabase) RecordCallTrace(*PersistedCallTrace) error { return nil }
 func (m *MemoryDatabase) CleanupCallTrace(int) error                { return nil }
-func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error) {
+func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error) {
 	return []PersistedCallTraceSummary{}, 0, nil
 }
 func (m *MemoryDatabase) GetCallTrace(time.Time, string) (*PersistedCallTrace, error) {

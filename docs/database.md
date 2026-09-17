@@ -74,7 +74,7 @@ OAuth Session、Web 一次性结果和浏览器 Session 不存入数据库，重
 
 ## 调用查询
 
-PersistedCallTrace 和 PersistedCallTraceSummary 包含 `SessionID`（JSON 为 `session_id`）。SQLite 启动时为旧日表新增默认空字符串的 session_id 列及索引，新日表直接创建该字段；不会为历史记录猜测会话标识。
+PersistedCallTrace 和 PersistedCallTraceSummary 包含 `SessionID`（JSON 为 `session_id`）。SQLite 日表直接创建该字段及索引。
 
 `QueryCallTraces` 接收 `CallTraceFilter` 和必填的 `TimeRange`，支持账号 ID、用户名、HTTP 错误码及精确文本搜索。只有应用层授权后才启用 `SearchUsernames`；归属条件独立于文本 OR 条件，不能通过搜索跨用户读取记录。接口提供分页和匹配总数，列表返回摘要；`GetCallTrace` 使用日期与记录 ID 获取详情。调用记录额外持久化请求和响应字节数，但不在 JSON 响应中显示。
 
@@ -82,11 +82,11 @@ PersistedCallTrace 和 PersistedCallTraceSummary 包含 `SessionID`（JSON 为 `
 
 ## 代理日志
 
-`QueryProxyLogs` 接收 group ID、可选 proxy URL、分页参数和必填的 `TimeRange`，返回当前页记录、匹配总数和错误。SQLite 使用 `proxy_logs_YYYYMMDD` 分表，按 UTC 日期写入，查询按时间倒序返回。每条记录包含 `app_type` 字符串；旧表迁移时默认为空字符串。
+`QueryProxyLogs` 接收 `ProxyLogFilter`、分页参数，返回当前页记录、匹配总数和错误。`ProxyLogFilter` 中 `GroupID` 与 `TimeRange` 必填，`ProxyURL` 和 `AppType` 可选；可选字段非空时分别精确匹配对应字段。SQLite 使用 `proxy_logs_YYYYMMDD` 分表，按 UTC 日期写入，查询按时间倒序返回。每条记录包含 `app_type` 字符串。
 
 ```go
-QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error)
-QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error)
+QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error)
+QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 ```
 
 `CleanupProxyLog(days)` 清理指定天数以前的完整代理日志分表；`days == 0` 清理今天以前的分表。MemoryDatabase 不缓存代理日志，记录、查询和清理方法均返回不支持错误。

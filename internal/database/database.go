@@ -197,14 +197,22 @@ type PersistedCallTraceSummary struct {
 	FinishedAt          time.Time `json:"finished_at"`
 }
 
-// CallTraceFilter combines exact search and structured filters. SearchUsernames
-// is set only by the authenticated application layer, never by query input.
+// CallTraceFilter combines exact search and structured filters for call traces.
 type CallTraceFilter struct {
-	UserName        string
-	AccountID       string
-	Code            *int
-	Search          string
-	SearchUsernames bool
+	UserName        string    // Optional exact user-name filter.
+	AccountID       string    // Optional exact account ID filter.
+	Code            *int      // Optional HTTP error-code filter.
+	Search          string    // Optional exact text filter.
+	SearchUsernames bool      // Optional; enables user-name search when authorized by the application layer.
+	TimeRange       TimeRange // Required time range for the query.
+}
+
+// ProxyLogFilter combines filters for proxy logs.
+type ProxyLogFilter struct {
+	GroupID   string    // Required proxy-group ID filter.
+	ProxyURL  string    // Optional exact proxy URL filter.
+	AppType   string    // Optional exact application-type filter.
+	TimeRange TimeRange // Required time range for the query.
 }
 
 // TimeRange is an inclusive range of time values.
@@ -217,47 +225,69 @@ type TimeRange struct {
 // Postgres, or an in-memory store used by tests. AIProvider configurations are
 // instance records, not configuration records for a provider type.
 type Database interface {
+	// Open initializes the database and makes it ready for use.
 	Open() error
+	// Close releases the database resources.
 	Close() error
 
 	// Module configurations are opaque JSON documents keyed by module name.
 	// Missing configurations return nil, nil; modules own defaults and schema validation.
+	// LoadModuleConfig loads a module configuration by module name.
 	LoadModuleConfig(module string) (json.RawMessage, error)
+	// SaveModuleConfig validates and stores a module configuration.
 	SaveModuleConfig(module string, config json.RawMessage) error
+	// DeleteModuleConfig deletes a module configuration by module name.
 	DeleteModuleConfig(module string) error
 
+	// ListProxyGroups returns all persisted proxy groups.
 	ListProxyGroups() ([]PersistedProxyGroup, error)
+	// SaveProxyGroup creates or updates a persisted proxy group.
 	SaveProxyGroup(group *PersistedProxyGroup) error
+	// DeleteProxyGroup deletes a proxy group by ID.
 	DeleteProxyGroup(id string) error
+	// RecordProxyLog persists one proxy log entry.
 	RecordProxyLog(log *PersistedProxyLog) error
-	QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error)
+	// QueryProxyLogs returns proxy logs matching filter, with one-based pagination.
+	QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error)
+	// CleanupProxyLog removes proxy logs older than the specified number of days.
 	CleanupProxyLog(days int) error
 
 	// CredentialStore-compatible methods. The database stores credentials as
 	// opaque JSON; OAuth owns the domain model and its serialization.
+	// LoadCredential loads an opaque credential by ID.
 	LoadCredential(id string) (json.RawMessage, error)
+	// SaveCredential creates or replaces an opaque credential by ID.
 	SaveCredential(id string, value json.RawMessage) error
+	// DeleteCredential deletes an opaque credential by ID.
 	DeleteCredential(id string) error
 
+	// ListAccounts returns all persisted accounts.
 	ListAccounts() ([]PersistedAccount, error)
+	// SaveAccount creates or updates a persisted account.
 	SaveAccount(account *PersistedAccount) error
+	// DeleteAccount deletes an account by ID.
 	DeleteAccount(id string) error
 
+	// ListUsers returns all persisted users.
 	ListUsers() ([]PersistedUser, error)
+	// SaveUser creates or updates a persisted user.
 	SaveUser(user *PersistedUser) error
+	// DeleteUser deletes a user by ID.
 	DeleteUser(id string) error
 
+	// ListAPIKeys returns API keys belonging to the specified user.
 	ListAPIKeys(userID string) ([]PersistedAPIKey, error)
+	// SaveAPIKey creates or updates a persisted API key.
 	SaveAPIKey(key *PersistedAPIKey) error
+	// DeleteAPIKey deletes an API key by ID.
 	DeleteAPIKey(id string) error
 
+	// RecordCallTrace persists one complete API call trace.
 	RecordCallTrace(trace *PersistedCallTrace) error
-	// Cleanup removes CallTrace data older than the specified number of days.
-	// Account, user, and API key data are not removed.
+	// CleanupCallTrace removes call-trace data older than the specified number of days.
 	CleanupCallTrace(days int) error
-	// QueryCallTraces applies structured filters. page is one-based and pageSize
-	// is the maximum number of traces returned. A nil time range is unbounded.
-	QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error)
+	// QueryCallTraces returns call-trace summaries matching filter, with one-based pagination.
+	QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
 	GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error)

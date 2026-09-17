@@ -406,12 +406,12 @@ func (s *SQLiteDatabase) CleanupCallTrace(days int) error {
 	return nil
 }
 
-func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error) {
+func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error) {
 	values := []string{}
 	if filter.Search != "" {
 		values = append(values, filter.Search)
 	}
-	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &timeRange, filter, values...)
+	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &filter.TimeRange, filter, values...)
 }
 func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, filter CallTraceFilter, values ...string) ([]PersistedCallTraceSummary, int, error) {
 	if err := s.ensureOpen(); err != nil {
@@ -757,7 +757,7 @@ func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
 	return err
 }
 
-func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error) {
+func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, 0, err
 	}
@@ -767,7 +767,7 @@ func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize
 	if pageSize < 1 {
 		return nil, 0, errors.New("page size must be greater than zero")
 	}
-	if timeRange.Start.After(timeRange.End) {
+	if filter.TimeRange.Start.After(filter.TimeRange.End) {
 		return nil, 0, errors.New("start time must not be after end time")
 	}
 	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
@@ -781,7 +781,7 @@ func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize
 			rows.Close()
 			return nil, 0, err
 		}
-		if proxyLogTablePattern.MatchString(name) && proxyLogTableInRange(name, &timeRange) {
+		if proxyLogTablePattern.MatchString(name) && proxyLogTableInRange(name, &filter.TimeRange) {
 			tables = append(tables, name)
 		}
 	}
@@ -795,10 +795,10 @@ func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize
 	}
 	slices.Sort(tables)
 	queries := make([]string, len(tables))
-	args := make([]any, 0, len(tables)*5)
+	args := make([]any, 0, len(tables)*6)
 	for i, table := range tables {
-		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND time >= ? AND time < ?", table)
-		args = append(args, groupID, proxyURL, proxyURL, timeRange.Start.UTC(), timeRange.End.UTC())
+		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND (? = '' OR app_type = ?) AND time >= ? AND time < ?", table)
+		args = append(args, filter.GroupID, filter.ProxyURL, filter.ProxyURL, filter.AppType, filter.AppType, filter.TimeRange.Start.UTC(), filter.TimeRange.End.UTC())
 	}
 	query := "SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
 	var total int
