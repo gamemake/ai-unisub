@@ -40,17 +40,34 @@ func (l Logger) Debug(event, msg string)
 func (l Logger) Info(event, msg string)
 func (l Logger) Warn(event, msg string)
 func (l Logger) Error(event, msg string)
+func (l Logger) DebugAttrs(event string, attrs ...slog.Attr)
+func (l Logger) InfoAttrs(event string, attrs ...slog.Attr)
+func (l Logger) WarnAttrs(event string, attrs ...slog.Attr)
+func (l Logger) ErrorAttrs(event string, attrs ...slog.Attr)
 func (l Logger) StandardLogger(level slog.Level, event string) *log.Logger
+```
+
+`DebugAttrs`、`InfoAttrs`、`WarnAttrs` 和 `ErrorAttrs` 与对应的普通日志方法使用相同的级别过滤和输出链路，但额外接收 `slog.Attr`，将调用方提供的字段作为额外 JSON 字段输出。适合记录 `provider`、`operation`、`status`、`duration_ms` 等可查询的结构化信息。
+
+例如：
+
+```go
+common.ModuleLogger("oauth").InfoAttrs("http_request_completed",
+    slog.String("provider", "grok"),
+    slog.String("operation", "poll_device_token"),
+    slog.Int("status", 200),
+    slog.Int64("duration_ms", 183),
+)
 ```
 
 - 以标准库 `log/slog` 为基础，提供统一初始化和取得模块 Logger 的入口；初始化时接收日志级别与输出目标配置。
 - 默认级别为 `INFO`，默认向标准错误输出单行 JSON；初始化前使用相同的默认配置。
 - `LogConfig{}` 使用默认配置，`Output == nil` 表示标准错误。只接受四个标准级别；非法级别返回错误并保留原配置。输出目标由调用方管理，Common 不关闭它。
 - 初始化原子替换共享配置，已创建的 Logger 同样使用新配置。
-- Logger 绑定固定的模块标识，每次记录接收级别、事件名和消息内容，不添加额外字段，也不修改已绑定的模块标识。
+- Logger 绑定固定的模块标识。普通日志方法接收级别、事件名和消息内容；`*Attrs` 方法还可接收 `slog.Attr`，用于输出可查询的结构化字段，不修改已绑定的模块标识。
 - 空白模块标识及零值 Logger 使用 `unknown`，空白事件名使用 `message`；`msg` 按传入内容记录。
 - 输出支持并发调用，保证每条日志为完整的单行 JSON，不与其他日志交错。
-- `StandardLogger` 用于适配要求 `*log.Logger` 的接口，绑定级别与事件名，并通过同一输出链路写入五字段 JSON；级别须为四个标准级别之一。Common 本身不调用适配器的 `Fatal` 或 `Panic` 方法。
+- `StandardLogger` 用于适配要求 `*log.Logger` 的接口，绑定级别与事件名，并通过同一输出链路写入 JSON；级别须为四个标准级别之一。Common 本身不调用适配器的 `Fatal` 或 `Panic` 方法。
 - Logger 不主动退出进程或触发 panic；不提供文件轮转、持久化存储或远程采集能力。
 
 ### 日志级别与字段
@@ -64,7 +81,7 @@ func (l Logger) StandardLogger(level slog.Level, event string) *log.Logger
 
 仅输出不低于配置级别的日志，级别顺序为 `DEBUG` < `INFO` < `WARN` < `ERROR`。
 
-每条日志仅包含以下五个字段，全部必填，JSON 类型均为字符串；不增加可选字段或模块专用字段。
+每条日志至少包含以下五个基础字段，全部必填。通过 `*Attrs` 方法传入的属性会作为额外 JSON 字段输出，字段类型遵循 `slog.Attr`。
 
 | 字段 | 类型 | 说明 | 示例 |
 | --- | --- | --- | --- |
@@ -74,7 +91,7 @@ func (l Logger) StandardLogger(level slog.Level, event string) *log.Logger
 | `event` | string | 调用方提供的稳定、机器可读的事件名 | `operation_completed` |
 | `msg` | string | 面向阅读者的事件描述，包含必要的操作详情与错误原因 | `Operation completed in 25 ms` |
 
-具体操作信息按需写入 `msg`，不作为独立 JSON 字段。字段顺序不作为契约。
+普通日志方法的具体操作信息按需写入 `msg`；需要机器查询的字段应通过 `*Attrs` 方法传入。`*Attrs` 方法传入的字段会作为额外 JSON 字段输出，字段类型遵循 `slog.Attr`。字段顺序不作为契约。
 
 ### 日志输出内容样例
 
@@ -97,5 +114,5 @@ func (l Logger) StandardLogger(level slog.Level, event string) *log.Logger
 ## 验证边界
 
 - JSON 错误：验证 HTTP 状态、Content-Type、单字段 JSON 格式及消息内容。
-- 日志：验证默认配置、级别过滤、模块标识绑定、UTC 时间格式，以及每条日志仅含五个必填字符串字段。
+- 日志：验证默认配置、级别过滤、模块标识绑定、UTC 时间格式、基础字段，以及 `*Attrs` 方法输出结构化属性。
 - 输出：验证消息中的引号与换行正确进行 JSON 编码，并发输出不交错，输出失败不会递归记录或触发 panic。

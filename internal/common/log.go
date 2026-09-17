@@ -71,7 +71,24 @@ func (l Logger) Info(event, msg string)  { l.write(slog.LevelInfo, event, msg) }
 func (l Logger) Warn(event, msg string)  { l.write(slog.LevelWarn, event, msg) }
 func (l Logger) Error(event, msg string) { l.write(slog.LevelError, event, msg) }
 
+func (l Logger) DebugAttrs(event string, attrs ...slog.Attr) {
+	l.writeAttrs(slog.LevelDebug, event, "", attrs...)
+}
+func (l Logger) InfoAttrs(event string, attrs ...slog.Attr) {
+	l.writeAttrs(slog.LevelInfo, event, "", attrs...)
+}
+func (l Logger) WarnAttrs(event string, attrs ...slog.Attr) {
+	l.writeAttrs(slog.LevelWarn, event, "", attrs...)
+}
+func (l Logger) ErrorAttrs(event string, attrs ...slog.Attr) {
+	l.writeAttrs(slog.LevelError, event, "", attrs...)
+}
+
 func (l Logger) write(level slog.Level, event, msg string) {
+	l.writeAttrs(level, event, msg)
+}
+
+func (l Logger) writeAttrs(level slog.Level, event, msg string, attrs ...slog.Attr) {
 	logging.Lock()
 	defer logging.Unlock()
 	// A failing output must not interrupt the caller or recursively log itself.
@@ -86,6 +103,7 @@ func (l Logger) write(level slog.Level, event, msg string) {
 	}
 	record := slog.NewRecord(time.Now().UTC(), level, msg, 0)
 	record.AddAttrs(slog.String("module", module), slog.String("event", event))
+	record.AddAttrs(attrs...)
 	_ = logging.handler.Handle(ctx, record)
 }
 

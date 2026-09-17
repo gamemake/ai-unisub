@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"ai-unisub/internal/proxy"
 	"cmp"
 	"context"
 	"net/http"
@@ -35,13 +34,13 @@ func (a *CodexAdapter) BuildAuthorizationURL(_ context.Context, in oauth.Authori
 	v := url.Values{"response_type": {"code"}, "client_id": {a.config.ClientID}, "redirect_uri": {in.RedirectURI}, "scope": {strings.Join(a.config.Scopes, " ")}, "code_challenge": {challenge(in.CodeVerifier)}, "code_challenge_method": {"S256"}, "state": {in.State}, "id_token_add_organizations": {"true"}, "codex_cli_simplified_flow": {"true"}}
 	return oauth.AuthorizationResult{AuthorizationURL: a.config.AuthorizeURL + "?" + v.Encode(), ExpiresAt: nowPlus(10)}, nil
 }
-func (a *CodexAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
-	return a.token(ctx, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "client_id": {a.config.ClientID}, "code_verifier": {verifier}}, endpoints...)
+func (a *CodexAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, client *http.Client) (*oauth.OAuthCredential, error) {
+	return a.token(ctx, url.Values{"grant_type": {"authorization_code"}, "code": {code}, "redirect_uri": {redirect}, "client_id": {a.config.ClientID}, "code_verifier": {verifier}}, client)
 }
-func (a *CodexAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
-	return a.token(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {old.RefreshToken}, "client_id": {a.config.ClientID}}, endpoints...)
+func (a *CodexAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential, client *http.Client) (*oauth.OAuthCredential, error) {
+	return a.token(ctx, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {old.RefreshToken}, "client_id": {a.config.ClientID}}, client)
 }
-func (a *CodexAdapter) token(ctx context.Context, values url.Values, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (a *CodexAdapter) token(ctx context.Context, values url.Values, client *http.Client) (*oauth.OAuthCredential, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.config.TokenURL, strings.NewReader(values.Encode()))
 	if err != nil {
 		return nil, err
@@ -51,7 +50,11 @@ func (a *CodexAdapter) token(ctx context.Context, values url.Values, endpoints .
 	req.Header.Set("User-Agent", "codex-tui/0.146.0")
 	req.Header.Set("originator", "codex-tui")
 	var token tokenResponse
-	if _, err := readResponseDo(clientWithProxy(a.config.HTTPClient, endpoints...), req, &token); err != nil {
+	operation := "exchange_code"
+	if values.Get("grant_type") == "refresh_token" {
+		operation = "refresh_token"
+	}
+	if _, err := readResponseDo(clientOrDefault(clientOr(a.config.HTTPClient, client)), req, HTTPCallMeta{Provider: a.Service(), Operation: operation}, &token); err != nil {
 		return nil, err
 	}
 	result, err := credential(token)

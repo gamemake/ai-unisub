@@ -1,10 +1,10 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 )
 
@@ -49,11 +49,11 @@ type CredentialStore interface {
 
 type OAuthAdapter interface {
 	Service() string
-	Refresh(context.Context, *OAuthCredential, ...*proxy.Endpoint) (*OAuthCredential, error)
+	Refresh(context.Context, *OAuthCredential, *http.Client) (*OAuthCredential, error)
 }
 
 type AuthorizationInput struct {
-	Proxy        *proxy.Endpoint
+	HTTPClient   *http.Client
 	Service      string
 	State        string
 	CodeVerifier string
@@ -70,12 +70,12 @@ type AuthorizationResult struct {
 type PKCEAdapter interface {
 	OAuthAdapter
 	BuildAuthorizationURL(context.Context, AuthorizationInput) (AuthorizationResult, error)
-	Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
+	Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string, client *http.Client) (*OAuthCredential, error)
 }
 
 type DeviceStartInput struct {
-	Proxy   *proxy.Endpoint
-	Service string
+	HTTPClient *http.Client
+	Service    string
 }
 
 type DeviceAuthorizationResult struct {
@@ -89,11 +89,11 @@ type DeviceAuthorizationResult struct {
 type DeviceAdapter interface {
 	OAuthAdapter
 	StartDeviceAuthorization(context.Context, DeviceStartInput) (DeviceAuthorizationResult, error)
-	PollDeviceToken(ctx context.Context, deviceCode string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
+	PollDeviceToken(ctx context.Context, deviceCode string, client *http.Client) (*OAuthCredential, error)
 }
 
 type RevocableAdapter interface {
-	Revoke(context.Context, *OAuthCredential, ...*proxy.Endpoint) error
+	Revoke(context.Context, *OAuthCredential, *http.Client) error
 }
 
 type OAuthSession struct {
@@ -104,7 +104,7 @@ type OAuthSession struct {
 	State        string
 	CodeVerifier string
 	DeviceCode   string
-	Proxy        *proxy.Endpoint
+	HTTPClient   *http.Client
 	ExpiresAt    time.Time
 }
 

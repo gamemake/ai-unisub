@@ -1,8 +1,8 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"context"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -16,13 +16,13 @@ type DummyAdapter struct {
 
 func NewDummyAdapter() *DummyAdapter    { return &DummyAdapter{polls: make(map[string]int)} }
 func (a *DummyAdapter) Service() string { return "dummy" }
-func (a *DummyAdapter) Refresh(_ context.Context, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *DummyAdapter) Refresh(_ context.Context, credential *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
 	return credential, nil
 }
 func (a *DummyAdapter) StartDeviceAuthorization(_ context.Context, _ DeviceStartInput) (DeviceAuthorizationResult, error) {
 	return DeviceAuthorizationResult{DeviceCode: "dummy-device-code", UserCode: "DUMMY-CODE", VerificationURI: "#dummy-oauth", ExpiresAt: time.Now().Add(10 * time.Minute), Interval: time.Second}, nil
 }
-func (a *DummyAdapter) PollDeviceToken(_ context.Context, deviceCode string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *DummyAdapter) PollDeviceToken(_ context.Context, deviceCode string, _ *http.Client) (*OAuthCredential, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.polls[deviceCode]++

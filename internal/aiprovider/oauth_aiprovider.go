@@ -149,9 +149,19 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		}
 		return
 	}
+	p.mu.RLock()
+	baseClient := p.client
+	p.mu.RUnlock()
+	if baseClient == nil {
+		baseClient = http.DefaultClient
+	}
+	client := proxy.Client(baseClient, endpoint)
+	if client != baseClient {
+		defer client.CloseIdleConnections()
+	}
 	token := config.APIKey
 	if config.AuthType != AuthTypeAPIKey {
-		token, err = p.manager.GetValidAccessToken(req.Context(), service, credentialID, endpoint)
+		token, err = p.manager.GetValidAccessToken(req.Context(), service, credentialID, client)
 	}
 	if err != nil {
 		if resolver != nil && groupID != "" {
@@ -176,15 +186,6 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	} else {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	p.mu.RLock()
-	baseClient := p.client
-	p.mu.RUnlock()
-	client := proxy.Client(baseClient, endpoint)
-	defer func() {
-		if client != baseClient {
-			client.CloseIdleConnections()
-		}
-	}()
 	maxRetries := 0
 	if resolver != nil && groupID != "" {
 		maxRetries = resolver.ProxyRetryLimit(groupID)
@@ -196,7 +197,7 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		response, err = client.Do(req)
 		if err == nil && response.StatusCode == http.StatusUnauthorized && config.AuthType == AuthTypeOAuth && !authRecovered {
 			authRecovered = true
-			refreshed, refreshErr := p.manager.RecoverAccessToken(req.Context(), service, credentialID, token, endpoint)
+			refreshed, refreshErr := p.manager.RecoverAccessToken(req.Context(), service, credentialID, token, client)
 			if refreshErr == nil {
 				if resolver != nil && groupID != "" {
 					if reportErr := proxy.ReportResult(resolver, endpoint, application, proxy.ApplicationIgnored, nil, response.StatusCode); reportErr != nil {

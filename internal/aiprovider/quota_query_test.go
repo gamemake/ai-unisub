@@ -2,7 +2,6 @@ package aiprovider
 
 import (
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/proxy"
 	"context"
 	jsonv1 "encoding/json"
 	"errors"
@@ -25,7 +24,7 @@ func (a *quotaRefreshAdapter) Service() string {
 	}
 	return oauth.OAuthServiceClaude
 }
-func (a *quotaRefreshAdapter) Refresh(context.Context, *oauth.OAuthCredential, ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (a *quotaRefreshAdapter) Refresh(context.Context, *oauth.OAuthCredential, *http.Client) (*oauth.OAuthCredential, error) {
 	a.calls++
 	return &oauth.OAuthCredential{AccessToken: "renewed", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }

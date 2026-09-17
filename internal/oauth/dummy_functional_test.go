@@ -1,9 +1,9 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"context"
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -13,7 +13,7 @@ type dummyDeviceAdapter struct {
 }
 
 func (a *dummyDeviceAdapter) Service() string { return "dummy-device" }
-func (a *dummyDeviceAdapter) Refresh(_ context.Context, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *dummyDeviceAdapter) Refresh(_ context.Context, credential *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
 	return credential, nil
 }
 func (a *dummyDeviceAdapter) StartDeviceAuthorization(context.Context, DeviceStartInput) (DeviceAuthorizationResult, error) {
@@ -25,7 +25,7 @@ func (a *dummyDeviceAdapter) StartDeviceAuthorization(context.Context, DeviceSta
 		Interval:        time.Second,
 	}, nil
 }
-func (a *dummyDeviceAdapter) PollDeviceToken(context.Context, string, ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *dummyDeviceAdapter) PollDeviceToken(_ context.Context, _ string, _ *http.Client) (*OAuthCredential, error) {
 	a.polls++
 	if a.polls == 1 {
 		return nil, ErrAuthorizationPending
@@ -43,7 +43,7 @@ func TestDummyDeviceOAuthFlow(t *testing.T) {
 	if err := manager.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	started, err := manager.Start(t.Context(), adapter.Service(), "user-1", "http://dummy.test/callback")
+	started, err := manager.Start(t.Context(), adapter.Service(), "user-1", "http://dummy.test/callback", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

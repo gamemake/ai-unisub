@@ -127,7 +127,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	common.ModuleLogger("cmd/oauth").Info("authorization_started", fmt.Sprintf("requesting authorization from %s", provider))
-	start, err := manager.Start(ctx, provider, "", redirect)
+	start, err := manager.Start(ctx, provider, "", redirect, nil)
 	if err != nil {
 		common.ModuleLogger("cmd/oauth").Error("authorization_failed", fmt.Sprintf("authorization request failed: %v", err))
 		return err
@@ -293,19 +293,19 @@ func operate(command, path string, args []string, stdout, stderr io.Writer) erro
 	defer cancel()
 	switch command {
 	case "refresh":
-		refreshed, err := manager.Refresh(ctx, service, &credential)
+		refreshed, err := manager.Refresh(ctx, service, &credential, nil)
 		if err != nil {
 			return err
 		}
 		value, _ := json.MarshalIndent(refreshed, "", "  ")
 		return store.SaveCredential(path, value)
 	case "revoke":
-		if err := manager.Revoke(ctx, service, &credential); err != nil {
+		if err := manager.Revoke(ctx, service, &credential, nil); err != nil {
 			return err
 		}
 		return store.DeleteCredential(path)
 	case "logout":
-		if err := manager.Revoke(ctx, service, &credential); err != nil && !strings.Contains(err.Error(), "does not support") {
+		if err := manager.Revoke(ctx, service, &credential, nil); err != nil && !strings.Contains(err.Error(), "does not support") {
 			return err
 		}
 		return store.DeleteCredential(path)

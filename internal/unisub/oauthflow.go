@@ -181,7 +181,11 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 		}
 	}
 
-	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect, endpoint)
+	var client *http.Client
+	if endpoint != nil {
+		client = proxy.Client(http.DefaultClient, endpoint)
+	}
+	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect, client)
 	if err != nil {
 		oauthAPIError(w, err)
 		return

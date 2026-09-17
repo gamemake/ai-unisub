@@ -1,10 +1,10 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -21,10 +21,10 @@ func (a *testAdapter) Service() string { return a.service }
 func (a *testAdapter) BuildAuthorizationURL(_ context.Context, in AuthorizationInput) (AuthorizationResult, error) {
 	return AuthorizationResult{AuthorizationURL: "https://example.test/authorize?state=" + in.State}, nil
 }
-func (a *testAdapter) Exchange(_ context.Context, _, _, _, _ string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *testAdapter) Exchange(_ context.Context, _, _, _, _ string, _ *http.Client) (*OAuthCredential, error) {
 	return &OAuthCredential{AccessToken: "access", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}, nil
 }
-func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
 	a.mu.Lock()
 	a.refresh++
 	a.mu.Unlock()
@@ -58,14 +58,14 @@ func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
 	if err := m.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	endpoint, _ := proxy.NewEndpoint("socks5://127.0.0.1:1080")
-	start, err := m.Start(t.Context(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", endpoint)
+	client := &http.Client{}
+	start, err := m.Start(t.Context(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", client)
 	if err != nil {
 		t.Fatal(err)
 	}
 	session, err := m.session(start.SessionID, false)
-	if err != nil || session.Proxy.String() != "socks5://127.0.0.1:1080" {
-		t.Fatalf("session proxy=%q err=%v", session.Proxy, err)
+	if err != nil || session.HTTPClient != client {
+		t.Fatalf("session client=%p err=%v", session.HTTPClient, err)
 	}
 	if _, err := m.Complete(t.Context(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
 		t.Fatalf("state error=%v", err)
@@ -91,7 +91,7 @@ func TestManagerSessionLookupBindsStateAndSubject(t *testing.T) {
 	if err := m.Register(&testAdapter{service: OAuthServiceClaude}); err != nil {
 		t.Fatal(err)
 	}
-	start, err := m.Start(t.Context(), OAuthServiceClaude, "user-1", "http://127.0.0.1/callback")
+	start, err := m.Start(t.Context(), OAuthServiceClaude, "user-1", "http://127.0.0.1/callback", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestManagerRefreshesCredentialOnceConcurrently(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
-			token, err := m.GetValidAccessToken(t.Context(), OAuthServiceClaude, "id")
+			token, err := m.GetValidAccessToken(t.Context(), OAuthServiceClaude, "id", nil)
 			if err != nil || token != "refreshed" {
 				t.Errorf("token=%q err=%v", token, err)
 			}

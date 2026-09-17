@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"ai-unisub/internal/proxy"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,23 +8,6 @@ import (
 
 	"ai-unisub/internal/oauth"
 )
-
-func TestClientWithProxyUsesConfiguredProxy(t *testing.T) {
-	endpoint, _ := proxy.NewEndpoint("http://127.0.0.1:9050")
-	client := clientWithProxy(nil, endpoint)
-	transport, ok := client.Transport.(*http.Transport)
-	if !ok || transport.Proxy == nil {
-		t.Fatal("expected proxied transport")
-	}
-	req, err := http.NewRequest(http.MethodGet, "https://example.com", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	proxyURL, err := transport.Proxy(req)
-	if err != nil || proxyURL == nil || proxyURL.Host != "127.0.0.1:9050" {
-		t.Fatalf("proxy=%v err=%v", proxyURL, err)
-	}
-}
 
 func TestClaudeAuthorizationURLAndJSONExchange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +23,7 @@ func TestClaudeAuthorizationURLAndJSONExchange(t *testing.T) {
 	if err != nil || !strings.Contains(started.AuthorizationURL, "code_challenge_method=S256") || !strings.Contains(started.AuthorizationURL, "state=state") {
 		t.Fatalf("authorization url=%q err=%v", started.AuthorizationURL, err)
 	}
-	credential, err := adapter.Exchange(t.Context(), "code", "state", "verifier", "http://127.0.0.1/callback")
+	credential, err := adapter.Exchange(t.Context(), "code", "state", "verifier", "http://127.0.0.1/callback", nil)
 	if err != nil || credential.AccessToken != "claude-access" || credential.RefreshToken != "claude-refresh" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}
@@ -75,10 +57,10 @@ func TestGrokDevicePendingAndToken(t *testing.T) {
 	if err != nil || start.DeviceCode != "device" {
 		t.Fatalf("start=%+v err=%v", start, err)
 	}
-	if _, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode); err != oauth.ErrAuthorizationPending {
+	if _, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode, nil); err != oauth.ErrAuthorizationPending {
 		t.Fatalf("pending err=%v", err)
 	}
-	credential, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode)
+	credential, err := adapter.PollDeviceToken(t.Context(), start.DeviceCode, nil)
 	if err != nil || credential.AccessToken != "grok-access" {
 		t.Fatalf("credential=%+v err=%v", credential, err)
 	}

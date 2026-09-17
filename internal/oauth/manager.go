@@ -1,7 +1,6 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -11,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -55,24 +55,24 @@ func (m *OAuthManager) adapter(service string) (OAuthAdapter, error) {
 	return a, nil
 }
 
-func (m *OAuthManager) Start(ctx context.Context, service, subjectID, redirectURI string, endpoints ...*proxy.Endpoint) (*StartResult, error) {
+func (m *OAuthManager) Start(ctx context.Context, service, subjectID, redirectURI string, client *http.Client) (*StartResult, error) {
 	a, err := m.adapter(service)
 	if err != nil {
 		return nil, err
 	}
-	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, Proxy: selectedEndpoint(endpoints), ExpiresAt: time.Now().Add(oauthSessionTTL)}
+	session := OAuthSession{ID: randomID(), Service: service, SubjectID: subjectID, RedirectURI: redirectURI, HTTPClient: client, ExpiresAt: time.Now().Add(oauthSessionTTL)}
 	result := &StartResult{SessionID: session.ID, ExpiresAt: session.ExpiresAt}
 	switch adapter := a.(type) {
 	case PKCEAdapter:
 		session.State = randomID()
 		session.CodeVerifier = randomID() + randomID()
-		built, err := adapter.BuildAuthorizationURL(ctx, AuthorizationInput{Proxy: session.Proxy, Service: service, State: session.State, CodeVerifier: session.CodeVerifier, RedirectURI: redirectURI})
+		built, err := adapter.BuildAuthorizationURL(ctx, AuthorizationInput{HTTPClient: session.HTTPClient, Service: service, State: session.State, CodeVerifier: session.CodeVerifier, RedirectURI: redirectURI})
 		if err != nil {
 			return nil, err
 		}
 		result.AuthorizationURL = built.AuthorizationURL
 	case DeviceAdapter:
-		device, err := adapter.StartDeviceAuthorization(ctx, DeviceStartInput{Proxy: session.Proxy, Service: service})
+		device, err := adapter.StartDeviceAuthorization(ctx, DeviceStartInput{HTTPClient: session.HTTPClient, Service: service})
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func (m *OAuthManager) Complete(ctx context.Context, sessionID, code, state stri
 	if !ok {
 		return nil, ErrUnsupportedFlow
 	}
-	result, err := adapter.Exchange(ctx, code, state, s.CodeVerifier, s.RedirectURI, s.Proxy)
+	result, err := adapter.Exchange(ctx, code, state, s.CodeVerifier, s.RedirectURI, s.HTTPClient)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +207,7 @@ func (m *OAuthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	if !ok {
 		return nil, ErrUnsupportedFlow
 	}
-	result, err := adapter.PollDeviceToken(ctx, s.DeviceCode, s.Proxy)
+	result, err := adapter.PollDeviceToken(ctx, s.DeviceCode, s.HTTPClient)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (m *OAuthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	return result, nil
 }
 
-func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error) {
 	a, err := m.adapter(service)
 	if err != nil {
 		return nil, err
@@ -223,7 +223,7 @@ func (m *OAuthManager) Refresh(ctx context.Context, service string, credential *
 	if credential == nil {
 		return nil, errors.New("credential is nil")
 	}
-	refreshed, err := a.Refresh(ctx, credential, endpoints...)
+	refreshed, err := a.Refresh(ctx, credential, client)
 	if err != nil {
 		return nil, err
 	}
@@ -254,7 +254,7 @@ func (m *OAuthManager) CredentialAccountID(credentialID string) (string, error) 
 	return credential.AccountID, nil
 }
 
-func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credentialID string, endpoints ...*proxy.Endpoint) (string, error) {
+func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credentialID string, client *http.Client) (string, error) {
 	if m == nil || m.store == nil {
 		return "", errors.New("credential store is not configured")
 	}
@@ -291,7 +291,7 @@ func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credent
 	if time.Now().Before(credential.ExpiresAt.Add(-60 * time.Second)) {
 		return credential.AccessToken, nil
 	}
-	refreshed, err := m.Refresh(ctx, service, &credential, endpoints...)
+	refreshed, err := m.Refresh(ctx, service, &credential, client)
 	if err != nil {
 		return "", err
 	}
@@ -307,7 +307,7 @@ func (m *OAuthManager) GetValidAccessToken(ctx context.Context, service, credent
 
 // RecoverAccessToken serializes one refresh after an explicit authentication
 // rejection. Concurrent requests reuse a token already refreshed by a peer.
-func (m *OAuthManager) RecoverAccessToken(ctx context.Context, service, credentialID, rejected string, endpoints ...*proxy.Endpoint) (string, error) {
+func (m *OAuthManager) RecoverAccessToken(ctx context.Context, service, credentialID, rejected string, client *http.Client) (string, error) {
 	if m == nil || m.store == nil {
 		return "", errors.New("credential store is not configured")
 	}
@@ -334,7 +334,7 @@ func (m *OAuthManager) RecoverAccessToken(ctx context.Context, service, credenti
 	if c.RefreshToken == "" {
 		return "", errors.New("credential cannot be refreshed")
 	}
-	refreshed, err := m.Refresh(ctx, service, &c, endpoints...)
+	refreshed, err := m.Refresh(ctx, service, &c, client)
 	if err != nil {
 		return "", err
 	}
@@ -348,7 +348,7 @@ func (m *OAuthManager) RecoverAccessToken(ctx context.Context, service, credenti
 	return refreshed.AccessToken, nil
 }
 
-func (m *OAuthManager) Revoke(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) error {
+func (m *OAuthManager) Revoke(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) error {
 	a, err := m.adapter(service)
 	if err != nil {
 		return err
@@ -357,7 +357,7 @@ func (m *OAuthManager) Revoke(ctx context.Context, service string, credential *O
 	if !ok {
 		return errors.New("oauth service does not support revoke")
 	}
-	return r.Revoke(ctx, credential, endpoints...)
+	return r.Revoke(ctx, credential, client)
 }
 
 func randomID() string {
@@ -370,11 +370,4 @@ func randomID() string {
 func pkceChallenge(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(sum[:])
-}
-
-func selectedEndpoint(endpoints []*proxy.Endpoint) *proxy.Endpoint {
-	if len(endpoints) == 0 {
-		return nil
-	}
-	return endpoints[0]
 }

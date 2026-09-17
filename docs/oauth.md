@@ -20,23 +20,23 @@ OAuthAdapter 只负责上游授权协议，由 OAuthManager 注册和调用；�
 ```go
 type OAuthAdapter interface {
     Service() string
-    Refresh(context.Context, *OAuthCredential, ...*proxy.Endpoint) (*OAuthCredential, error)
+    Refresh(context.Context, *OAuthCredential, *http.Client) (*OAuthCredential, error)
 }
 
 type PKCEAdapter interface {
     OAuthAdapter
     BuildAuthorizationURL(context.Context, AuthorizationInput) (AuthorizationResult, error)
-    Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
+    Exchange(ctx context.Context, code, state, codeVerifier, redirectURI string, client *http.Client) (*OAuthCredential, error)
 }
 
 type DeviceAdapter interface {
     OAuthAdapter
     StartDeviceAuthorization(context.Context, DeviceStartInput) (DeviceAuthorizationResult, error)
-    PollDeviceToken(ctx context.Context, deviceCode string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
+    PollDeviceToken(ctx context.Context, deviceCode string, client *http.Client) (*OAuthCredential, error)
 }
 
 type RevocableAdapter interface {
-    Revoke(context.Context, *OAuthCredential, ...*proxy.Endpoint) error
+    Revoke(context.Context, *OAuthCredential, *http.Client) error
 }
 ```
 
@@ -57,16 +57,16 @@ type RevocableAdapter interface {
 NewManager(store CredentialStore) *OAuthManager
 NewOAuthManager(store CredentialStore) *OAuthManager
 Register(adapter OAuthAdapter) error
-Start(ctx context.Context, service, subjectID, redirectURI string, endpoints ...*proxy.Endpoint) (*StartResult, error)
+Start(ctx context.Context, service, subjectID, redirectURI string, client *http.Client) (*StartResult, error)
 Complete(ctx context.Context, sessionID, code, state string) (*OAuthCredential, error)
 Poll(ctx context.Context, sessionID string) (*OAuthCredential, error)
 SessionForState(state string) (OAuthSession, error)
 SessionForSubjectState(service, subjectID, state string) (string, error)
 SessionForSubject(sessionID, service, subjectID string) (OAuthSession, error)
 DiscardSession(sessionID string) error
-Refresh(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error)
-GetValidAccessToken(ctx context.Context, service, credentialID string, endpoints ...*proxy.Endpoint) (string, error)
-Revoke(ctx context.Context, service string, credential *OAuthCredential, endpoints ...*proxy.Endpoint) error
+Refresh(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error)
+GetValidAccessToken(ctx context.Context, service, credentialID string, client *http.Client) (string, error)
+Revoke(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) error
 ```
 
 以上省略方法接收者和重复的 func 关键字，仅列出当前调用签名。Start、Complete、Poll 返回结果，不自动长期保存 Credential；GetValidAccessToken 才通过 Store 读取并保存刷新结果。
@@ -151,12 +151,12 @@ FileCredentialStore 校验 JSON，通过同目录临时文件、Sync 和 Rename 
 
 ## 代理边界
 
-依赖方向为 `oauth -> proxy`。Start、Refresh、GetValidAccessToken 和 Revoke 接收可选的显式 Endpoint 参数（只传一个，省略或 nil 表示不指定代理）。Start 将 Endpoint 保存在 Session；AuthorizationInput 和 DeviceStartInput 同样包含 Proxy 字段。
+OAuth 只依赖 `common`。Start、Refresh、GetValidAccessToken 和 Revoke 接收调用方传入的 `*http.Client`；省略代理时传 nil。代理由调用方使用 `proxy.Client` 构造，OAuth 不感知 `proxy.Endpoint`。Start 将 HTTP Client 保存在进程内 Session 中，以保证 Complete/Poll 使用同一传输配置。
 
-Complete/Poll 使用 Session 的 Endpoint 和当前 Context 调用适配器，不能覆盖本次授权的代理选择。Exchange、PollDeviceToken、Refresh 和 Revoke 显式传递 Endpoint；代理包构造专用 Client/Transport，不修改共享客户端。Context 仅承载取消与超时，Endpoint 不进入凭据序列化。
+Complete/Poll 使用 Session 的 HTTP Client 和当前 Context 调用适配器。Exchange、PollDeviceToken、Refresh 和 Revoke 显式传递 HTTP Client；代理包仍负责构造专用 Client/Transport，不修改共享客户端。Context 仅承载取消与超时，HTTP Client 不进入凭据序列化。
 
 OAuth 不负责代理组调度或健康判定；输入校验及传输配置见 [Proxy](proxy.md)。Common 与 OAuth 均不保留旧 Context 代理工具或解析函数包装。
 
 ## 验证范围
 
-协议层测试位于 `internal/oauth/manager_test.go`、`file_store_test.go`、`adapters/adapters_test.go` 与 `dummy_functional_test.go`。验证覆盖 state、过期、主体匹配、单次回调、刷新互斥、文件读写、显式代理参数、Session 代理绑定和并发隔离，不依赖具体应用的 Handler、页面或业务账号。`proxy_session_test.go` 覆盖并发 Session 代理绑定；模拟结果不等同于真实平台授权成功。
+协议层测试位于 `internal/oauth/manager_test.go`、`file_store_test.go`、`adapters/adapters_test.go` 与 `dummy_functional_test.go`。验证覆盖 state、过期、主体匹配、单次回调、刷新互斥、文件读写、HTTP Client 传递、Session Client 绑定和并发隔离，不依赖具体应用的 Handler、页面或业务账号。`proxy_session_test.go` 覆盖并发 Session Client 绑定；模拟结果不等同于真实平台授权成功。

@@ -3,7 +3,6 @@ package aiprovider
 import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -17,7 +16,7 @@ import (
 type recoveryAdapter struct{ calls atomic.Int32 }
 
 func (a *recoveryAdapter) Service() string { return "claude" }
-func (a *recoveryAdapter) Refresh(_ context.Context, c *oauth.OAuthCredential, _ ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (a *recoveryAdapter) Refresh(_ context.Context, c *oauth.OAuthCredential, _ *http.Client) (*oauth.OAuthCredential, error) {
 	a.calls.Add(1)
 	next := *c
 	next.AccessToken = "fresh"

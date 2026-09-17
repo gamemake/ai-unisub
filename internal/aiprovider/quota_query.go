@@ -143,19 +143,6 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 			_ = proxy.ReportResult(resolver, endpoint, config.Supplier, class, nil, status)
 		}
 	}()
-	token, accountID := config.APIKey, ""
-	if service != "" {
-		token, err = p.manager.GetValidAccessToken(ctx, service, config.CredentialID, endpoint)
-		if err != nil {
-			return nil, ErrQuotaAuthentication
-		}
-		if service == oauth.OAuthServiceCodex {
-			accountID, err = p.manager.CredentialAccountID(config.CredentialID)
-			if err != nil || accountID == "" {
-				return nil, ErrQuotaNotConfigured
-			}
-		}
-	}
 	if baseClient == nil {
 		baseClient = upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
 	}
@@ -174,6 +161,19 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 	}
 	client.Timeout = 25 * time.Second
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	token, accountID := config.APIKey, ""
+	if service != "" {
+		token, err = p.manager.GetValidAccessToken(ctx, service, config.CredentialID, &client)
+		if err != nil {
+			return nil, ErrQuotaAuthentication
+		}
+		if service == oauth.OAuthServiceCodex {
+			accountID, err = p.manager.CredentialAccountID(config.CredentialID)
+			if err != nil || accountID == "" {
+				return nil, ErrQuotaNotConfigured
+			}
+		}
+	}
 	// Reuse authentication and proxy selection for all parts of one snapshot.
 	query := func(endpointURL string) ([]QuotaItem, error) {
 		for attempt := 0; attempt < 2; attempt++ {
@@ -226,7 +226,7 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 			}
 			if status == 401 && service != "" && attempt == 0 {
 				resp.Body.Close()
-				token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, endpoint)
+				token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, &client)
 				if err != nil {
 					return nil, ErrQuotaAuthentication
 				}

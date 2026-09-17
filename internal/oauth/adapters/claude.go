@@ -1,7 +1,6 @@
 package adapters
 
 import (
-	"ai-unisub/internal/proxy"
 	"bytes"
 	"cmp"
 	"context"
@@ -40,11 +39,11 @@ func (a *ClaudeAdapter) BuildAuthorizationURL(_ context.Context, in oauth.Author
 	v := url.Values{"code": {"true"}, "client_id": {a.config.ClientID}, "response_type": {"code"}, "redirect_uri": {in.RedirectURI}, "scope": {strings.Join(a.config.Scopes, " ")}, "code_challenge": {challenge(in.CodeVerifier)}, "code_challenge_method": {"S256"}, "state": {in.State}}
 	return oauth.AuthorizationResult{AuthorizationURL: a.config.AuthorizeURL + "?" + v.Encode(), ExpiresAt: nowPlus(10)}, nil
 }
-func (a *ClaudeAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
-	return a.token(ctx, map[string]string{"grant_type": "authorization_code", "code": code, "redirect_uri": redirect, "client_id": a.config.ClientID, "code_verifier": verifier, "state": state}, endpoints...)
+func (a *ClaudeAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, client *http.Client) (*oauth.OAuthCredential, error) {
+	return a.token(ctx, map[string]string{"grant_type": "authorization_code", "code": code, "redirect_uri": redirect, "client_id": a.config.ClientID, "code_verifier": verifier, "state": state}, client)
 }
-func (a *ClaudeAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
-	result, err := a.token(ctx, map[string]string{"grant_type": "refresh_token", "refresh_token": old.RefreshToken, "client_id": a.config.ClientID}, endpoints...)
+func (a *ClaudeAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential, client *http.Client) (*oauth.OAuthCredential, error) {
+	result, err := a.token(ctx, map[string]string{"grant_type": "refresh_token", "refresh_token": old.RefreshToken, "client_id": a.config.ClientID}, client)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +51,7 @@ func (a *ClaudeAdapter) Refresh(ctx context.Context, old *oauth.OAuthCredential,
 	result.AccountID, result.AccountName, result.Email = old.AccountID, old.AccountName, old.Email
 	return result, nil
 }
-func (a *ClaudeAdapter) token(ctx context.Context, fields map[string]string, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (a *ClaudeAdapter) token(ctx context.Context, fields map[string]string, client *http.Client) (*oauth.OAuthCredential, error) {
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return nil, err
@@ -65,7 +64,11 @@ func (a *ClaudeAdapter) token(ctx context.Context, fields map[string]string, end
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "claude-cli/2.1.220 (external, cli)")
 	var token tokenResponse
-	if _, err := readResponseDo(clientWithProxy(a.config.HTTPClient, endpoints...), req, &token); err != nil {
+	operation := "exchange_code"
+	if fields["grant_type"] == "refresh_token" {
+		operation = "refresh_token"
+	}
+	if _, err := readResponseDo(clientOrDefault(clientOr(a.config.HTTPClient, client)), req, HTTPCallMeta{Provider: a.Service(), Operation: operation}, &token); err != nil {
 		return nil, err
 	}
 	return credential(token)

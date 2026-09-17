@@ -1,42 +1,41 @@
 package oauth
 
 import (
-	"ai-unisub/internal/proxy"
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 )
 
 type endpointAdapter struct {
 	mu   sync.Mutex
-	seen []*proxy.Endpoint
+	seen []*http.Client
 }
 
 func (a *endpointAdapter) Service() string { return "explicit" }
 func (a *endpointAdapter) BuildAuthorizationURL(ctx context.Context, in AuthorizationInput) (AuthorizationResult, error) {
 	return AuthorizationResult{AuthorizationURL: in.State}, nil
 }
-func (a *endpointAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
+func (a *endpointAdapter) Exchange(ctx context.Context, code, state, verifier, redirect string, client *http.Client) (*OAuthCredential, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.seen = append(a.seen, endpoints[0])
+	a.seen = append(a.seen, client)
 	return &OAuthCredential{AccessToken: "token"}, nil
 }
-func (a *endpointAdapter) Refresh(ctx context.Context, c *OAuthCredential, endpoints ...*proxy.Endpoint) (*OAuthCredential, error) {
-	return a.Exchange(ctx, "", "", "", "", endpoints...)
+func (a *endpointAdapter) Refresh(ctx context.Context, c *OAuthCredential, client *http.Client) (*OAuthCredential, error) {
+	return a.Exchange(ctx, "", "", "", "", client)
 }
-func TestConcurrentSessionEndpointsRemainBound(t *testing.T) {
+func TestConcurrentSessionClientsRemainBound(t *testing.T) {
 	m := NewManager(nil)
 	a := &endpointAdapter{}
 	if err := m.Register(a); err != nil {
 		t.Fatal(err)
 	}
-	first, _ := proxy.NewEndpoint("http://localhost:9001")
-	second, _ := proxy.NewEndpoint("socks5h://localhost:9002")
+	first, second := &http.Client{}, &http.Client{}
 	var wg sync.WaitGroup
-	for _, endpoint := range []*proxy.Endpoint{first, second, nil} {
+	for _, client := range []*http.Client{first, second, nil} {
 		wg.Go(func() {
-			start, err := m.Start(t.Context(), a.Service(), "subject", "http://callback", endpoint)
+			start, err := m.Start(t.Context(), a.Service(), "subject", "http://callback", client)
 			if err != nil {
 				t.Error(err)
 				return
@@ -52,11 +51,11 @@ func TestConcurrentSessionEndpointsRemainBound(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	seen := map[*proxy.Endpoint]bool{}
+	seen := map[*http.Client]bool{}
 	for _, e := range a.seen {
 		seen[e] = true
 	}
 	if len(seen) != 3 || !seen[first] || !seen[second] || !seen[nil] {
-		t.Fatal("session endpoints crossed")
+		t.Fatal("session clients crossed")
 	}
 }

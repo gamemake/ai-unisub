@@ -3,7 +3,6 @@ package unisub
 import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/proxy"
 	"ai-unisub/internal/service"
 	"context"
 	"encoding/json"
@@ -16,13 +15,13 @@ import (
 type localPKCE struct{}
 
 func (*localPKCE) Service() string { return "codex" }
-func (*localPKCE) Refresh(context.Context, *oauth.OAuthCredential, ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (*localPKCE) Refresh(context.Context, *oauth.OAuthCredential, *http.Client) (*oauth.OAuthCredential, error) {
 	return nil, fmt.Errorf("not used")
 }
 func (*localPKCE) BuildAuthorizationURL(_ context.Context, in oauth.AuthorizationInput) (oauth.AuthorizationResult, error) {
 	return oauth.AuthorizationResult{AuthorizationURL: "https://example.invalid/authorize?state=" + in.State}, nil
 }
-func (*localPKCE) Exchange(_ context.Context, code, state, verifier, redirect string, endpoints ...*proxy.Endpoint) (*oauth.OAuthCredential, error) {
+func (*localPKCE) Exchange(_ context.Context, code, state, verifier, redirect string, _ *http.Client) (*oauth.OAuthCredential, error) {
 	if code != "valid-code" || state == "" || verifier == "" || redirect == "" {
 		return nil, fmt.Errorf("invalid exchange")
 	}
