@@ -14,7 +14,6 @@ import (
 // are deliberately ignored by this implementation.
 type MemoryDatabase struct {
 	moduleConfigs map[string]json.RawMessage
-	proxyHealth   map[string]ProxyHealthRecord
 	mu            sync.RWMutex
 	opened        bool
 	accounts      map[string]PersistedAccount
