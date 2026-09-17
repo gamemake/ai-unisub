@@ -69,7 +69,15 @@ func (s *SQLiteDatabase) Open() error {
 		db.Close()
 		return err
 	}
-	if _, err = db.Exec(`ALTER TABLE proxy_groups ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+	if _, err = db.Exec(`ALTER TABLE accounts RENAME COLUMN status TO state`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such column") {
+		db.Close()
+		return err
+	}
+	if _, err = db.Exec(`ALTER TABLE accounts ADD COLUMN state BLOB NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		db.Close()
+		return err
+	}
+	if _, err = db.Exec(`ALTER TABLE accounts ADD COLUMN quota BLOB NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
 		db.Close()
 		return err
 	}
@@ -108,6 +116,46 @@ func (s *SQLiteDatabase) Close() error {
 	}
 	err := s.db.Close()
 	s.db = nil
+	return err
+}
+
+func (s *SQLiteDatabase) LoadModuleConfig(module string) (json.RawMessage, error) {
+	if err := validateModuleName(module); err != nil {
+		return nil, err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	var raw []byte
+	err := s.db.QueryRow(`SELECT config FROM module_configs WHERE module=?`, module).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return raw, err
+}
+
+func (s *SQLiteDatabase) SaveModuleConfig(module string, raw json.RawMessage) error {
+	if err := validateModuleName(module); err != nil {
+		return err
+	}
+	if !json.Valid(raw) {
+		return errors.New("invalid module configuration JSON")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`INSERT INTO module_configs(module,config) VALUES(?,?) ON CONFLICT(module) DO UPDATE SET config=excluded.config`, module, string(raw))
+	return err
+}
+
+func (s *SQLiteDatabase) DeleteModuleConfig(module string) error {
+	if err := validateModuleName(module); err != nil {
+		return err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM module_configs WHERE module=?`, module)
 	return err
 }
 
@@ -168,11 +216,19 @@ func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO accounts(id, provider, name, config, created_at, updated_at)
-		VALUES(?, ?, ?, ?, ?, ?)
+	state, err := json.Marshal(value.State)
+	if err != nil {
+		return err
+	}
+	quota, err := json.Marshal(value.Quota)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO accounts(id, provider, name, config, state, quota, created_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, name=excluded.name,
-		config=excluded.config, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-		value.ID, value.AIProvider, value.Name, config, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+		config=excluded.config, state=excluded.state, quota=excluded.quota, created_at=excluded.created_at, updated_at=excluded.updated_at`,
+		value.ID, value.AIProvider, value.Name, config, state, quota, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
@@ -196,11 +252,15 @@ func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	data, err := json.Marshal(value.Proxies)
+	config, err := json.Marshal(value.Config)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO proxy_groups(id, name, remark, max_retries, proxies, created_at, updated_at, enabled) VALUES(?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, remark=excluded.remark, max_retries=excluded.max_retries, proxies=excluded.proxies, created_at=excluded.created_at, updated_at=excluded.updated_at, enabled=excluded.enabled`, value.ID, value.Name, value.Remark, value.MaxRetries, data, value.CreatedAt.UTC(), value.UpdatedAt.UTC(), value.Enabled == nil || *value.Enabled)
+	state, err := json.Marshal(value.State)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO proxy_groups(id, name, config, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, config=excluded.config, state=excluded.state, created_at=excluded.created_at, updated_at=excluded.updated_at`, value.ID, value.Name, config, state, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
@@ -371,15 +431,12 @@ func (s *SQLiteDatabase) CleanupCallTrace(days int) error {
 	return nil
 }
 
-func (s *SQLiteDatabase) QueryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, values ...string) ([]PersistedCallTraceSummary, int, error) {
-	return s.queryCallTraces(userName, aiProviderName, httpErrorCode, page, pageSize, timeRange, CallTraceFilter{}, values...)
-}
-func (s *SQLiteDatabase) QueryCallTracesFiltered(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error) {
+func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error) {
 	values := []string{}
 	if filter.Search != "" {
 		values = append(values, filter.Search)
 	}
-	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, filter.TimeRange, filter, values...)
+	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &timeRange, filter, values...)
 }
 func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, filter CallTraceFilter, values ...string) ([]PersistedCallTraceSummary, int, error) {
 	if err := s.ensureOpen(); err != nil {
@@ -461,18 +518,20 @@ func (s *SQLiteDatabase) ensureOpen() error {
 }
 
 func (s *SQLiteDatabase) loadMemory() error {
-	accounts, err := s.db.Query(`SELECT id, provider, name, config, created_at, updated_at FROM accounts`)
+	accounts, err := s.db.Query(`SELECT id, provider, name, config, state, quota, created_at, updated_at FROM accounts`)
 	if err != nil {
 		return err
 	}
 	for accounts.Next() {
 		var v PersistedAccount
-		var config []byte
-		if err = accounts.Scan(&v.ID, &v.AIProvider, &v.Name, &config, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		var config, state, quota []byte
+		if err = accounts.Scan(&v.ID, &v.AIProvider, &v.Name, &config, &state, &quota, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			accounts.Close()
 			return err
 		}
 		v.Config = append([]byte(nil), config...)
+		v.State = append([]byte(nil), state...)
+		v.Quota = append([]byte(nil), quota...)
 		if err = s.mem.SaveAccount(&v); err != nil {
 			accounts.Close()
 			return err
@@ -508,21 +567,19 @@ func (s *SQLiteDatabase) loadMemory() error {
 		return err
 	}
 	users.Close()
-	groups, err := s.db.Query(`SELECT id, name, remark, max_retries, proxies, created_at, updated_at, enabled FROM proxy_groups`)
+	groups, err := s.db.Query(`SELECT id, name, config, state, created_at, updated_at FROM proxy_groups`)
 	if err != nil {
 		return err
 	}
 	for groups.Next() {
 		var v PersistedProxyGroup
-		var raw []byte
-		if err = groups.Scan(&v.ID, &v.Name, &v.Remark, &v.MaxRetries, &raw, &v.CreatedAt, &v.UpdatedAt, &v.Enabled); err != nil {
+		var config, state []byte
+		if err = groups.Scan(&v.ID, &v.Name, &config, &state, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			groups.Close()
 			return err
 		}
-		if err = json.Unmarshal(raw, &v.Proxies); err != nil {
-			groups.Close()
-			return err
-		}
+		v.Config = append([]byte(nil), config...)
+		v.State = append([]byte(nil), state...)
 		if err = s.mem.SaveProxyGroup(&v); err != nil {
 			groups.Close()
 			return err
@@ -745,6 +802,146 @@ func buildTraceUnionQuery(tables []string, userName, aiProviderName string, code
 	return strings.Join(queries, " UNION ALL "), args
 }
 
+func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
+	if value == nil {
+		return errors.New("proxy log is nil")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	table := proxyLogTable(value.Time)
+	if _, err := s.db.Exec(createProxyLogTableSQL(table)); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(fmt.Sprintf("INSERT INTO %s(group_id, proxy_url, http_error_code, http_error_message, time) VALUES(?, ?, ?, ?, ?)", table), value.GroupID, value.ProxyURL, value.HTTPErrorCode, value.HTTPErrorMessage, value.Time.UTC())
+	return err
+}
+
+func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, 0, err
+	}
+	if page < 1 {
+		return nil, 0, errors.New("page must be greater than zero")
+	}
+	if pageSize < 1 {
+		return nil, 0, errors.New("page size must be greater than zero")
+	}
+	if timeRange.Start.After(timeRange.End) {
+		return nil, 0, errors.New("start time must not be after end time")
+	}
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
+	if err != nil {
+		return nil, 0, err
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		if proxyLogTablePattern.MatchString(name) && proxyLogTableInRange(name, &timeRange) {
+			tables = append(tables, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, 0, err
+	}
+	rows.Close()
+	if len(tables) == 0 {
+		return []PersistedProxyLog{}, 0, nil
+	}
+	slices.Sort(tables)
+	queries := make([]string, len(tables))
+	args := make([]any, 0, len(tables)*5)
+	for i, table := range tables {
+		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND time >= ? AND time < ?", table)
+		args = append(args, groupID, proxyURL, proxyURL, timeRange.Start.UTC(), timeRange.End.UTC())
+	}
+	query := "SELECT group_id, proxy_url, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM ("+query+")", args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	queryArgs := append(slices.Clone(args), pageSize, offset)
+	rows, err = s.db.Query(query+" LIMIT ? OFFSET ?", queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := []PersistedProxyLog{}
+	for rows.Next() {
+		var value PersistedProxyLog
+		if err := rows.Scan(&value.GroupID, &value.ProxyURL, &value.HTTPErrorCode, &value.HTTPErrorMessage, &value.Time); err != nil {
+			return nil, 0, err
+		}
+		result = append(result, value)
+	}
+	return result, total, rows.Err()
+}
+
+// CleanupProxyLog removes complete daily proxy log tables older than days. A
+// value of zero removes all tables before today and keeps today's logs.
+func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
+	if days < 0 {
+		return errors.New("cleanup days must not be negative")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("20060102")
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
+	if err != nil {
+		return err
+	}
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return err
+		}
+		if proxyLogTablePattern.MatchString(table) && strings.TrimPrefix(table, "proxy_logs_") < cutoff {
+			tables = append(tables, table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, table := range tables {
+		if _, err := s.db.Exec("DROP TABLE " + table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var proxyLogTablePattern = regexp.MustCompile(`^proxy_logs_[0-9]{8}$`)
+
+func proxyLogTable(t time.Time) string { return "proxy_logs_" + t.UTC().Format("20060102") }
+
+func proxyLogTableInRange(table string, timeRange *TimeRange) bool {
+	if timeRange == nil {
+		return true
+	}
+	day := strings.TrimPrefix(table, "proxy_logs_")
+	start := timeRange.Start.UTC().Format("20060102")
+	end := timeRange.End.UTC().Format("20060102")
+	return day >= start && day <= end
+}
+
+func createProxyLogTableSQL(table string) string {
+	if !proxyLogTablePattern.MatchString(table) {
+		panic("invalid proxy log table name")
+	}
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id TEXT NOT NULL, proxy_url TEXT NOT NULL, http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
+}
+
 func valuesToAny(values []string) []any {
 	result := make([]any, len(values)*4)
 	for i, value := range values {
@@ -759,7 +956,7 @@ func valuesToAny(values []string) []any {
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS proxy_stats (address TEXT NOT NULL, application TEXT NOT NULL, start_at INTEGER NOT NULL, source TEXT NOT NULL, requests INTEGER NOT NULL, failures INTEGER NOT NULL, PRIMARY KEY(address,application,start_at,source));
 CREATE TABLE IF NOT EXISTS oauth_credentials (id TEXT PRIMARY KEY, credential BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL, config BLOB NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL, config BLOB NOT NULL, state BLOB NOT NULL DEFAULT '{}', quota BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name);
 CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider);
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, labels BLOB NOT NULL, role TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, password_hash TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
@@ -768,7 +965,7 @@ CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL 
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys(account_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
-CREATE TABLE IF NOT EXISTS proxy_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', remark TEXT NOT NULL DEFAULT '', max_retries INTEGER NOT NULL DEFAULT 0, proxies BLOB NOT NULL, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
+CREATE TABLE IF NOT EXISTS proxy_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
 
 var _ Database = (*MemoryDatabase)(nil)
 var _ Database = (*SQLiteDatabase)(nil)

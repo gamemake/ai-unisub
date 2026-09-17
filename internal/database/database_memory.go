@@ -1,7 +1,6 @@
 package database
 
 import (
-	"ai-unisub/internal/proxy"
 	"cmp"
 	"encoding/json"
 	"errors"
@@ -15,8 +14,7 @@ import (
 // are deliberately ignored by this implementation.
 type MemoryDatabase struct {
 	moduleConfigs map[string]json.RawMessage
-	proxyHealth   map[string]proxy.HealthRecord
-	proxyStats    map[proxyStatsKey]proxy.Bucket
+	proxyHealth   map[string]ProxyHealthRecord
 	mu            sync.RWMutex
 	opened        bool
 	accounts      map[string]PersistedAccount
@@ -24,27 +22,6 @@ type MemoryDatabase struct {
 	apiKeys       map[string]PersistedAPIKey
 	credentials   map[string]json.RawMessage
 	proxyGroups   map[string]PersistedProxyGroup
-}
-
-func validateAccount(value *PersistedAccount) error {
-	if value == nil || value.ID == "" {
-		return errors.New("account and account ID are required")
-	}
-	return nil
-}
-
-func validateUser(value *PersistedUser) error {
-	if value == nil || value.ID == "" {
-		return errors.New("user and user ID are required")
-	}
-	return nil
-}
-
-func validateAPIKey(value *PersistedAPIKey) error {
-	if value == nil || value.ID == "" {
-		return errors.New("API key and key ID are required")
-	}
-	return nil
 }
 
 // NewMemoryDatabase creates an empty in-memory database.
@@ -56,6 +33,61 @@ func NewMemoryDatabase() *MemoryDatabase {
 		credentials: make(map[string]json.RawMessage),
 		proxyGroups: make(map[string]PersistedProxyGroup),
 	}
+}
+
+func (m *MemoryDatabase) Open() error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opened = true
+	return nil
+}
+
+func (m *MemoryDatabase) Close() error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.opened = false
+	return nil
+}
+
+func (m *MemoryDatabase) LoadModuleConfig(module string) (json.RawMessage, error) {
+	if err := validateModuleName(module); err != nil {
+		return nil, err
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append(json.RawMessage(nil), m.moduleConfigs[module]...), nil
+}
+
+func (m *MemoryDatabase) SaveModuleConfig(module string, raw json.RawMessage) error {
+	if err := validateModuleName(module); err != nil {
+		return err
+	}
+	if !json.Valid(raw) {
+		return errors.New("invalid module configuration JSON")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.moduleConfigs == nil {
+		m.moduleConfigs = make(map[string]json.RawMessage)
+	}
+	m.moduleConfigs[module] = slices.Clone(raw)
+	return nil
+}
+
+func (m *MemoryDatabase) DeleteModuleConfig(module string) error {
+	if err := validateModuleName(module); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.moduleConfigs, module)
+	return nil
 }
 
 func (m *MemoryDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
@@ -96,6 +128,27 @@ func (m *MemoryDatabase) DeleteProxyGroup(id string) error {
 	return nil
 }
 
+func (m *MemoryDatabase) RecordProxyLog(value *PersistedProxyLog) error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	return errors.New("proxy logs are not supported by memory database")
+}
+
+func (m *MemoryDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error) {
+	if m == nil {
+		return nil, 0, errors.New("memory database is nil")
+	}
+	return nil, 0, errors.New("proxy logs are not supported by memory database")
+}
+
+func (m *MemoryDatabase) CleanupProxyLog(days int) error {
+	if m == nil {
+		return errors.New("memory database is nil")
+	}
+	return errors.New("proxy logs are not supported by memory database")
+}
+
 func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
 	if m == nil {
 		return nil, errors.New("memory database is nil")
@@ -132,26 +185,6 @@ func (m *MemoryDatabase) DeleteCredential(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.credentials, id)
-	return nil
-}
-
-func (m *MemoryDatabase) Open() error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.opened = true
-	return nil
-}
-
-func (m *MemoryDatabase) Close() error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.opened = false
 	return nil
 }
 
@@ -285,32 +318,9 @@ func (m *MemoryDatabase) DeleteAPIKey(id string) error {
 
 func (m *MemoryDatabase) RecordCallTrace(*PersistedCallTrace) error { return nil }
 func (m *MemoryDatabase) CleanupCallTrace(int) error                { return nil }
-func (m *MemoryDatabase) QueryCallTraces(string, string, *int, int, int, *TimeRange, ...string) ([]PersistedCallTraceSummary, int, error) {
+func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error) {
 	return []PersistedCallTraceSummary{}, 0, nil
 }
 func (m *MemoryDatabase) GetCallTrace(time.Time, string) (*PersistedCallTrace, error) {
 	return nil, ErrCallTraceNotFound
-}
-
-func cloneAccount(value PersistedAccount) PersistedAccount {
-	value.Config = append([]byte(nil), value.Config...)
-	return value
-}
-func cloneUser(value PersistedUser) PersistedUser {
-	value.Labels = append([]string(nil), value.Labels...)
-	return value
-}
-func cloneProxyGroup(value PersistedProxyGroup) PersistedProxyGroup {
-	if value.Enabled != nil {
-		value.Enabled = new(*value.Enabled)
-	}
-	value.Proxies = append([]PersistedProxy(nil), value.Proxies...)
-	for i := range value.Proxies {
-		value.Proxies[i].ErrorRecords = append([]ProxyErrorRecord(nil), value.Proxies[i].ErrorRecords...)
-	}
-	return value
-}
-
-func (m *MemoryDatabase) QueryCallTracesFiltered(CallTraceFilter, int, int) ([]PersistedCallTraceSummary, int, error) {
-	return []PersistedCallTraceSummary{}, 0, nil
 }

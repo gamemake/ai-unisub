@@ -1,7 +1,6 @@
 package database
 
 import (
-	"ai-unisub/internal/proxy"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -69,20 +68,37 @@ func sqlitePathFromURL(parsed *url.URL, rawURL string) (string, error) {
 	return path, nil
 }
 
+// Proxy persistence types belong to the database package. The proxy package
+// consumes these types through its persistence store contract.
+type PersistedProxyGroup struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Config    json.RawMessage `json:"config"`
+	State     json.RawMessage `json:"state"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// PersistedProxyLog records an upstream HTTP error for a proxy.
+type PersistedProxyLog struct {
+	GroupID          string    `json:"group_id"`
+	ProxyURL         string    `json:"proxy_url"`
+	HTTPErrorCode    int       `json:"http_error_code"`
+	HTTPErrorMessage string    `json:"http_error_message"`
+	Time             time.Time `json:"time"`
+}
+
 // PersistedAccount stores a provider instance and its serialized configuration.
 type PersistedAccount struct {
 	ID         string          `json:"id"`
 	AIProvider string          `json:"provider"`
 	Name       string          `json:"name"`
 	Config     json.RawMessage `json:"config"`
+	State      json.RawMessage `json:"state"`
+	Quota      json.RawMessage `json:"quota"`
 	CreatedAt  time.Time       `json:"created_at"`
 	UpdatedAt  time.Time       `json:"updated_at"`
 }
-
-// Proxy persistence uses the proxy domain's stable JSON representation.
-type PersistedProxyGroup = proxy.Group
-type PersistedProxy = proxy.Entry
-type ProxyErrorRecord = proxy.ErrorRecord
 
 // PersistedUser represents a user who can create API keys.
 type PersistedUser struct {
@@ -186,7 +202,6 @@ type CallTraceFilter struct {
 	Code            *int
 	Search          string
 	SearchUsernames bool
-	TimeRange       *TimeRange
 }
 
 // TimeRange is an inclusive range of time values.
@@ -199,50 +214,47 @@ type TimeRange struct {
 // Postgres, or an in-memory store used by tests. AIProvider configurations are
 // instance records, not configuration records for a provider type.
 type Database interface {
+	Open() error
+	Close() error
+
 	// Module configurations are opaque JSON documents keyed by module name.
 	// Missing configurations return nil, nil; modules own defaults and schema validation.
 	LoadModuleConfig(module string) (json.RawMessage, error)
 	SaveModuleConfig(module string, config json.RawMessage) error
 	DeleteModuleConfig(module string) error
-	SaveProxyStats([]proxy.Bucket) error
-	ListProxyStats(string, string, time.Time, time.Time) ([]proxy.Bucket, error)
-	Open() error
-	Close() error
+
+	ListProxyGroups() ([]PersistedProxyGroup, error)
+	SaveProxyGroup(group *PersistedProxyGroup) error
+	DeleteProxyGroup(id string) error
+	RecordProxyLog(log *PersistedProxyLog) error
+	QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error)
+	CleanupProxyLog(days int) error
 
 	// CredentialStore-compatible methods. The database stores credentials as
 	// opaque JSON; OAuth owns the domain model and its serialization.
-	LoadCredential(string) (json.RawMessage, error)
-	SaveCredential(string, json.RawMessage) error
-	DeleteCredential(string) error
+	LoadCredential(id string) (json.RawMessage, error)
+	SaveCredential(id string, value json.RawMessage) error
+	DeleteCredential(id string) error
 
 	ListAccounts() ([]PersistedAccount, error)
-	SaveAccount(*PersistedAccount) error
-	DeleteAccount(string) error
-
-	ListProxyGroups() ([]PersistedProxyGroup, error)
-	SaveProxyGroup(*PersistedProxyGroup) error
-	DeleteProxyGroup(string) error
+	SaveAccount(account *PersistedAccount) error
+	DeleteAccount(id string) error
 
 	ListUsers() ([]PersistedUser, error)
-	SaveUser(*PersistedUser) error
-	DeleteUser(string) error
+	SaveUser(user *PersistedUser) error
+	DeleteUser(id string) error
 
 	ListAPIKeys(userID string) ([]PersistedAPIKey, error)
-	SaveAPIKey(*PersistedAPIKey) error
-	DeleteAPIKey(string) error
+	SaveAPIKey(key *PersistedAPIKey) error
+	DeleteAPIKey(id string) error
 
-	RecordCallTrace(*PersistedCallTrace) error
+	RecordCallTrace(trace *PersistedCallTrace) error
 	// Cleanup removes CallTrace data older than the specified number of days.
 	// Account, user, and API key data are not removed.
 	CleanupCallTrace(days int) error
-	// QueryCallTraces applies the optional user, provider, HTTP error code, and
-	// inclusive UTC time range filters. page is one-based and pageSize is the
-	// maximum number of traces returned. A nil timeRange means that the time
-	// range is unbounded. The returned count is the total
-	// number of matching traces before pagination. A trace matches when its
-	// source IP, model, session ID, or request ID equals any value in values.
-	QueryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, values ...string) ([]PersistedCallTraceSummary, int, error)
-	QueryCallTracesFiltered(CallTraceFilter, int, int) ([]PersistedCallTraceSummary, int, error)
+	// QueryCallTraces applies structured filters. page is one-based and pageSize
+	// is the maximum number of traces returned. A nil time range is unbounded.
+	QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
 	GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error)
