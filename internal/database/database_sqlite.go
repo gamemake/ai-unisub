@@ -77,7 +77,7 @@ func (s *SQLiteDatabase) Open() error {
 		s.db = nil
 		return err
 	}
-	return s.mem.Open()
+	return nil
 }
 
 func (s *SQLiteDatabase) Close() error {
@@ -101,10 +101,16 @@ func (s *SQLiteDatabase) LoadModuleConfig(module string) (json.RawMessage, error
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
+	if raw := s.mem.LoadModuleConfig(module); raw != nil {
+		return raw, nil
+	}
 	var raw []byte
 	err := s.db.QueryRow(`SELECT config FROM module_configs WHERE module=?`, module).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
+	}
+	if err == nil {
+		s.mem.SaveModuleConfig(module, raw)
 	}
 	return raw, err
 }
@@ -120,6 +126,9 @@ func (s *SQLiteDatabase) SaveModuleConfig(module string, raw json.RawMessage) er
 		return err
 	}
 	_, err := s.db.Exec(`INSERT INTO module_configs(module,config) VALUES(?,?) ON CONFLICT(module) DO UPDATE SET config=excluded.config`, module, string(raw))
+	if err == nil {
+		s.mem.SaveModuleConfig(module, raw)
+	}
 	return err
 }
 
@@ -131,15 +140,21 @@ func (s *SQLiteDatabase) DeleteModuleConfig(module string) error {
 		return err
 	}
 	_, err := s.db.Exec(`DELETE FROM module_configs WHERE module=?`, module)
+	if err == nil {
+		s.mem.DeleteModuleConfig(module)
+	}
 	return err
 }
 
-func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) { return s.mem.ListAccounts() }
+func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) { return s.mem.ListAccounts(), nil }
 func (s *SQLiteDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
-	return s.mem.ListProxyGroups()
+	return s.mem.ListProxyGroups(), nil
 }
 
 func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
+	if raw, ok := s.mem.LoadCredential(id); ok {
+		return raw, nil
+	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
@@ -150,6 +165,7 @@ func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
 	if !json.Valid(raw) {
 		return nil, errors.New("stored credential is invalid JSON")
 	}
+	s.mem.SaveCredential(id, raw)
 	return json.RawMessage(raw), nil
 }
 
@@ -163,7 +179,8 @@ func (s *SQLiteDatabase) SaveCredential(id string, value json.RawMessage) error 
 	if _, err := s.db.Exec(`INSERT INTO oauth_credentials(id, credential) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET credential=excluded.credential`, id, value); err != nil {
 		return err
 	}
-	return s.mem.SaveCredential(id, value)
+	s.mem.SaveCredential(id, value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteCredential(id string) error {
@@ -173,11 +190,12 @@ func (s *SQLiteDatabase) DeleteCredential(id string) error {
 	if _, err := s.db.Exec(`DELETE FROM oauth_credentials WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return s.mem.DeleteCredential(id)
+	s.mem.DeleteCredential(id)
+	return nil
 }
-func (s *SQLiteDatabase) ListUsers() ([]PersistedUser, error) { return s.mem.ListUsers() }
-func (s *SQLiteDatabase) ListAPIKeys(userID string) ([]PersistedAPIKey, error) {
-	return s.mem.ListAPIKeys(userID)
+func (s *SQLiteDatabase) ListUsers() ([]PersistedUser, error) { return s.mem.ListUsers(), nil }
+func (s *SQLiteDatabase) ListAPIKeys(userID int) ([]PersistedAPIKey, error) {
+	return s.mem.ListAPIKeys(userID), nil
 }
 
 func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
@@ -199,29 +217,37 @@ func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO accounts(id, provider, name, config, state, quota, created_at, updated_at)
+	result, err := s.db.Exec(`INSERT INTO accounts(id, provider, name, config, state, quota, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, name=excluded.name,
 		config=excluded.config, state=excluded.state, quota=excluded.quota, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-		value.ID, value.AIProvider, value.Name, config, state, quota, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+		databaseID(value.ID), value.AIProvider, value.Name, config, state, quota, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
-	return s.mem.SaveAccount(value)
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveAccount(*value)
 }
 
-func (s *SQLiteDatabase) DeleteAccount(id string) error {
+func (s *SQLiteDatabase) DeleteAccount(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`DELETE FROM accounts WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return s.mem.DeleteAccount(id)
+	s.mem.DeleteAccount(id)
+	return nil
 }
 
 func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
-	if value == nil || value.ID == "" {
+	if value == nil || value.ID < 0 {
 		return errors.New("proxy group and ID are required")
 	}
 	if err := s.ensureOpen(); err != nil {
@@ -235,20 +261,28 @@ func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO proxy_groups(id, name, config, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, config=excluded.config, state=excluded.state, created_at=excluded.created_at, updated_at=excluded.updated_at`, value.ID, value.Name, config, state, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+	result, err := s.db.Exec(`INSERT INTO proxy_groups(id, config, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET config=excluded.config, state=excluded.state, created_at=excluded.created_at, updated_at=excluded.updated_at`, databaseID(value.ID), config, state, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
-	return s.mem.SaveProxyGroup(value)
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveProxyGroup(*value)
 }
-func (s *SQLiteDatabase) DeleteProxyGroup(id string) error {
+func (s *SQLiteDatabase) DeleteProxyGroup(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return s.mem.DeleteProxyGroup(id)
+	s.mem.DeleteProxyGroup(id)
+	return nil
 }
 
 func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
@@ -265,25 +299,33 @@ func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO users(id, name, labels, role, enabled, password_hash, created_at, updated_at)
+	result, err := s.db.Exec(`INSERT INTO users(id, name, labels, role, enabled, password_hash, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET name=excluded.name, labels=excluded.labels,
 		role=excluded.role, enabled=excluded.enabled, password_hash=excluded.password_hash, created_at=excluded.created_at, updated_at=excluded.updated_at`,
-		value.ID, value.Name, labels, value.Role, value.Enabled, value.PasswordHash, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+		databaseID(value.ID), value.Name, labels, value.Role, value.Enabled, value.PasswordHash, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
-	return s.mem.SaveUser(value)
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveUser(*value)
 }
 
-func (s *SQLiteDatabase) DeleteUser(id string) error {
+func (s *SQLiteDatabase) DeleteUser(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return s.mem.DeleteUser(id)
+	s.mem.DeleteUser(id)
+	return nil
 }
 
 func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
@@ -293,27 +335,35 @@ func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT INTO api_keys(id, user_id, account_id, name, key_value, valid_seconds, created_at, updated_at)
+	result, err := s.db.Exec(`INSERT INTO api_keys(id, user_id, account_id, name, key_value, valid_seconds, created_at, updated_at)
 		VALUES(?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,
 		account_id=excluded.account_id, name=excluded.name, key_value=excluded.key_value,
 		valid_seconds=excluded.valid_seconds,
 		created_at=excluded.created_at, updated_at=excluded.updated_at`,
-		value.ID, value.UserID, value.AccountID, value.Name, value.Key, value.ValidSeconds, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+		databaseID(value.ID), value.UserID, value.AccountID, value.Name, value.Key, value.ValidSeconds, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
 	if err != nil {
 		return err
 	}
-	return s.mem.SaveAPIKey(value)
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveAPIKey(*value)
 }
 
-func (s *SQLiteDatabase) DeleteAPIKey(id string) error {
+func (s *SQLiteDatabase) DeleteAPIKey(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
 	if _, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id); err != nil {
 		return err
 	}
-	return s.mem.DeleteAPIKey(id)
+	s.mem.DeleteAPIKey(id)
+	return nil
 }
 
 func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
@@ -338,8 +388,8 @@ func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 
 // GetCallTrace returns the complete trace from the UTC daily table identified
 // by startedAt. The list query intentionally does not load these large fields.
-func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error) {
-	if id == "" {
+func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error) {
+	if id <= 0 {
 		return nil, errors.New("call trace ID is required")
 	}
 	if err := s.ensureOpen(); err != nil {
@@ -507,7 +557,7 @@ func (s *SQLiteDatabase) loadMemory() error {
 		v.Config = append([]byte(nil), config...)
 		v.State = append([]byte(nil), state...)
 		v.Quota = append([]byte(nil), quota...)
-		if err = s.mem.SaveAccount(&v); err != nil {
+		if err = s.mem.SaveAccount(v); err != nil {
 			accounts.Close()
 			return err
 		}
@@ -532,7 +582,7 @@ func (s *SQLiteDatabase) loadMemory() error {
 			users.Close()
 			return err
 		}
-		if err = s.mem.SaveUser(&v); err != nil {
+		if err = s.mem.SaveUser(v); err != nil {
 			users.Close()
 			return err
 		}
@@ -542,20 +592,20 @@ func (s *SQLiteDatabase) loadMemory() error {
 		return err
 	}
 	users.Close()
-	groups, err := s.db.Query(`SELECT id, name, config, state, created_at, updated_at FROM proxy_groups`)
+	groups, err := s.db.Query(`SELECT id, config, state, created_at, updated_at FROM proxy_groups`)
 	if err != nil {
 		return err
 	}
 	for groups.Next() {
 		var v PersistedProxyGroup
 		var config, state []byte
-		if err = groups.Scan(&v.ID, &v.Name, &config, &state, &v.CreatedAt, &v.UpdatedAt); err != nil {
+		if err = groups.Scan(&v.ID, &config, &state, &v.CreatedAt, &v.UpdatedAt); err != nil {
 			groups.Close()
 			return err
 		}
 		v.Config = append([]byte(nil), config...)
 		v.State = append([]byte(nil), state...)
-		if err = s.mem.SaveProxyGroup(&v); err != nil {
+		if err = s.mem.SaveProxyGroup(v); err != nil {
 			groups.Close()
 			return err
 		}
@@ -575,7 +625,7 @@ func (s *SQLiteDatabase) loadMemory() error {
 			keys.Close()
 			return err
 		}
-		if err = s.mem.SaveAPIKey(&v); err != nil {
+		if err = s.mem.SaveAPIKey(v); err != nil {
 			keys.Close()
 			return err
 		}
@@ -587,7 +637,14 @@ func (s *SQLiteDatabase) insertTrace(table string, t *PersistedCallTrace) error 
 	original, _ := json.Marshal(t.OriginalRequestHeaders)
 	outbound, _ := json.Marshal(t.OutboundRequestHeaders)
 	response, _ := json.Marshal(t.ResponseHeaders)
-	_, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), t.ID, t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.RequestBytes, t.ResponseBytes, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, t.StartedAt.UTC(), t.FinishedAt.UTC())
+	result, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), databaseID(t.ID), t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.RequestBytes, t.ResponseBytes, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, t.StartedAt.UTC(), t.FinishedAt.UTC())
+	if err == nil && t.ID == 0 {
+		id, idErr := result.LastInsertId()
+		if idErr != nil {
+			return idErr
+		}
+		t.ID = int(id)
+	}
 	return err
 }
 
@@ -606,7 +663,7 @@ func traceTableInRange(table string, timeRange *TimeRange) bool {
 }
 
 func createTraceTableSQL(table string) string {
-	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, apikey TEXT, provider_type TEXT, account_id TEXT, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at DATETIME, finished_at DATETIME)`, table)
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY AUTOINCREMENT, apikey TEXT, provider_type TEXT, account_id INTEGER, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at DATETIME, finished_at DATETIME)`, table)
 }
 
 func createTraceIndexesSQL(table string) string {
@@ -700,7 +757,7 @@ func buildTraceUnionQuery(tables []string, userName, aiProviderName string, code
 			queryArgs = append(queryArgs, filterArgs...)
 		}
 
-		if filter.AccountID != "" {
+		if filter.AccountID != 0 {
 			appendFilter("account_id = ?", filter.AccountID)
 		}
 		if filter.Code != nil {
@@ -879,7 +936,7 @@ func createProxyLogTableSQL(table string) string {
 	if !proxyLogTablePattern.MatchString(table) {
 		panic("invalid proxy log table name")
 	}
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id TEXT NOT NULL, proxy_url TEXT NOT NULL, app_type TEXT NOT NULL DEFAULT '', http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id INTEGER NOT NULL, proxy_url TEXT NOT NULL, app_type TEXT NOT NULL DEFAULT '', http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
 }
 
 func valuesToAny(values []string) []any {
@@ -896,16 +953,15 @@ func valuesToAny(values []string) []any {
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS proxy_stats (address TEXT NOT NULL, application TEXT NOT NULL, start_at INTEGER NOT NULL, source TEXT NOT NULL, requests INTEGER NOT NULL, failures INTEGER NOT NULL, PRIMARY KEY(address,application,start_at,source));
 CREATE TABLE IF NOT EXISTS oauth_credentials (id TEXT PRIMARY KEY, credential BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, name TEXT NOT NULL, config BLOB NOT NULL, state BLOB NOT NULL DEFAULT '{}', quota BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, name TEXT NOT NULL, config BLOB NOT NULL, state BLOB NOT NULL DEFAULT '{}', quota BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name);
 CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider);
-CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, name TEXT NOT NULL, labels BLOB NOT NULL, role TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, password_hash TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, labels BLOB NOT NULL, role TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, password_hash TEXT NOT NULL DEFAULT '', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_users_name ON users(name);
-CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', key_value TEXT NOT NULL, valid_seconds INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, name TEXT NOT NULL DEFAULT '', key_value TEXT NOT NULL, valid_seconds INTEGER NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys(account_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
-CREATE TABLE IF NOT EXISTS proxy_groups (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
+CREATE TABLE IF NOT EXISTS proxy_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
 
-var _ Database = (*MemoryDatabase)(nil)
 var _ Database = (*SQLiteDatabase)(nil)

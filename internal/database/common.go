@@ -7,21 +7,21 @@ import (
 )
 
 func validateAccount(value *PersistedAccount) error {
-	if value == nil || value.ID == "" {
+	if value == nil || value.ID < 0 {
 		return errors.New("account and account ID are required")
 	}
 	return nil
 }
 
 func validateUser(value *PersistedUser) error {
-	if value == nil || value.ID == "" {
+	if value == nil || value.ID < 0 {
 		return errors.New("user and user ID are required")
 	}
 	return nil
 }
 
 func validateAPIKey(value *PersistedAPIKey) error {
-	if value == nil || value.ID == "" {
+	if value == nil || value.ID < 0 {
 		return errors.New("API key and key ID are required")
 	}
 	return nil
@@ -57,4 +57,11 @@ func cloneJSON[T any](value T) T {
 	var clone T
 	_ = json.Unmarshal(raw, &clone)
 	return clone
+}
+
+func databaseID(id int) any {
+	if id == 0 {
+		return nil
+	}
+	return id
 }

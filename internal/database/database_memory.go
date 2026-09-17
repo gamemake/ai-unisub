@@ -7,319 +7,161 @@ import (
 	"maps"
 	"slices"
 	"sync"
-	"time"
 )
 
-// MemoryDatabase stores accounts, users, and API keys in memory. Call traces
-// are deliberately ignored by this implementation.
+// MemoryDatabase is the process-local cache used by SQLiteDatabase. It is not
+// a Database implementation and has no persistence or lifecycle semantics.
 type MemoryDatabase struct {
-	moduleConfigs map[string]json.RawMessage
 	mu            sync.RWMutex
-	opened        bool
-	accounts      map[string]PersistedAccount
-	users         map[string]PersistedUser
-	apiKeys       map[string]PersistedAPIKey
+	moduleConfigs map[string]json.RawMessage
 	credentials   map[string]json.RawMessage
-	proxyGroups   map[string]PersistedProxyGroup
+	accounts      map[int]PersistedAccount
+	users         map[int]PersistedUser
+	apiKeys       map[int]PersistedAPIKey
+	proxyGroups   map[int]PersistedProxyGroup
 }
 
-// NewMemoryDatabase creates an empty in-memory database.
 func NewMemoryDatabase() *MemoryDatabase {
 	return &MemoryDatabase{
-		accounts:    make(map[string]PersistedAccount),
-		users:       make(map[string]PersistedUser),
-		apiKeys:     make(map[string]PersistedAPIKey),
-		credentials: make(map[string]json.RawMessage),
-		proxyGroups: make(map[string]PersistedProxyGroup),
+		moduleConfigs: make(map[string]json.RawMessage), credentials: make(map[string]json.RawMessage),
+		accounts: make(map[int]PersistedAccount), users: make(map[int]PersistedUser),
+		apiKeys: make(map[int]PersistedAPIKey), proxyGroups: make(map[int]PersistedProxyGroup),
 	}
 }
 
-func (m *MemoryDatabase) Open() error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.opened = true
-	return nil
-}
-
-func (m *MemoryDatabase) Close() error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.opened = false
-	return nil
-}
-
-func (m *MemoryDatabase) LoadModuleConfig(module string) (json.RawMessage, error) {
-	if err := validateModuleName(module); err != nil {
-		return nil, err
-	}
+func (m *MemoryDatabase) LoadModuleConfig(name string) json.RawMessage {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append(json.RawMessage(nil), m.moduleConfigs[module]...), nil
+	return slices.Clone(m.moduleConfigs[name])
 }
-
-func (m *MemoryDatabase) SaveModuleConfig(module string, raw json.RawMessage) error {
-	if err := validateModuleName(module); err != nil {
-		return err
-	}
-	if !json.Valid(raw) {
-		return errors.New("invalid module configuration JSON")
-	}
+func (m *MemoryDatabase) SaveModuleConfig(name string, value json.RawMessage) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.moduleConfigs == nil {
-		m.moduleConfigs = make(map[string]json.RawMessage)
-	}
-	m.moduleConfigs[module] = slices.Clone(raw)
-	return nil
+	m.moduleConfigs[name] = slices.Clone(value)
 }
-
-func (m *MemoryDatabase) DeleteModuleConfig(module string) error {
-	if err := validateModuleName(module); err != nil {
-		return err
-	}
+func (m *MemoryDatabase) DeleteModuleConfig(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.moduleConfigs, module)
-	return nil
+	delete(m.moduleConfigs, name)
 }
 
-func (m *MemoryDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
-	if m == nil {
-		return nil, errors.New("memory database is nil")
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	result := make([]PersistedProxyGroup, 0, len(m.proxyGroups))
-	for v := range maps.Values(m.proxyGroups) {
-		result = append(result, cloneProxyGroup(v))
-	}
-	slices.SortFunc(result, func(a, b PersistedProxyGroup) int { return cmp.Compare(a.ID, b.ID) })
-	return result, nil
-}
-func (m *MemoryDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	if value == nil || value.ID == "" {
-		return errors.New("proxy group and ID are required")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.proxyGroups == nil {
-		m.proxyGroups = make(map[string]PersistedProxyGroup)
-	}
-	m.proxyGroups[value.ID] = cloneProxyGroup(*value)
-	return nil
-}
-func (m *MemoryDatabase) DeleteProxyGroup(id string) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.proxyGroups, id)
-	return nil
-}
-
-func (m *MemoryDatabase) RecordProxyLog(value *PersistedProxyLog) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	return errors.New("proxy logs are not supported by memory database")
-}
-
-func (m *MemoryDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
-	if m == nil {
-		return nil, 0, errors.New("memory database is nil")
-	}
-	return nil, 0, errors.New("proxy logs are not supported by memory database")
-}
-
-func (m *MemoryDatabase) CleanupProxyLog(days int) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	return errors.New("proxy logs are not supported by memory database")
-}
-
-func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
-	if m == nil {
-		return nil, errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	value, ok := m.credentials[id]
-	if !ok {
-		return nil, errors.New("credential not found")
-	}
-	return append(json.RawMessage(nil), value...), nil
+	return slices.Clone(value), ok
 }
-
-func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	if id == "" || len(value) == 0 || !json.Valid(value) {
-		return errors.New("credential ID and credential are required")
-	}
+func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.credentials == nil {
-		m.credentials = make(map[string]json.RawMessage)
-	}
 	m.credentials[id] = slices.Clone(value)
-	return nil
 }
-
-func (m *MemoryDatabase) DeleteCredential(id string) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) DeleteCredential(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.credentials, id)
-	return nil
 }
 
-func (m *MemoryDatabase) ListAccounts() ([]PersistedAccount, error) {
-	if m == nil {
-		return nil, errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) ListAccounts() []PersistedAccount {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedAccount, 0, len(m.accounts))
-	for account := range maps.Values(m.accounts) {
-		result = append(result, cloneAccount(account))
+	for value := range maps.Values(m.accounts) {
+		result = append(result, cloneAccount(value))
 	}
 	slices.SortFunc(result, func(a, b PersistedAccount) int { return cmp.Compare(a.ID, b.ID) })
-	return result, nil
+	return result
 }
-
-func (m *MemoryDatabase) SaveAccount(account *PersistedAccount) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	if err := validateAccount(account); err != nil {
-		return err
+func (m *MemoryDatabase) SaveAccount(value PersistedAccount) error {
+	if value.ID <= 0 {
+		return errors.New("account ID must be positive")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.accounts == nil {
-		m.accounts = make(map[string]PersistedAccount)
-	}
-	m.accounts[account.ID] = cloneAccount(*account)
+	m.accounts[value.ID] = cloneAccount(value)
 	return nil
 }
-
-func (m *MemoryDatabase) DeleteAccount(id string) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) DeleteAccount(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.accounts, id)
-	maps.DeleteFunc(m.apiKeys, func(_ string, value PersistedAPIKey) bool { return value.AccountID == id })
-	return nil
+	maps.DeleteFunc(m.apiKeys, func(_ int, value PersistedAPIKey) bool { return value.AccountID == id })
 }
 
-func (m *MemoryDatabase) ListUsers() ([]PersistedUser, error) {
-	if m == nil {
-		return nil, errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) ListUsers() []PersistedUser {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedUser, 0, len(m.users))
-	for user := range maps.Values(m.users) {
-		result = append(result, cloneUser(user))
+	for value := range maps.Values(m.users) {
+		result = append(result, cloneUser(value))
 	}
 	slices.SortFunc(result, func(a, b PersistedUser) int { return cmp.Compare(a.ID, b.ID) })
-	return result, nil
+	return result
 }
-
-func (m *MemoryDatabase) SaveUser(user *PersistedUser) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	if err := validateUser(user); err != nil {
-		return err
-	}
-	// Preserve the zero-value behavior of users created by older callers.
-	if !user.Enabled && user.UpdatedAt.IsZero() {
-		user.Enabled = true
+func (m *MemoryDatabase) SaveUser(value PersistedUser) error {
+	if value.ID <= 0 {
+		return errors.New("user ID must be positive")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.users == nil {
-		m.users = make(map[string]PersistedUser)
-	}
-	m.users[user.ID] = cloneUser(*user)
+	m.users[value.ID] = cloneUser(value)
 	return nil
 }
-
-func (m *MemoryDatabase) DeleteUser(id string) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) DeleteUser(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.users, id)
-	maps.DeleteFunc(m.apiKeys, func(_ string, value PersistedAPIKey) bool { return value.UserID == id })
-	return nil
+	maps.DeleteFunc(m.apiKeys, func(_ int, value PersistedAPIKey) bool { return value.UserID == id })
 }
 
-func (m *MemoryDatabase) ListAPIKeys(userID string) ([]PersistedAPIKey, error) {
-	if m == nil {
-		return nil, errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) ListAPIKeys(userID int) []PersistedAPIKey {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	result := make([]PersistedAPIKey, 0)
-	for key := range maps.Values(m.apiKeys) {
-		if userID == "" || key.UserID == userID {
-			result = append(result, key)
+	for value := range maps.Values(m.apiKeys) {
+		if userID == 0 || value.UserID == userID {
+			result = append(result, value)
 		}
 	}
 	slices.SortFunc(result, func(a, b PersistedAPIKey) int { return cmp.Compare(a.ID, b.ID) })
-	return result, nil
+	return result
 }
-
-func (m *MemoryDatabase) SaveAPIKey(key *PersistedAPIKey) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
-	if err := validateAPIKey(key); err != nil {
-		return err
+func (m *MemoryDatabase) SaveAPIKey(value PersistedAPIKey) error {
+	if value.ID <= 0 {
+		return errors.New("API key ID must be positive")
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.apiKeys == nil {
-		m.apiKeys = make(map[string]PersistedAPIKey)
-	}
-	m.apiKeys[key.ID] = *key
+	m.apiKeys[value.ID] = value
 	return nil
 }
-
-func (m *MemoryDatabase) DeleteAPIKey(id string) error {
-	if m == nil {
-		return errors.New("memory database is nil")
-	}
+func (m *MemoryDatabase) DeleteAPIKey(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.apiKeys, id)
-	return nil
 }
 
-func (m *MemoryDatabase) RecordCallTrace(*PersistedCallTrace) error { return nil }
-func (m *MemoryDatabase) CleanupCallTrace(int) error                { return nil }
-func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error) {
-	return []PersistedCallTraceSummary{}, 0, nil
+func (m *MemoryDatabase) ListProxyGroups() []PersistedProxyGroup {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]PersistedProxyGroup, 0, len(m.proxyGroups))
+	for value := range maps.Values(m.proxyGroups) {
+		result = append(result, cloneProxyGroup(value))
+	}
+	slices.SortFunc(result, func(a, b PersistedProxyGroup) int { return cmp.Compare(a.ID, b.ID) })
+	return result
 }
-func (m *MemoryDatabase) GetCallTrace(time.Time, string) (*PersistedCallTrace, error) {
-	return nil, ErrCallTraceNotFound
+func (m *MemoryDatabase) SaveProxyGroup(value PersistedProxyGroup) error {
+	if value.ID <= 0 {
+		return errors.New("proxy group ID must be positive")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.proxyGroups[value.ID] = cloneProxyGroup(value)
+	return nil
+}
+func (m *MemoryDatabase) DeleteProxyGroup(id int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.proxyGroups, id)
 }

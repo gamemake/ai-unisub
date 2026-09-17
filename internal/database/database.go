@@ -71,8 +71,7 @@ func sqlitePathFromURL(parsed *url.URL, rawURL string) (string, error) {
 // Proxy persistence types belong to the database package. The egress package
 // consumes these types through its persistence store contract.
 type PersistedProxyGroup struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
+	ID        int             `json:"id"`
 	Config    json.RawMessage `json:"config"`
 	State     json.RawMessage `json:"state"`
 	CreatedAt time.Time       `json:"created_at"`
@@ -81,7 +80,7 @@ type PersistedProxyGroup struct {
 
 // PersistedProxyLog records an upstream HTTP error for a proxy.
 type PersistedProxyLog struct {
-	GroupID          string    `json:"group_id"`
+	GroupID          int       `json:"group_id"`
 	ProxyURL         string    `json:"proxy_url"`
 	AppType          string    `json:"app_type"`
 	HTTPErrorCode    int       `json:"http_error_code"`
@@ -91,7 +90,7 @@ type PersistedProxyLog struct {
 
 // PersistedAccount stores a provider instance and its serialized configuration.
 type PersistedAccount struct {
-	ID         string          `json:"id"`
+	ID         int             `json:"id"`
 	AIProvider string          `json:"provider"`
 	Name       string          `json:"name"`
 	Config     json.RawMessage `json:"config"`
@@ -103,7 +102,7 @@ type PersistedAccount struct {
 
 // PersistedUser represents a user who can create API keys.
 type PersistedUser struct {
-	ID           string    `json:"id"`
+	ID           int       `json:"id"`
 	Name         string    `json:"name"`
 	Labels       []string  `json:"labels"`
 	Role         UserRole  `json:"role"`
@@ -124,10 +123,10 @@ const (
 // PersistedAPIKey is created by a user and is bound to exactly one provider
 // instance. Key stores the actual API key value.
 type PersistedAPIKey struct {
-	ID           string    `json:"id"`
+	ID           int       `json:"id"`
 	Name         string    `json:"name"`
-	UserID       string    `json:"user_id"`
-	AccountID    string    `json:"account_id"`
+	UserID       int       `json:"user_id"`
+	AccountID    int       `json:"account_id"`
 	Key          string    `json:"key"`
 	ValidSeconds int64     `json:"valid_seconds"`
 	CreatedAt    time.Time `json:"created_at"`
@@ -144,11 +143,11 @@ type PersistedAPIKey struct {
 //
 // APIKey contains the API key value used for the call.
 type PersistedCallTrace struct {
-	ID string `json:"id"`
+	ID int `json:"id"`
 
 	APIKey         string `json:"apikey"`
 	AIProviderType string `json:"provider_type"`
-	AccountID      string `json:"account_id"`
+	AccountID      int    `json:"account_id"`
 	RequestID      string `json:"request_id"`
 	SessionID      string `json:"session_id"`
 	SourceIP       string `json:"source_ip"`
@@ -178,10 +177,10 @@ type PersistedCallTrace struct {
 // list queries. Body and Header fields are intentionally omitted so that list
 // pages do not load large request/response payloads into memory.
 type PersistedCallTraceSummary struct {
-	ID                  string    `json:"id"`
+	ID                  int       `json:"id"`
 	APIKey              string    `json:"apikey"`
 	AIProviderType      string    `json:"provider_type"`
-	AccountID           string    `json:"account_id"`
+	AccountID           int       `json:"account_id"`
 	RequestID           string    `json:"request_id"`
 	SessionID           string    `json:"session_id"`
 	SourceIP            string    `json:"source_ip"`
@@ -200,7 +199,7 @@ type PersistedCallTraceSummary struct {
 // CallTraceFilter combines exact search and structured filters for call traces.
 type CallTraceFilter struct {
 	UserName        string    // Optional exact user-name filter.
-	AccountID       string    // Optional exact account ID filter.
+	AccountID       int       // Optional exact account ID filter; zero means no filter.
 	Code            *int      // Optional HTTP error-code filter.
 	Search          string    // Optional exact text filter.
 	SearchUsernames bool      // Optional; enables user-name search when authorized by the application layer.
@@ -209,7 +208,7 @@ type CallTraceFilter struct {
 
 // ProxyLogFilter combines filters for proxy logs.
 type ProxyLogFilter struct {
-	GroupID   string    // Required proxy-group ID filter.
+	GroupID   int       // Required proxy-group ID filter.
 	ProxyURL  string    // Optional exact proxy URL filter.
 	AppType   string    // Optional exact application-type filter.
 	TimeRange TimeRange // Required time range for the query.
@@ -221,9 +220,10 @@ type TimeRange struct {
 	End   time.Time
 }
 
-// Database is the persistence contract. Implementations may be SQLite,
-// Postgres, or an in-memory store used by tests. AIProvider configurations are
-// instance records, not configuration records for a provider type.
+// Database is the persistence contract. SQLiteDatabase is the concrete
+// implementation; tests can use SQLiteDatabase with the :memory: path.
+// AIProvider configurations are instance records, not configuration records
+// for a provider type.
 type Database interface {
 	// Open initializes the database and makes it ready for use.
 	Open() error
@@ -244,7 +244,7 @@ type Database interface {
 	// SaveProxyGroup creates or updates a persisted proxy group.
 	SaveProxyGroup(group *PersistedProxyGroup) error
 	// DeleteProxyGroup deletes a proxy group by ID.
-	DeleteProxyGroup(id string) error
+	DeleteProxyGroup(id int) error
 	// RecordProxyLog persists one proxy log entry.
 	RecordProxyLog(log *PersistedProxyLog) error
 	// QueryProxyLogs returns proxy logs matching filter, with one-based pagination.
@@ -266,21 +266,21 @@ type Database interface {
 	// SaveAccount creates or updates a persisted account.
 	SaveAccount(account *PersistedAccount) error
 	// DeleteAccount deletes an account by ID.
-	DeleteAccount(id string) error
+	DeleteAccount(id int) error
 
 	// ListUsers returns all persisted users.
 	ListUsers() ([]PersistedUser, error)
 	// SaveUser creates or updates a persisted user.
 	SaveUser(user *PersistedUser) error
 	// DeleteUser deletes a user by ID.
-	DeleteUser(id string) error
+	DeleteUser(id int) error
 
 	// ListAPIKeys returns API keys belonging to the specified user.
-	ListAPIKeys(userID string) ([]PersistedAPIKey, error)
+	ListAPIKeys(userID int) ([]PersistedAPIKey, error)
 	// SaveAPIKey creates or updates a persisted API key.
 	SaveAPIKey(key *PersistedAPIKey) error
 	// DeleteAPIKey deletes an API key by ID.
-	DeleteAPIKey(id string) error
+	DeleteAPIKey(id int) error
 
 	// RecordCallTrace persists one complete API call trace.
 	RecordCallTrace(trace *PersistedCallTrace) error
@@ -290,5 +290,5 @@ type Database interface {
 	QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
-	GetCallTrace(startedAt time.Time, id string) (*PersistedCallTrace, error)
+	GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error)
 }
