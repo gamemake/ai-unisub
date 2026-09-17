@@ -68,7 +68,7 @@ func sqlitePathFromURL(parsed *url.URL, rawURL string) (string, error) {
 	return path, nil
 }
 
-// Proxy persistence types belong to the database package. The proxy package
+// Proxy persistence types belong to the database package. The egress package
 // consumes these types through its persistence store contract.
 type PersistedProxyGroup struct {
 	ID        string          `json:"id"`
@@ -83,6 +83,7 @@ type PersistedProxyGroup struct {
 type PersistedProxyLog struct {
 	GroupID          string    `json:"group_id"`
 	ProxyURL         string    `json:"proxy_url"`
+	AppType          string    `json:"app_type"`
 	HTTPErrorCode    int       `json:"http_error_code"`
 	HTTPErrorMessage string    `json:"http_error_message"`
 	Time             time.Time `json:"time"`
@@ -160,6 +161,8 @@ type PersistedCallTrace struct {
 	RequestBody            []byte      `json:"request_body"`
 	ResponseHeaders        http.Header `json:"response_headers"`
 	ResponseBody           []byte      `json:"response_body"`
+	RequestBytes           int64       `json:"-"`
+	ResponseBytes          int64       `json:"-"`
 
 	Model               string `json:"model"`
 	InputTokens         int    `json:"input_tokens"`

@@ -61,26 +61,6 @@ func (s *SQLiteDatabase) Open() error {
 		db.Close()
 		return err
 	}
-	if _, err = db.Exec(`ALTER TABLE proxy_groups ADD COLUMN remark TEXT NOT NULL DEFAULT ''`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
-	if _, err = db.Exec(`ALTER TABLE proxy_groups ADD COLUMN max_retries INTEGER NOT NULL DEFAULT 0`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
-	if _, err = db.Exec(`ALTER TABLE accounts RENAME COLUMN status TO state`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "no such column") {
-		db.Close()
-		return err
-	}
-	if _, err = db.Exec(`ALTER TABLE accounts ADD COLUMN state BLOB NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
-	if _, err = db.Exec(`ALTER TABLE accounts ADD COLUMN quota BLOB NOT NULL DEFAULT '{}'`); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-		db.Close()
-		return err
-	}
 	s.db = db
 	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS proxy_health (address TEXT NOT NULL, application TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(address,application))`); err != nil {
 		db.Close()
@@ -93,11 +73,6 @@ func (s *SQLiteDatabase) Open() error {
 		return err
 	}
 	if err = s.loadMemory(); err != nil {
-		db.Close()
-		s.db = nil
-		return err
-	}
-	if err = s.ensureExistingTraceIndexes(); err != nil {
 		db.Close()
 		s.db = nil
 		return err
@@ -371,10 +346,10 @@ func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id string) (*Persiste
 		return nil, err
 	}
 	table := traceTable(startedAt)
-	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE id = ?`, table)
+	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE id = ?`, table)
 	var trace PersistedCallTrace
 	var original, outbound, response []byte
-	err := s.db.QueryRow(query, id).Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt)
+	err := s.db.QueryRow(query, id).Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.RequestBytes, &trace.ResponseBytes, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCallTraceNotFound
 	}
@@ -612,43 +587,8 @@ func (s *SQLiteDatabase) insertTrace(table string, t *PersistedCallTrace) error 
 	original, _ := json.Marshal(t.OriginalRequestHeaders)
 	outbound, _ := json.Marshal(t.OutboundRequestHeaders)
 	response, _ := json.Marshal(t.ResponseHeaders)
-	_, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), t.ID, t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, t.StartedAt.UTC(), t.FinishedAt.UTC())
+	_, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), t.ID, t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.RequestBytes, t.ResponseBytes, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, t.StartedAt.UTC(), t.FinishedAt.UTC())
 	return err
-}
-
-func (s *SQLiteDatabase) ensureExistingTraceIndexes() error {
-	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'call_traces_%'`)
-	if err != nil {
-		return err
-	}
-	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			rows.Close()
-			return err
-		}
-		if traceTablePattern.MatchString(table) {
-			tables = append(tables, table)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, table := range tables {
-		if _, err := s.db.Exec("ALTER TABLE " + table + " ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-			return err
-		}
-		if _, err := s.db.Exec(createTraceIndexesSQL(table)); err != nil {
-			return err
-		}
-		if _, err := s.db.Exec("CREATE INDEX IF NOT EXISTS idx_" + table + "_session_id ON " + table + "(session_id)"); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 var traceTablePattern = regexp.MustCompile(`^call_traces_[0-9]{8}$`)
@@ -666,7 +606,7 @@ func traceTableInRange(table string, timeRange *TimeRange) bool {
 }
 
 func createTraceTableSQL(table string) string {
-	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, apikey TEXT, provider_type TEXT, account_id TEXT, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at DATETIME, finished_at DATETIME)`, table)
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id TEXT PRIMARY KEY, apikey TEXT, provider_type TEXT, account_id TEXT, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at DATETIME, finished_at DATETIME)`, table)
 }
 
 func createTraceIndexesSQL(table string) string {
@@ -683,7 +623,7 @@ func (s *SQLiteDatabase) queryTraceTable(table, userName, aiProviderName string,
 	if !traceTablePattern.MatchString(table) {
 		return nil, errors.New("invalid call trace table name")
 	}
-	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE 1=1`, table)
+	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE 1=1`, table)
 	args := []any{}
 	if code != nil {
 		query += " AND http_error_code = ?"
@@ -728,7 +668,7 @@ func (s *SQLiteDatabase) queryTraceTable(table, userName, aiProviderName string,
 	for rows.Next() {
 		var t PersistedCallTrace
 		var original, outbound, response []byte
-		if err = rows.Scan(&t.ID, &t.APIKey, &t.AIProviderType, &t.AccountID, &t.RequestID, &t.SessionID, &t.SourceIP, &t.URL, &t.HTTPErrorCode, &t.HTTPErrorInfo, &original, &outbound, &t.RequestBody, &response, &t.ResponseBody, &t.Model, &t.InputTokens, &t.OutputTokens, &t.CacheCreationTokens, &t.CacheReadTokens, &t.StartedAt, &t.FinishedAt); err != nil {
+		if err = rows.Scan(&t.ID, &t.APIKey, &t.AIProviderType, &t.AccountID, &t.RequestID, &t.SessionID, &t.SourceIP, &t.URL, &t.HTTPErrorCode, &t.HTTPErrorInfo, &original, &outbound, &t.RequestBody, &response, &t.ResponseBody, &t.RequestBytes, &t.ResponseBytes, &t.Model, &t.InputTokens, &t.OutputTokens, &t.CacheCreationTokens, &t.CacheReadTokens, &t.StartedAt, &t.FinishedAt); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(original, &t.OriginalRequestHeaders); err != nil {
@@ -813,7 +753,7 @@ func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
 	if _, err := s.db.Exec(createProxyLogTableSQL(table)); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(fmt.Sprintf("INSERT INTO %s(group_id, proxy_url, http_error_code, http_error_message, time) VALUES(?, ?, ?, ?, ?)", table), value.GroupID, value.ProxyURL, value.HTTPErrorCode, value.HTTPErrorMessage, value.Time.UTC())
+	_, err := s.db.Exec(fmt.Sprintf("INSERT INTO %s(group_id, proxy_url, app_type, http_error_code, http_error_message, time) VALUES(?, ?, ?, ?, ?, ?)", table), value.GroupID, value.ProxyURL, value.AppType, value.HTTPErrorCode, value.HTTPErrorMessage, value.Time.UTC())
 	return err
 }
 
@@ -857,10 +797,10 @@ func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize
 	queries := make([]string, len(tables))
 	args := make([]any, 0, len(tables)*5)
 	for i, table := range tables {
-		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND time >= ? AND time < ?", table)
+		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND time >= ? AND time < ?", table)
 		args = append(args, groupID, proxyURL, proxyURL, timeRange.Start.UTC(), timeRange.End.UTC())
 	}
-	query := "SELECT group_id, proxy_url, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
+	query := "SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
 	var total int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM ("+query+")", args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -875,7 +815,7 @@ func (s *SQLiteDatabase) QueryProxyLogs(groupID, proxyURL string, page, pageSize
 	result := []PersistedProxyLog{}
 	for rows.Next() {
 		var value PersistedProxyLog
-		if err := rows.Scan(&value.GroupID, &value.ProxyURL, &value.HTTPErrorCode, &value.HTTPErrorMessage, &value.Time); err != nil {
+		if err := rows.Scan(&value.GroupID, &value.ProxyURL, &value.AppType, &value.HTTPErrorCode, &value.HTTPErrorMessage, &value.Time); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, value)
@@ -939,7 +879,7 @@ func createProxyLogTableSQL(table string) string {
 	if !proxyLogTablePattern.MatchString(table) {
 		panic("invalid proxy log table name")
 	}
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id TEXT NOT NULL, proxy_url TEXT NOT NULL, http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id TEXT NOT NULL, proxy_url TEXT NOT NULL, app_type TEXT NOT NULL DEFAULT '', http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
 }
 
 func valuesToAny(values []string) []any {

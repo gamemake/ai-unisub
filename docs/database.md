@@ -40,7 +40,7 @@ Database 提供 Open、Close 以及各实体读写，应用模块不绕过接口
 | 实体 | 内容与边界 |
 | --- | --- |
 | PersistedProxyGroup | ID、name、JSON config、JSON state 与时间；代理明细由 config 保存，不在 database 包中定义代理领域类型 |
-| PersistedProxyLog | group ID、proxy URL、HTTP 错误码、HTTP 错误消息与时间；SQLite 按 UTC 日期分表 |
+| PersistedProxyLog | group ID、proxy URL、app type、HTTP 错误码、HTTP 错误消息与时间；SQLite 按 UTC 日期分表 |
 | PersistedAccount | ID、name、provider、JSON config、JSON state、JSON quota 与时间 |
 | PersistedUser | 名称、角色、启用状态、标签、密码哈希和时间；哈希不参与 JSON 输出 |
 | PersistedAPIKey | 所属用户、绑定账号、明文 Key、有效秒数和时间 |
@@ -76,13 +76,13 @@ OAuth Session、Web 一次性结果和浏览器 Session 不存入数据库，重
 
 PersistedCallTrace 和 PersistedCallTraceSummary 包含 `SessionID`（JSON 为 `session_id`）。SQLite 启动时为旧日表新增默认空字符串的 session_id 列及索引，新日表直接创建该字段；不会为历史记录猜测会话标识。
 
-`QueryCallTraces` 接收 `CallTraceFilter` 和必填的 `TimeRange`，支持账号 ID、用户名、HTTP 错误码及精确文本搜索。只有应用层授权后才启用 `SearchUsernames`；归属条件独立于文本 OR 条件，不能通过搜索跨用户读取记录。接口提供分页和匹配总数，列表返回摘要；`GetCallTrace` 使用日期与记录 ID 获取详情。
+`QueryCallTraces` 接收 `CallTraceFilter` 和必填的 `TimeRange`，支持账号 ID、用户名、HTTP 错误码及精确文本搜索。只有应用层授权后才启用 `SearchUsernames`；归属条件独立于文本 OR 条件，不能通过搜索跨用户读取记录。接口提供分页和匹配总数，列表返回摘要；`GetCallTrace` 使用日期与记录 ID 获取详情。调用记录额外持久化请求和响应字节数，但不在 JSON 响应中显示。
 
 `CleanupCallTrace` 按 UTC 日期清理调用数据，不删除用户、账号或 Key。记录包含用于用户关联的 APIKey 信息，管理 API 返回前清空；最终权限由 API Handler 和查询范围共同决定。不存在的详情使用 `ErrCallTraceNotFound`。
 
 ## 代理日志
 
-`QueryProxyLogs` 接收 group ID、可选 proxy URL、分页参数和必填的 `TimeRange`，返回当前页记录、匹配总数和错误。SQLite 使用 `proxy_logs_YYYYMMDD` 分表，按 UTC 日期写入，查询按时间倒序返回。
+`QueryProxyLogs` 接收 group ID、可选 proxy URL、分页参数和必填的 `TimeRange`，返回当前页记录、匹配总数和错误。SQLite 使用 `proxy_logs_YYYYMMDD` 分表，按 UTC 日期写入，查询按时间倒序返回。每条记录包含 `app_type` 字符串；旧表迁移时默认为空字符串。
 
 ```go
 QueryProxyLogs(groupID, proxyURL string, page, pageSize int, timeRange TimeRange) ([]PersistedProxyLog, int, error)
@@ -93,4 +93,4 @@ QueryCallTraces(filter CallTraceFilter, page, pageSize int, timeRange TimeRange)
 
 ## Proxy 包的存储边界
 
-代理组的 `Config` 和 `State` 是 database 层的不透明 JSON 文档，由 Proxy 领域负责解释。database 包不再定义 `PersistedProxy`、代理错误、代理健康状态或代理统计类型；代理运行时状态、容量与错误策略见 [Proxy](proxy.md)。
+代理组的 `Config` 和 `State` 是 database 层的不透明 JSON 文档。
