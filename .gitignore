@@ -5,6 +5,7 @@
 *.out
 coverage.out
 coverage.html
+/.gocache/
 
 # User build
 /dummy*
