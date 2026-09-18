@@ -6,12 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 type ProxyResolver interface {
-	ResolveProxy(context.Context, string, string, []string) (*proxy.Endpoint, error)
-	ProxyRetryLimit(string) int
-	ReportProxy(*proxy.Endpoint, string, proxy.ErrorClass) error
+	ResolveProxy(ctx context.Context, groupID int, appType string, z []string) (*proxy.Endpoint, error)
+	ProxyRetryLimit(groupID int) int
+	ReportProxy(ep *proxy.Endpoint, appType string, eclass proxy.ErrorClass) error
 }
 
 // AIProviderConfig is the configuration of one concrete provider instance.
@@ -25,10 +26,10 @@ type AIProviderConfig struct {
 	OfficialOnly                  bool          `json:"official_only,omitzero"`
 	Members                       []GroupMember `json:"members,omitempty"`
 	ProxyApplicationErrorStatuses []int         `json:"proxy_application_error_statuses,omitempty"`
-	ID                            string        `json:"id"`
+	ID                            int           `json:"id"`
 	Name                          string        `json:"name"`
 	Labels                        []string      `json:"labels"`
-	ProxyGroupID                  string        `json:"proxy_group_id,omitempty"`
+	ProxyGroupID                  int           `json:"proxy_group_id,omitempty"`
 	APIEndpoint                   string        `json:"api_endpoint"`
 	Enabled                       bool          `json:"enabled"`
 	MaxConcurrentConnections      int           `json:"max_concurrent_connections"`
@@ -36,6 +37,26 @@ type AIProviderConfig struct {
 	AuthType                      string        `json:"auth_type"`
 	CredentialID                  string        `json:"credential_id,omitempty"`
 	APIKey                        string        `json:"api_key,omitempty"`
+}
+
+// AIProviderState contains provider-owned state that is safe to persist.
+// Runtime coordination state is deliberately kept out of this value.
+type AIProviderState struct{}
+
+// AIProviderQuota is the serializable quota snapshot owned by a provider.
+type AIProviderQuota struct {
+	Subscription []SubscriptionQuotaItem `json:"subscription,omitempty"`
+	Items        []QuotaItem             `json:"items,omitempty"`
+	CacheStatus  QuotaCacheStatus        `json:"cache_status"`
+	UpdatedAt    time.Time               `json:"updated_at,omitzero"`
+}
+
+// ProviderData is the persistence boundary between the database layer and a
+// provider. The aiprovider package owns the meaning of all three payloads.
+type ProviderData struct {
+	Config json.RawMessage `json:"config,omitempty"`
+	State  json.RawMessage `json:"state,omitempty"`
+	Quota  json.RawMessage `json:"quota,omitempty"`
 }
 
 // AIProviderCallTrace contains the complete request/response data collected by a
@@ -70,9 +91,13 @@ type APICallRecorder func(*AIProviderCallTrace)
 // Implementations preserve the upstream protocol.
 type AIProvider interface {
 	Config() AIProviderConfig
+	State() AIProviderState
+	Quota() AIProviderQuota
 	// UpdateConfig updates mutable provider-specific settings. The AIProviderConfig.ID
 	// value is assigned at creation time and must not be changed.
 	UpdateConfig(json.RawMessage) error
+	RestoreState(json.RawMessage) error
+	RestoreQuota(json.RawMessage) error
 	Handle(*http.Request, APICallRecorder)
 	// FetchQuota queries current subscription usage or non-subscription balance.
 	// Groups return ErrQuotaUnsupported. Historical usage/costs and cached fallback are excluded.

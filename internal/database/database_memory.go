@@ -39,23 +39,23 @@ func (m *MemoryDatabase) SaveModuleConfig(name string, value json.RawMessage) {
 	defer m.mu.Unlock()
 	m.moduleConfigs[name] = slices.Clone(value)
 }
-func (m *MemoryDatabase) DeleteModuleConfig(name string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.moduleConfigs, name)
-}
 
-func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, bool) {
+func (m *MemoryDatabase) GetCredential(id string) json.RawMessage {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	value, ok := m.credentials[id]
-	return slices.Clone(value), ok
+	if !ok {
+		return nil
+	}
+	return slices.Clone(value)
 }
-func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) {
+
+func (m *MemoryDatabase) SetCredential(id string, value json.RawMessage) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.credentials[id] = slices.Clone(value)
 }
+
 func (m *MemoryDatabase) DeleteCredential(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -72,6 +72,14 @@ func (m *MemoryDatabase) ListAccounts() []PersistedAccount {
 	slices.SortFunc(result, func(a, b PersistedAccount) int { return cmp.Compare(a.ID, b.ID) })
 	return result
 }
+
+func (m *MemoryDatabase) HasAccount(id int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.accounts[id]
+	return ok
+}
+
 func (m *MemoryDatabase) SaveAccount(value PersistedAccount) error {
 	if value.ID <= 0 {
 		return errors.New("account ID must be positive")
@@ -81,6 +89,7 @@ func (m *MemoryDatabase) SaveAccount(value PersistedAccount) error {
 	m.accounts[value.ID] = cloneAccount(value)
 	return nil
 }
+
 func (m *MemoryDatabase) DeleteAccount(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -98,6 +107,14 @@ func (m *MemoryDatabase) ListUsers() []PersistedUser {
 	slices.SortFunc(result, func(a, b PersistedUser) int { return cmp.Compare(a.ID, b.ID) })
 	return result
 }
+
+func (m *MemoryDatabase) HasUser(id int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.accounts[id]
+	return ok
+}
+
 func (m *MemoryDatabase) SaveUser(value PersistedUser) error {
 	if value.ID <= 0 {
 		return errors.New("user ID must be positive")
@@ -107,6 +124,7 @@ func (m *MemoryDatabase) SaveUser(value PersistedUser) error {
 	m.users[value.ID] = cloneUser(value)
 	return nil
 }
+
 func (m *MemoryDatabase) DeleteUser(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -126,6 +144,14 @@ func (m *MemoryDatabase) ListAPIKeys(userID int) []PersistedAPIKey {
 	slices.SortFunc(result, func(a, b PersistedAPIKey) int { return cmp.Compare(a.ID, b.ID) })
 	return result
 }
+
+func (m *MemoryDatabase) HasAPIKey(id int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.apiKeys[id]
+	return ok
+}
+
 func (m *MemoryDatabase) SaveAPIKey(value PersistedAPIKey) error {
 	if value.ID <= 0 {
 		return errors.New("API key ID must be positive")

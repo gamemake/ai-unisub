@@ -17,12 +17,12 @@ type ClaudeAIProvider struct {
 	oauth OAuthConfig
 }
 
-func NewClaudeAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManager) (*ClaudeAIProvider, error) {
+func NewClaudeAIProvider(id int, data ProviderData, manager *oauth.OAuthManager) (*ClaudeAIProvider, error) {
 	var config ClaudeConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
+	if err := json.Unmarshal(data.Config, &config); err != nil {
 		return nil, err
 	}
-	base, err := newOAuthAIProvider(id, raw, manager)
+	base, err := newOAuthAIProvider(id, data, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func NewClaudeAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthMan
 	return &ClaudeAIProvider{oauthAIProvider: base, oauth: config.OAuth}, nil
 }
 func ClaudeAIProviderFactory(manager *oauth.OAuthManager) AIProviderFactory {
-	return func(id string, raw json.RawMessage) (AIProvider, error) { return NewClaudeAIProvider(id, raw, manager) }
+	return func(id int, data ProviderData) (AIProvider, error) { return NewClaudeAIProvider(id, data, manager) }
 }
 func (p *ClaudeAIProvider) UpdateConfig(raw json.RawMessage) error {
 	var config ClaudeConfig

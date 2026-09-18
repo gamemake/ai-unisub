@@ -128,7 +128,7 @@ func newID() string {
 }
 func clone[T any](v T) T { b, _ := json.Marshal(v); var out T; _ = json.Unmarshal(b, &out); return out }
 func (m *Manager) List() (groups []Group, err error) {
-	defer func() { logOperationError("list_groups", "", "", "", err) }()
+	defer func() { logOperationError("list_groups", "", 0, "", err) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	groups, err = m.store.ListProxyGroups()
@@ -164,15 +164,16 @@ func (m *Manager) List() (groups []Group, err error) {
 	}
 	return groups, nil
 }
+
 func (m *Manager) Save(g *Group) (err error) {
 	defer func() {
-		group := ""
+		group := 0
 		if g != nil {
 			group = g.ID
 		}
 		logOperationError("save_group", "", group, "", err)
 	}()
-	if g == nil || strings.TrimSpace(g.ID) == "" || strings.TrimSpace(g.Name) == "" {
+	if g == nil || g.ID == 0 || strings.TrimSpace(g.Name) == "" {
 		return errors.New("proxy group ID and name are required")
 	}
 	if g.MaxRetries < 0 {
@@ -211,7 +212,8 @@ func (m *Manager) Save(g *Group) (err error) {
 	*g = clone(value)
 	return nil
 }
-func (m *Manager) Delete(id string) (err error) {
+
+func (m *Manager) Delete(id int) (err error) {
 	defer func() { logOperationError("delete_group", "", id, "", err) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -220,6 +222,7 @@ func (m *Manager) Delete(id string) (err error) {
 	}
 	return m.store.DeleteProxyGroup(id)
 }
+
 func (m *Manager) state(address, app string) *State {
 	k := stateKey{address, app}
 	s := m.states[k]

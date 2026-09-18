@@ -12,20 +12,20 @@ import (
 // The manager intentionally does not decode the config because different
 // provider types may require different fields. The factory must assign id to
 // AIProviderConfig.ID and keep it immutable afterwards.
-type AIProviderFactory func(id string, config json.RawMessage) (AIProvider, error)
+type AIProviderFactory func(id int, data ProviderData) (AIProvider, error)
 
 // AIProviderManager manages the AIProvider instances used by the system.
 type AIProviderManager struct {
 	mu            sync.RWMutex
 	factories     map[string]AIProviderFactory
-	aiProviders   map[string]AIProvider
-	accounts      map[string]*Account
+	aiProviders   map[int]AIProvider
+	accounts      map[int]*Account
 	proxyResolver ProxyResolver
-	adapters      map[string]string
+	adapters      map[int]string
 	catalog       Catalog
 	bindings      map[string]affinityBinding
-	health        map[string]*memberHealth
-	revisions     map[string]uint64
+	health        map[int]*memberHealth
+	revisions     map[int]uint64
 	revision      uint64
 }
 
@@ -48,13 +48,13 @@ func (m *AIProviderManager) SetProxyResolver(resolver ProxyResolver) {
 func NewAIProviderManager() *AIProviderManager {
 	return &AIProviderManager{
 		factories:   make(map[string]AIProviderFactory),
-		aiProviders: make(map[string]AIProvider),
-		accounts:    make(map[string]*Account),
-		adapters:    make(map[string]string),
+		aiProviders: make(map[int]AIProvider),
+		accounts:    make(map[int]*Account),
+		adapters:    make(map[int]string),
 		catalog:     Catalog{Suppliers: SupplierConfigs()},
 		bindings:    make(map[string]affinityBinding),
-		health:      make(map[string]*memberHealth),
-		revisions:   make(map[string]uint64),
+		health:      make(map[int]*memberHealth),
+		revisions:   make(map[int]uint64),
 	}
 }
 
@@ -85,11 +85,22 @@ func (m *AIProviderManager) Register(aiProviderType string, factory AIProviderFa
 
 // Create creates and stores a AIProvider instance under instanceID.
 // The JSON config is passed unchanged to the registered factory.
-func (m *AIProviderManager) Create(instanceID, aiProviderType string, config json.RawMessage) (AIProvider, error) {
+func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config json.RawMessage, state json.RawMessage, quota json.RawMessage) (AIProvider, error) {
+	data := ProviderData{}
+	if config != nil {
+
+	}
+	if state != nil {
+
+	}
+	if quota != nil {
+
+	}
+
 	if m == nil {
 		return nil, errors.New("provider manager is nil")
 	}
-	if instanceID == "" {
+	if instanceID == 0 {
 		return nil, errors.New("provider instance ID is empty")
 	}
 
@@ -97,17 +108,20 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	factory, ok := m.factories[aiProviderType]
 	m.mu.RUnlock()
 	if aiProviderType == "group" {
-		factory, ok = newGroup, true
+		factory, ok = func(id int, data ProviderData) (AIProvider, error) {
+			return newGroup(id, data)
+		}, true
 	}
 	if !ok {
 		return nil, errors.New("provider type is not registered")
 	}
 
-	config, err := prepareConfig(instanceID, aiProviderType, config)
+	config, err := prepareConfig(instanceID, aiProviderType, data.Config)
 	if err != nil {
 		return nil, err
 	}
-	aiprovider, err := factory(instanceID, config)
+	data.Config = config
+	aiprovider, err := factory(instanceID, data)
 	if err != nil {
 		return nil, err
 	}
@@ -117,11 +131,19 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	if aiprovider.Config().ID != instanceID {
 		return nil, errors.New("provider config ID does not match instance ID")
 	}
+	if err := aiprovider.RestoreState(data.State); err != nil {
+		return nil, err
+	}
+	if aiProviderType != "group" {
+		if err := aiprovider.RestoreQuota(data.Quota); err != nil {
+			return nil, err
+		}
+	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.aiProviders == nil {
-		m.aiProviders = make(map[string]AIProvider)
+		m.aiProviders = make(map[int]AIProvider)
 	}
 	if _, exists := m.aiProviders[instanceID]; exists {
 		return nil, errors.New("provider instance ID is already in use")
@@ -134,7 +156,7 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	m.revisions[instanceID] = m.revision
 	m.aiProviders[instanceID] = aiprovider
 	if m.accounts == nil {
-		m.accounts = make(map[string]*Account)
+		m.accounts = make(map[int]*Account)
 	}
 	m.accounts[instanceID] = &Account{aiprovider: aiprovider}
 	if x, ok := aiprovider.(interface{ SetProxyResolver(ProxyResolver) }); ok {
@@ -146,8 +168,36 @@ func (m *AIProviderManager) Create(instanceID, aiProviderType string, config jso
 	return aiprovider, nil
 }
 
+// Export returns the provider-owned persistence payload. Runtime manager
+// state, cache locks, request sequencing, and credentials held by managers are
+// never included in the result.
+func (m *AIProviderManager) Export(id int) (ProviderData, bool) {
+	if m == nil {
+		return ProviderData{}, false
+	}
+	m.mu.RLock()
+	p, ok := m.aiProviders[id]
+	m.mu.RUnlock()
+	if !ok || p == nil {
+		return ProviderData{}, false
+	}
+	config, err := json.Marshal(p.Config())
+	if err != nil {
+		return ProviderData{}, false
+	}
+	state, err := json.Marshal(p.State())
+	if err != nil {
+		return ProviderData{}, false
+	}
+	quota, err := json.Marshal(p.Quota())
+	if err != nil {
+		return ProviderData{}, false
+	}
+	return ProviderData{Config: config, State: state, Quota: quota}, true
+}
+
 // Get returns the AIProvider instance stored under instanceID.
-func (m *AIProviderManager) Get(instanceID string) (AIProvider, bool) {
+func (m *AIProviderManager) Get(instanceID int) (AIProvider, bool) {
 	if m == nil {
 		return nil, false
 	}
@@ -159,7 +209,7 @@ func (m *AIProviderManager) Get(instanceID string) (AIProvider, bool) {
 }
 
 // Remove removes and returns the AIProvider instance stored under instanceID.
-func (m *AIProviderManager) Remove(instanceID string) (AIProvider, bool) {
+func (m *AIProviderManager) Remove(instanceID int) (AIProvider, bool) {
 	if m == nil {
 		return nil, false
 	}
@@ -184,14 +234,14 @@ func (m *AIProviderManager) Remove(instanceID string) (AIProvider, bool) {
 	return aiprovider, ok
 }
 
-func (m *AIProviderManager) GetAccount(id string) (*Account, bool) {
+func (m *AIProviderManager) GetAccount(id int) (*Account, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	a, ok := m.accounts[id]
 	return a, ok
 }
 
-func (m *AIProviderManager) UpdateConfig(id string, config json.RawMessage) error {
+func (m *AIProviderManager) UpdateConfig(id int, config json.RawMessage) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.accounts[id]

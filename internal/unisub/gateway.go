@@ -37,7 +37,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		common.WriteError(w, 400, err.Error())
 		return
 	}
-	userID := ""
+	userID := 0
 	if principal.User != nil {
 		userID = principal.User.ID
 	}
@@ -135,7 +135,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
-		saved := &database.PersistedCallTrace{ID: newID(), APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
+		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
 		if output.status >= 400 {
 			saved.HTTPErrorCode = output.status
 		}
@@ -147,7 +147,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			common.ModuleLogger("gateway").Error("record_call_failed", fmt.Sprintf("record gateway call %s: %v", requestID, err))
 		}
 	}
-	var tried []string
+	var tried []int
 	root, _ := ctx.AIProviders().Get(principal.Account.ID)
 	for attempt := range 3 {
 		var retryTrace *aiprovider.AIProviderCallTrace

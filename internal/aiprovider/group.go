@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"math/rand/v2"
 	"net/http"
@@ -17,16 +18,17 @@ import (
 )
 
 type GroupMember struct {
-	ID     string `json:"id"`
-	Weight int    `json:"weight"`
+	ID     int `json:"id"`
+	Weight int `json:"weight"`
 }
+
 type groupProvider struct {
 	mu     sync.RWMutex
 	config AIProviderConfig
 }
 
-func newGroup(id string, raw json.RawMessage) (AIProvider, error) {
-	c, e := decodeAIProviderConfig(id, raw)
+func newGroup(id int, data ProviderData) (AIProvider, error) {
+	c, e := decodeAIProviderConfig(id, data.Config)
 	if e != nil {
 		return nil, e
 	}
@@ -36,6 +38,24 @@ func (g *groupProvider) Config() AIProviderConfig {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return cloneAIProviderConfig(g.config)
+}
+func (g *groupProvider) State() AIProviderState { return AIProviderState{} }
+func (g *groupProvider) Quota() AIProviderQuota { return AIProviderQuota{} }
+func (g *groupProvider) RestoreState(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var state AIProviderState
+	return json.Unmarshal(raw, &state)
+}
+func (g *groupProvider) RestoreQuota(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	if len(raw) > 0 && string(raw) != "null" {
+		return ErrQuotaUnsupported
+	}
+	return nil
 }
 func (g *groupProvider) UpdateConfig(raw json.RawMessage) error {
 	c, e := decodeAIProviderConfig(g.Config().ID, raw)
@@ -62,7 +82,10 @@ func (g *groupProvider) ResetUsage(context.Context) error {
 	return errors.New("reset usage per member")
 }
 
-func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, error) {
+func prepareConfig(id int, adapter string, raw json.RawMessage) (json.RawMessage, error) {
+	if len(raw) == 0 {
+		raw = json.RawMessage(`{}`)
+	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return nil, err
@@ -116,17 +139,17 @@ func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, er
 				return nil, errors.New("member weight must be an integer from 1 to 5")
 			}
 		}
-		if c.APIKey != "" || c.CredentialID != "" || c.Supplier != "" || c.APIEndpoint != "" || c.ProxyGroupID != "" || c.OfficialOnly {
+		if c.APIKey != "" || c.CredentialID != "" || c.Supplier != "" || c.APIEndpoint != "" || c.ProxyGroupID != 0 || c.OfficialOnly {
 			return nil, errors.New("groups cannot own credentials, supplier, endpoint or proxy group")
 		}
 		if len(c.Members) == 0 {
 			return nil, errors.New("group requires members")
 		}
-		seen := map[string]bool{}
+		seen := map[int]bool{}
 		for i := range c.Members {
 			member := &c.Members[i]
 			member.Weight = cmp.Or(member.Weight, 3)
-			if member.ID == "" || member.ID == id || seen[member.ID] || member.Weight < 1 || member.Weight > 5 {
+			if member.ID == 0 || member.ID == id || seen[member.ID] || member.Weight < 1 || member.Weight > 5 {
 				return nil, errors.New("invalid group member or weight")
 			}
 			seen[member.ID] = true
@@ -142,8 +165,8 @@ func prepareConfig(id, adapter string, raw json.RawMessage) (json.RawMessage, er
 	return json.Marshal(fields)
 }
 
-func (m *AIProviderManager) validateRelations(id string, c AIProviderConfig) error {
-	configs := map[string]AIProviderConfig{}
+func (m *AIProviderManager) validateRelations(id int, c AIProviderConfig) error {
+	configs := map[int]AIProviderConfig{}
 	for key, p := range m.aiProviders {
 		configs[key] = p.Config()
 	}
@@ -164,7 +187,7 @@ func (m *AIProviderManager) validateRelations(id string, c AIProviderConfig) err
 	}
 	return nil
 }
-func (m *AIProviderManager) Referenced(id string) bool {
+func (m *AIProviderManager) Referenced(id int) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for p := range maps.Values(m.aiProviders) {
@@ -178,7 +201,7 @@ func (m *AIProviderManager) Referenced(id string) bool {
 }
 
 type affinityBinding struct {
-	id   string
+	id   int
 	last time.Time
 }
 type memberHealth struct {
@@ -189,7 +212,7 @@ type memberHealth struct {
 }
 type Selection struct {
 	revision uint64
-	ID       string
+	ID       int
 	Adapter  string
 	Provider AIProvider
 	Account  *Account
@@ -198,7 +221,7 @@ type Selection struct {
 }
 
 // Select serializes affinity creation with health admission across groups.
-func (m *AIProviderManager) Select(id, user string, headers http.Header, path string, tried []string) (Selection, error) {
+func (m *AIProviderManager) Select(id int, user int, headers http.Header, path string, tried []int) (Selection, error) {
 	session, err := SessionID(headers)
 	if err != nil {
 		return Selection{}, err
@@ -219,7 +242,7 @@ func (m *AIProviderManager) Select(id, user string, headers http.Header, path st
 		members = []GroupMember{{ID: id, Weight: 3}}
 	}
 	now := time.Now()
-	var choices []string
+	var choices []int
 	weight := 0
 	for _, member := range members {
 		child, exists := m.aiProviders[member.ID]
@@ -249,9 +272,9 @@ func (m *AIProviderManager) Select(id, user string, headers http.Header, path st
 		return Selection{}, ErrUnavailable
 	}
 	key := ""
-	selected := ""
+	selected := 0
 	if session != "" && c.Kind == "group" {
-		sum := sha256.Sum256([]byte(user + "\x00" + id + "\x00" + string(client) + "\x00" + session))
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", user, id, client, session)))
 		key = hex.EncodeToString(sum[:])
 		maps.DeleteFunc(m.bindings, func(_ string, b affinityBinding) bool {
 			return now.Sub(b.last) >= 30*time.Minute
@@ -261,7 +284,7 @@ func (m *AIProviderManager) Select(id, user string, headers http.Header, path st
 			selected = b.id
 		}
 	}
-	if selected == "" {
+	if selected == 0 {
 		selected = choices[rand.IntN(len(choices))]
 	}
 	if key != "" {

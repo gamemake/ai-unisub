@@ -82,6 +82,7 @@ type PersistedProxyGroup struct {
 type PersistedProxyLog struct {
 	GroupID          int       `json:"group_id"`
 	ProxyURL         string    `json:"proxy_url"`
+	URL              string    `json:"url"`
 	AppType          string    `json:"app_type"`
 	HTTPErrorCode    int       `json:"http_error_code"`
 	HTTPErrorMessage string    `json:"http_error_message"`
@@ -236,8 +237,6 @@ type Database interface {
 	LoadModuleConfig(module string) (json.RawMessage, error)
 	// SaveModuleConfig validates and stores a module configuration.
 	SaveModuleConfig(module string, config json.RawMessage) error
-	// DeleteModuleConfig deletes a module configuration by module name.
-	DeleteModuleConfig(module string) error
 
 	// ListProxyGroups returns all persisted proxy groups.
 	ListProxyGroups() ([]PersistedProxyGroup, error)

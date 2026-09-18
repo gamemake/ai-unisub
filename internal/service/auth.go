@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +38,7 @@ type authService struct {
 	sessions map[string]session
 }
 type session struct {
-	UserID    string
+	UserID    int
 	ExpiresAt time.Time
 }
 type principalKey struct{}
@@ -65,25 +66,14 @@ func (a *authService) EnsureAdmin(n, p string) error {
 	if e != nil {
 		return e
 	}
-	for _, u := range xs {
-		if u.Name == n {
-			if u.PasswordHash == "" {
-				u.PasswordHash = HashPassword(p)
-				u.UpdatedAt = time.Now().UTC()
-				return a.s.db.SaveUser(&u)
-			}
-			return nil
-		}
+	if len(xs) > 0 {
+		return nil
+	} else {
+		return a.s.db.SaveUser(&database.PersistedUser{ID: 0, Name: n, Role: database.UserRoleAdmin, Enabled: true, PasswordHash: HashPassword(p)})
 	}
-	var id [16]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		return err
-	}
-	now := time.Now().UTC()
-	return a.s.db.SaveUser(&database.PersistedUser{ID: hex.EncodeToString(id[:]), Name: n, Role: database.UserRoleAdmin, Enabled: true, PasswordHash: HashPassword(p), CreatedAt: now, UpdatedAt: now})
 }
 func (a *authService) CreateSession(user *database.PersistedUser) (string, error) {
-	if user == nil || user.ID == "" {
+	if user == nil || user.ID <= 0 {
 		return "", errors.New("user is required")
 	}
 	users, err := a.s.db.ListUsers()
@@ -166,7 +156,7 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
 		return Principal{}, http.StatusUnauthorized, false
 	}
-	keys, err := a.s.db.ListAPIKeys("")
+	keys, err := a.s.db.ListAPIKeys(0)
 	if err != nil {
 		return Principal{}, http.StatusInternalServerError, false
 	}
@@ -180,7 +170,7 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 			break
 		}
 	}
-	if key.ID == "" {
+	if key.ID <= 0 {
 		return Principal{}, http.StatusUnauthorized, false
 	}
 	users, err := a.s.db.ListUsers()
@@ -194,7 +184,7 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 			break
 		}
 	}
-	if user.ID == "" {
+	if user.ID <= 0 {
 		return Principal{}, http.StatusForbidden, false
 	}
 	accounts, err := a.s.db.ListAccounts()
@@ -208,10 +198,10 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 			break
 		}
 	}
-	if account.ID == "" {
+	if account.ID <= 0 {
 		return Principal{}, http.StatusForbidden, false
 	}
-	return Principal{User: &user, Account: &account, APIKeyID: key.ID, Method: AuthMethod(AuthAPIKey)}, http.StatusOK, true
+	return Principal{User: &user, Account: &account, APIKeyID: strconv.Itoa(key.ID), Method: AuthMethod(AuthAPIKey)}, http.StatusOK, true
 }
 
 func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler {

@@ -132,28 +132,172 @@ func (s *SQLiteDatabase) SaveModuleConfig(module string, raw json.RawMessage) er
 	return err
 }
 
-func (s *SQLiteDatabase) DeleteModuleConfig(module string) error {
-	if err := validateModuleName(module); err != nil {
-		return err
-	}
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`DELETE FROM module_configs WHERE module=?`, module)
-	if err == nil {
-		s.mem.DeleteModuleConfig(module)
-	}
-	return err
-}
-
-func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) { return s.mem.ListAccounts(), nil }
 func (s *SQLiteDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
 	return s.mem.ListProxyGroups(), nil
 }
 
+func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
+	if value == nil || value.ID < 0 {
+		return errors.New("proxy group and ID are required")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	config, err := json.Marshal(value.Config)
+	if err != nil {
+		return err
+	}
+	state, err := json.Marshal(value.State)
+	if err != nil {
+		return err
+	}
+	result, err := s.db.Exec(`INSERT INTO proxy_groups(id, config, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET config=excluded.config, state=excluded.state, created_at=excluded.created_at, updated_at=excluded.updated_at`, databaseID(value.ID), config, state, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
+	if err != nil {
+		return err
+	}
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveProxyGroup(*value)
+}
+
+func (s *SQLiteDatabase) DeleteProxyGroup(id int) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.mem.DeleteProxyGroup(id)
+	return nil
+}
+
+func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
+	if value == nil {
+		return errors.New("proxy log is nil")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	table := proxyLogTable(value.Time)
+	if _, err := s.db.Exec(createProxyLogTableSQL(table)); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(fmt.Sprintf("INSERT INTO %s(group_id, proxy_url, url, app_type, http_error_code, http_error_message, time) VALUES(?, ?, ?, ?, ?, ?, ?)", table), value.GroupID, value.ProxyURL, value.URL, value.AppType, value.HTTPErrorCode, value.HTTPErrorMessage, value.Time.UTC())
+	return err
+}
+
+func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, 0, err
+	}
+	if page < 1 {
+		return nil, 0, errors.New("page must be greater than zero")
+	}
+	if pageSize < 1 {
+		return nil, 0, errors.New("page size must be greater than zero")
+	}
+	if filter.TimeRange.Start.After(filter.TimeRange.End) {
+		return nil, 0, errors.New("start time must not be after end time")
+	}
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
+	if err != nil {
+		return nil, 0, err
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			rows.Close()
+			return nil, 0, err
+		}
+		if proxyLogTablePattern.MatchString(name) && proxyLogTableInRange(name, &filter.TimeRange) {
+			tables = append(tables, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, 0, err
+	}
+	rows.Close()
+	if len(tables) == 0 {
+		return []PersistedProxyLog{}, 0, nil
+	}
+	slices.Sort(tables)
+	queries := make([]string, len(tables))
+	args := make([]any, 0, len(tables)*6)
+	for i, table := range tables {
+		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, url, app_type, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND (? = '' OR app_type = ?) AND time >= ? AND time < ?", table)
+		args = append(args, filter.GroupID, filter.ProxyURL, filter.ProxyURL, filter.AppType, filter.AppType, filter.TimeRange.Start.UTC(), filter.TimeRange.End.UTC())
+	}
+	query := "SELECT group_id, proxy_url, url, app_type, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM ("+query+")", args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	offset := (page - 1) * pageSize
+	queryArgs := append(slices.Clone(args), pageSize, offset)
+	rows, err = s.db.Query(query+" LIMIT ? OFFSET ?", queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	result := []PersistedProxyLog{}
+	for rows.Next() {
+		var value PersistedProxyLog
+		if err := rows.Scan(&value.GroupID, &value.ProxyURL, &value.URL, &value.AppType, &value.HTTPErrorCode, &value.HTTPErrorMessage, &value.Time); err != nil {
+			return nil, 0, err
+		}
+		result = append(result, value)
+	}
+	return result, total, rows.Err()
+}
+
+// CleanupProxyLog removes complete daily proxy log tables older than days. A
+// value of zero removes all tables before today and keeps today's logs.
+func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
+	if days < 0 {
+		return errors.New("cleanup days must not be negative")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("20060102")
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
+	if err != nil {
+		return err
+	}
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			rows.Close()
+			return err
+		}
+		if proxyLogTablePattern.MatchString(table) && strings.TrimPrefix(table, "proxy_logs_") < cutoff {
+			tables = append(tables, table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, table := range tables {
+		if _, err := s.db.Exec("DROP TABLE " + table); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
-	if raw, ok := s.mem.LoadCredential(id); ok {
-		return raw, nil
+	if json := s.mem.GetCredential(id); json != nil {
+		return json, nil
 	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
@@ -163,9 +307,10 @@ func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
 		return nil, err
 	}
 	if !json.Valid(raw) {
+		s.DeleteCredential(id)
 		return nil, errors.New("stored credential is invalid JSON")
 	}
-	s.mem.SaveCredential(id, raw)
+	s.mem.SetCredential(id, raw)
 	return json.RawMessage(raw), nil
 }
 
@@ -179,7 +324,7 @@ func (s *SQLiteDatabase) SaveCredential(id string, value json.RawMessage) error 
 	if _, err := s.db.Exec(`INSERT INTO oauth_credentials(id, credential) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET credential=excluded.credential`, id, value); err != nil {
 		return err
 	}
-	s.mem.SaveCredential(id, value)
+	s.mem.SetCredential(id, value)
 	return nil
 }
 
@@ -193,14 +338,17 @@ func (s *SQLiteDatabase) DeleteCredential(id string) error {
 	s.mem.DeleteCredential(id)
 	return nil
 }
-func (s *SQLiteDatabase) ListUsers() ([]PersistedUser, error) { return s.mem.ListUsers(), nil }
-func (s *SQLiteDatabase) ListAPIKeys(userID int) ([]PersistedAPIKey, error) {
-	return s.mem.ListAPIKeys(userID), nil
+
+func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) {
+	return s.mem.ListAccounts(), nil
 }
 
 func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
 	if err := validateAccount(value); err != nil {
 		return err
+	}
+	if value.ID > 0 && !s.mem.HasAccount(value.ID) {
+		return errors.New("account not existed")
 	}
 	if err := s.ensureOpen(); err != nil {
 		return err
@@ -246,48 +394,16 @@ func (s *SQLiteDatabase) DeleteAccount(id int) error {
 	return nil
 }
 
-func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
-	if value == nil || value.ID < 0 {
-		return errors.New("proxy group and ID are required")
-	}
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	config, err := json.Marshal(value.Config)
-	if err != nil {
-		return err
-	}
-	state, err := json.Marshal(value.State)
-	if err != nil {
-		return err
-	}
-	result, err := s.db.Exec(`INSERT INTO proxy_groups(id, config, state, created_at, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET config=excluded.config, state=excluded.state, created_at=excluded.created_at, updated_at=excluded.updated_at`, databaseID(value.ID), config, state, value.CreatedAt.UTC(), value.UpdatedAt.UTC())
-	if err != nil {
-		return err
-	}
-	if value.ID == 0 {
-		id, err := result.LastInsertId()
-		if err != nil {
-			return err
-		}
-		value.ID = int(id)
-	}
-	return s.mem.SaveProxyGroup(*value)
-}
-func (s *SQLiteDatabase) DeleteProxyGroup(id int) error {
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	if _, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteProxyGroup(id)
-	return nil
+func (s *SQLiteDatabase) ListUsers() ([]PersistedUser, error) {
+	return s.mem.ListUsers(), nil
 }
 
 func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
 	if err := validateUser(value); err != nil {
 		return err
+	}
+	if value.ID > 0 && !s.mem.HasAccount(value.ID) {
+		return errors.New("user not found")
 	}
 	if err := s.ensureOpen(); err != nil {
 		return err
@@ -328,9 +444,16 @@ func (s *SQLiteDatabase) DeleteUser(id int) error {
 	return nil
 }
 
+func (s *SQLiteDatabase) ListAPIKeys(userID int) ([]PersistedAPIKey, error) {
+	return s.mem.ListAPIKeys(userID), nil
+}
+
 func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
 	if err := validateAPIKey(value); err != nil {
 		return err
+	}
+	if value.ID > 0 && !s.mem.HasAPIKey(value.ID) {
+		return errors.New("apikey not found")
 	}
 	if err := s.ensureOpen(); err != nil {
 		return err
@@ -799,125 +922,6 @@ func buildTraceUnionQuery(tables []string, userName, aiProviderName string, code
 	return strings.Join(queries, " UNION ALL "), args
 }
 
-func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
-	if value == nil {
-		return errors.New("proxy log is nil")
-	}
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	table := proxyLogTable(value.Time)
-	if _, err := s.db.Exec(createProxyLogTableSQL(table)); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(fmt.Sprintf("INSERT INTO %s(group_id, proxy_url, app_type, http_error_code, http_error_message, time) VALUES(?, ?, ?, ?, ?, ?)", table), value.GroupID, value.ProxyURL, value.AppType, value.HTTPErrorCode, value.HTTPErrorMessage, value.Time.UTC())
-	return err
-}
-
-func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
-	if err := s.ensureOpen(); err != nil {
-		return nil, 0, err
-	}
-	if page < 1 {
-		return nil, 0, errors.New("page must be greater than zero")
-	}
-	if pageSize < 1 {
-		return nil, 0, errors.New("page size must be greater than zero")
-	}
-	if filter.TimeRange.Start.After(filter.TimeRange.End) {
-		return nil, 0, errors.New("start time must not be after end time")
-	}
-	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
-	if err != nil {
-		return nil, 0, err
-	}
-	var tables []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		if proxyLogTablePattern.MatchString(name) && proxyLogTableInRange(name, &filter.TimeRange) {
-			tables = append(tables, name)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, 0, err
-	}
-	rows.Close()
-	if len(tables) == 0 {
-		return []PersistedProxyLog{}, 0, nil
-	}
-	slices.Sort(tables)
-	queries := make([]string, len(tables))
-	args := make([]any, 0, len(tables)*6)
-	for i, table := range tables {
-		queries[i] = fmt.Sprintf("SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM %s WHERE group_id = ? AND (? = '' OR proxy_url = ?) AND (? = '' OR app_type = ?) AND time >= ? AND time < ?", table)
-		args = append(args, filter.GroupID, filter.ProxyURL, filter.ProxyURL, filter.AppType, filter.AppType, filter.TimeRange.Start.UTC(), filter.TimeRange.End.UTC())
-	}
-	query := "SELECT group_id, proxy_url, app_type, http_error_code, http_error_message, time FROM (" + strings.Join(queries, " UNION ALL ") + ") ORDER BY time DESC"
-	var total int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM ("+query+")", args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	offset := (page - 1) * pageSize
-	queryArgs := append(slices.Clone(args), pageSize, offset)
-	rows, err = s.db.Query(query+" LIMIT ? OFFSET ?", queryArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	result := []PersistedProxyLog{}
-	for rows.Next() {
-		var value PersistedProxyLog
-		if err := rows.Scan(&value.GroupID, &value.ProxyURL, &value.AppType, &value.HTTPErrorCode, &value.HTTPErrorMessage, &value.Time); err != nil {
-			return nil, 0, err
-		}
-		result = append(result, value)
-	}
-	return result, total, rows.Err()
-}
-
-// CleanupProxyLog removes complete daily proxy log tables older than days. A
-// value of zero removes all tables before today and keeps today's logs.
-func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
-	if days < 0 {
-		return errors.New("cleanup days must not be negative")
-	}
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -days).Format("20060102")
-	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
-	if err != nil {
-		return err
-	}
-	var tables []string
-	for rows.Next() {
-		var table string
-		if err := rows.Scan(&table); err != nil {
-			rows.Close()
-			return err
-		}
-		if proxyLogTablePattern.MatchString(table) && strings.TrimPrefix(table, "proxy_logs_") < cutoff {
-			tables = append(tables, table)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
-	for _, table := range tables {
-		if _, err := s.db.Exec("DROP TABLE " + table); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 var proxyLogTablePattern = regexp.MustCompile(`^proxy_logs_[0-9]{8}$`)
 
 func proxyLogTable(t time.Time) string { return "proxy_logs_" + t.UTC().Format("20060102") }
@@ -936,7 +940,7 @@ func createProxyLogTableSQL(table string) string {
 	if !proxyLogTablePattern.MatchString(table) {
 		panic("invalid proxy log table name")
 	}
-	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id INTEGER NOT NULL, proxy_url TEXT NOT NULL, app_type TEXT NOT NULL DEFAULT '', http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
+	return fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (group_id INTEGER NOT NULL, proxy_url TEXT NOT NULL, url TEXT NOT NULL DEFAULT '', app_type TEXT NOT NULL DEFAULT '', http_error_code INTEGER NOT NULL, http_error_message TEXT NOT NULL, time DATETIME NOT NULL)", table)
 }
 
 func valuesToAny(values []string) []any {

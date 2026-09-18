@@ -8,7 +8,7 @@ import (
 	"net/http"
 )
 
-func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id string) {
+func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if !isAdmin(r) {
 		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
 		return

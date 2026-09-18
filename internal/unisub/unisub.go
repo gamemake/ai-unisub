@@ -48,7 +48,7 @@ func New(cfg Config) (*service.Service, error) {
 		return -1
 	})
 	for _, account := range accounts {
-		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config); err != nil {
+		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config, account.State, account.Quota); err != nil {
 			return fail(fmt.Errorf("load provider %s: %w", account.ID, err))
 		}
 	}

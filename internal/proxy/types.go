@@ -5,7 +5,7 @@ import "time"
 // Group is a named pool of outbound proxy addresses.
 type Group struct {
 	Enabled    *bool     `json:"enabled,omitempty"`
-	ID         string    `json:"id"`
+	ID         int       `json:"id"`
 	Name       string    `json:"name"`
 	Remark     string    `json:"remark"`
 	MaxRetries int       `json:"max_retries"`

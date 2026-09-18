@@ -13,7 +13,7 @@ const (
 	AuthTypeAPIKey = "api_key"
 )
 
-func decodeAIProviderConfig(id string, raw json.RawMessage) (AIProviderConfig, error) {
+func decodeAIProviderConfig(id int, raw json.RawMessage) (AIProviderConfig, error) {
 	config := AIProviderConfig{Enabled: true}
 	if len(raw) > 0 && string(raw) != "null" {
 		var fields map[string]json.RawMessage
@@ -30,7 +30,7 @@ func decodeAIProviderConfig(id string, raw json.RawMessage) (AIProviderConfig, e
 			return AIProviderConfig{}, errors.New("provider api_keys is no longer supported")
 		}
 	}
-	if id != "" {
+	if id != 0 {
 		config.ID = id
 	}
 	if strings.TrimSpace(config.AuthType) == "" {

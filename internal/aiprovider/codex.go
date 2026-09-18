@@ -17,12 +17,12 @@ type CodexAIProvider struct {
 	oauth OAuthConfig
 }
 
-func NewCodexAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManager) (*CodexAIProvider, error) {
+func NewCodexAIProvider(id int, data ProviderData, manager *oauth.OAuthManager) (*CodexAIProvider, error) {
 	var config CodexConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
+	if err := json.Unmarshal(data.Config, &config); err != nil {
 		return nil, err
 	}
-	base, err := newOAuthAIProvider(id, raw, manager)
+	base, err := newOAuthAIProvider(id, data, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func NewCodexAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthMana
 	return &CodexAIProvider{oauthAIProvider: base, oauth: config.OAuth}, nil
 }
 func CodexAIProviderFactory(manager *oauth.OAuthManager) AIProviderFactory {
-	return func(id string, raw json.RawMessage) (AIProvider, error) { return NewCodexAIProvider(id, raw, manager) }
+	return func(id int, data ProviderData) (AIProvider, error) { return NewCodexAIProvider(id, data, manager) }
 }
 func (p *CodexAIProvider) UpdateConfig(raw json.RawMessage) error {
 	var config CodexConfig

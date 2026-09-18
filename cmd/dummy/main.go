@@ -115,7 +115,7 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 	if err != nil {
 		return nil, nil, fmt.Errorf("list accounts: %w", err)
 	}
-	accountByID := make(map[string]*database.PersistedAccount, len(accounts))
+	accountByID := make(map[int]*database.PersistedAccount, len(accounts))
 	for i := range accounts {
 		accountByID[accounts[i].ID] = &accounts[i]
 	}
@@ -137,7 +137,7 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 			}
 			account := accountByID[keys[i].AccountID]
 			if account == nil {
-				return nil, nil, fmt.Errorf("API key %q references missing account %q", value, keys[i].AccountID)
+				return nil, nil, fmt.Errorf("API key %q references missing account %d", value, keys[i].AccountID)
 			}
 			if account.AIProvider != "dummy" {
 				return nil, nil, fmt.Errorf("API key %q is bound to provider %q, not dummy", value, account.AIProvider)
@@ -156,10 +156,6 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 }
 
 func recordDummyCall(db database.Database, key *database.PersistedAPIKey, account *database.PersistedAccount, index int, rng *mathrand.Rand) error {
-	id, err := randomID(16)
-	if err != nil {
-		return fmt.Errorf("generate record ID: %w", err)
-	}
 	requestID, err := randomID(8)
 	if err != nil {
 		return fmt.Errorf("generate request ID: %w", err)
@@ -197,7 +193,7 @@ func recordDummyCall(db database.Database, key *database.PersistedAPIKey, accoun
 	outboundHeaders.Set("X-Forwarded-By", "ai-unisub")
 	responseBody := fmt.Sprintf(`{"id":"dummy-%s","model":"%s","choices":[{"message":{"content":"dummy response sample %d"}}]}`, requestID[:10], model, 1+rng.Intn(999))
 	trace := &database.PersistedCallTrace{
-		ID:                     id,
+		ID:                     0,
 		APIKey:                 key.Key,
 		AIProviderType:         "dummy",
 		AccountID:              account.ID,

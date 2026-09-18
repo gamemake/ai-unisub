@@ -73,7 +73,8 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	if cfg.ProxyPolicy != nil {
 		policy = *cfg.ProxyPolicy
 	}
-	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxy.NewManager(db, policy), oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
+	proxyManager := proxy.NewManager(proxy.NewStoreProxyForDB(&db), policy)
+	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxyManager, oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
 	if raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey); err != nil {
 		_ = s.proxy.Close()
@@ -101,8 +102,8 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 		"grok":   aiprovider.GrokAIProviderFactory(s.oauth),
 		"codex":  aiprovider.CodexAIProviderFactory(s.oauth),
 		"claude": aiprovider.ClaudeAIProviderFactory(s.oauth),
-		"dummy": func(id string, config json.RawMessage) (aiprovider.AIProvider, error) {
-			return aiprovider.NewDummyAIProvider(id, config)
+		"dummy": func(id int, data aiprovider.ProviderData) (aiprovider.AIProvider, error) {
+			return aiprovider.NewDummyAIProvider(id, data)
 		},
 	}
 	for name, factory := range factories {

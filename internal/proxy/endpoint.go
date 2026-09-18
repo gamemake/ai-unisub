@@ -24,7 +24,7 @@ func (e *Endpoint) String() string {
 	return e.address
 }
 func NewEndpoint(address string) (endpoint *Endpoint, err error) {
-	defer func() { logOperationError("parse_endpoint", address, "", "", err) }()
+	defer func() { logOperationError("parse_endpoint", address, 0, "", err) }()
 	return newEndpoint(address)
 }
 

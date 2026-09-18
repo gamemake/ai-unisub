@@ -1,13 +1,44 @@
 package proxy
 
-import "time"
+import (
+	"ai-unisub/internal/database"
+	"time"
+)
 
 type Store interface {
 	ListProxyGroups() ([]Group, error)
 	SaveProxyGroup(*Group) error
-	DeleteProxyGroup(string) error
+	DeleteProxyGroup(int) error
 	SaveProxyStats([]Bucket) error
 	ListProxyStats(string, string, time.Time, time.Time) ([]Bucket, error)
+}
+
+type StoreProxyForDB struct {
+	db *database.Database
+}
+
+func NewStoreProxyForDB(db *database.Database) Store {
+	return &StoreProxyForDB{db: db}
+}
+
+func (p *StoreProxyForDB) ListProxyGroups() ([]Group, error) {
+	return nil, nil
+}
+
+func (p *StoreProxyForDB) SaveProxyGroup(*Group) error {
+	return nil
+}
+
+func (p *StoreProxyForDB) DeleteProxyGroup(int) error {
+	return nil
+}
+
+func (p *StoreProxyForDB) SaveProxyStats([]Bucket) error {
+	return nil
+}
+
+func (p *StoreProxyForDB) ListProxyStats(string, string, time.Time, time.Time) ([]Bucket, error) {
+	return nil, nil
 }
 
 // Source makes absolute snapshots idempotent across retries and process restarts.

@@ -61,7 +61,7 @@ func TestQuotaOAuthRecoveryAndRedirectRefusal(t *testing.T) {
 	if len(p.GetCachedQuota().Subscription) != 1 || p.GetCachedQuota().Subscription[0].Usage != 25 {
 		t.Fatal("redirect destroyed cache")
 	}
-	p.config.ProxyGroupID = "required-proxy"
+	p.config.ProxyGroupID = 1
 	if _, err := p.quota(t.Context(), ""); !errors.Is(err, ErrQuotaNotConfigured) || calls != 3 {
 		t.Fatal("bypassed required proxy", err, calls)
 	}

@@ -159,7 +159,7 @@ func (m *Manager) History(e *Endpoint, app string, from, to time.Time) ([]Bucket
 	return buckets, err
 }
 func (m *Manager) Flush() (err error) {
-	defer func() { logOperationError("flush", "", "", "", err) }()
+	defer func() { logOperationError("flush", "", 0, "", err) }()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.flushLocked()

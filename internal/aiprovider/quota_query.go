@@ -2,7 +2,6 @@ package aiprovider
 
 import (
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/proxy"
 	"context"
 	"errors"
 	"io"
@@ -126,39 +125,20 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 	if !validQuotaHeaders(overrides) {
 		return nil, ErrQuotaNotConfigured
 	}
-	var endpoint *proxy.Endpoint
-	if config.ProxyGroupID != "" {
+	if config.ProxyGroupID != 0 {
 		if resolver == nil {
 			return nil, ErrQuotaNotConfigured
 		}
-		endpoint, err = resolver.ResolveProxy(ctx, config.ProxyGroupID, config.Supplier, nil)
-		if err != nil || endpoint == nil {
+		var selected *http.Client
+		if !p.withProxy(ctx, resolver, config.ProxyGroupID, config.Supplier, func(c *http.Client) { selected = c }) || selected == nil {
 			return nil, ErrQuotaUpstream
 		}
+		baseClient = selected
 	}
-	status := 0
-	class := proxy.Canceled
-	defer func() {
-		if endpoint != nil {
-			_ = proxy.ReportResult(resolver, endpoint, config.Supplier, class, nil, status)
-		}
-	}()
 	if baseClient == nil {
 		baseClient = upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
 	}
-	proxied := proxy.Client(baseClient, endpoint)
-	if proxied != baseClient {
-		defer proxied.CloseIdleConnections()
-	}
-	client := *proxied
-	if endpoint == nil {
-		if transport, ok := client.Transport.(*http.Transport); ok {
-			direct := transport.Clone()
-			direct.Proxy = nil // Only the provider's explicit proxy group is used.
-			client.Transport = direct
-			defer direct.CloseIdleConnections()
-		}
-	}
+	client := *baseClient
 	client.Timeout = 25 * time.Second
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	token, accountID := config.APIKey, ""
@@ -216,14 +196,9 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
-				class = proxy.NetworkError
 				return nil, ErrQuotaUpstream
 			}
-			status = resp.StatusCode
-			class = proxy.ApplicationIgnored
-			if status >= 500 {
-				class = proxy.ApplicationError
-			}
+			status := resp.StatusCode
 			if status == 401 && service != "" && attempt == 0 {
 				resp.Body.Close()
 				token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, &client)
@@ -286,7 +261,6 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	class = proxy.Success
 	stamp.observed = time.Now().UTC()
 	if service != "" {
 		updates, err := subscriptionBodyUpdates(config.Supplier, items, stamp.observed)

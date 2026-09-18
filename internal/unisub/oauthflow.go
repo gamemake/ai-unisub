@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -46,11 +47,11 @@ func (m *OAuthFlowModule) api(ctx framework.ModuleContext, w http.ResponseWriter
 			common.WriteError(w, 401, common.MessageUnauthorized)
 			return
 		}
-		if id, found := ctx.OAuthResults().FindSession(parts[2], parts[0], principal.User.ID); found {
+		if id, found := ctx.OAuthResults().FindSession(parts[2], parts[0], strconv.Itoa(principal.User.ID)); found {
 			writeJSON(w, 200, map[string]string{"status": "complete", "result_id": id})
 			return
 		}
-		if _, err := ctx.OAuth().SessionForSubject(parts[2], parts[0], principal.User.ID); err != nil {
+		if _, err := ctx.OAuth().SessionForSubject(parts[2], parts[0], strconv.Itoa(principal.User.ID)); err != nil {
 			oauthAPIError(w, err)
 			return
 		}
@@ -104,7 +105,7 @@ func (m *OAuthFlowModule) complete(ctx framework.ModuleContext, w http.ResponseW
 		common.WriteError(w, 400, common.MessageUnsupportedOAuthService)
 		return
 	}
-	if _, err := ctx.OAuth().SessionForSubject(sessionID, name, principal.User.ID); err != nil {
+	if _, err := ctx.OAuth().SessionForSubject(sessionID, name, strconv.Itoa(principal.User.ID)); err != nil {
 		oauthAPIError(w, err)
 		return
 	}
@@ -128,7 +129,7 @@ func (m *OAuthFlowModule) complete(ctx framework.ModuleContext, w http.ResponseW
 		common.WriteError(w, 502, common.MessageInvalidOAuthCredential)
 		return
 	}
-	id, err := ctx.OAuthResults().Put(framework.OAuthResult{SessionID: sessionID, SubjectID: principal.User.ID, Service: name, Credential: *credential})
+	id, err := ctx.OAuthResults().Put(framework.OAuthResult{SessionID: sessionID, SubjectID: strconv.Itoa(principal.User.ID), Service: name, Credential: *credential})
 	if err != nil {
 		common.WriteError(w, 500, common.MessageCouldNotStoreOAuthResult)
 		return
@@ -149,7 +150,7 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	redirect := callbackURL(ctx.Config(), r, service)
 	var input struct {
 		Proxy        string `json:"proxy"`
-		ProxyGroupID string `json:"proxy_group_id"`
+		ProxyGroupID int    `json:"proxy_group_id"`
 	}
 	if err := decodeOptionalJSON(r, &input); err != nil {
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidJSONBody)
@@ -157,7 +158,7 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	}
 	reqCtx := r.Context()
 	var endpoint *proxy.Endpoint
-	if input.ProxyGroupID != "" {
+	if input.ProxyGroupID != 0 {
 		if input.Proxy != "" {
 			common.WriteError(w, 400, "choose proxy_group_id or proxy, not both")
 			return
@@ -185,7 +186,7 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	if endpoint != nil {
 		client = proxy.Client(http.DefaultClient, endpoint)
 	}
-	result, err := ctx.OAuth().Start(reqCtx, service, p.User.ID, redirect, client)
+	result, err := ctx.OAuth().Start(reqCtx, service, strconv.Itoa(p.User.ID), redirect, client)
 	if err != nil {
 		oauthAPIError(w, err)
 		return
@@ -214,7 +215,7 @@ func (m *OAuthFlowModule) poll(ctx framework.ModuleContext, w http.ResponseWrite
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidOAuthSession)
 		return
 	}
-	session, err := ctx.OAuth().SessionForSubject(sessionID, service, p.User.ID)
+	session, err := ctx.OAuth().SessionForSubject(sessionID, service, strconv.Itoa(p.User.ID))
 	if err != nil {
 		oauthAPIError(w, err)
 		return
@@ -241,7 +242,7 @@ func (m *OAuthFlowModule) poll(ctx framework.ModuleContext, w http.ResponseWrite
 		common.WriteError(w, http.StatusBadGateway, common.MessageInvalidOAuthCredential)
 		return
 	}
-	id, err := ctx.OAuthResults().Put(framework.OAuthResult{SubjectID: p.User.ID, Service: service, Credential: *credential})
+	id, err := ctx.OAuthResults().Put(framework.OAuthResult{SubjectID: strconv.Itoa(p.User.ID), Service: service, Credential: *credential})
 	if err != nil {
 		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotStoreOAuthResult)
 		return
@@ -255,7 +256,7 @@ func (m *OAuthFlowModule) result(ctx framework.ModuleContext, w http.ResponseWri
 		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
-	result, err := ctx.OAuthResults().Take(id, p.User.ID)
+	result, err := ctx.OAuthResults().Take(id, strconv.Itoa(p.User.ID))
 	if err != nil {
 		common.WriteError(w, http.StatusNotFound, common.MessageOAuthResultNotFound)
 		return

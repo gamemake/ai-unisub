@@ -18,12 +18,12 @@ type GrokAIProvider struct {
 	oauth OAuthConfig
 }
 
-func NewGrokAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManager) (*GrokAIProvider, error) {
+func NewGrokAIProvider(id int, data ProviderData, manager *oauth.OAuthManager) (*GrokAIProvider, error) {
 	var config GrokConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
+	if err := json.Unmarshal(data.Config, &config); err != nil {
 		return nil, err
 	}
-	base, err := newOAuthAIProvider(id, raw, manager)
+	base, err := newOAuthAIProvider(id, data, manager)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +31,7 @@ func NewGrokAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManag
 	return &GrokAIProvider{oauthAIProvider: base, oauth: config.OAuth}, nil
 }
 func GrokAIProviderFactory(manager *oauth.OAuthManager) AIProviderFactory {
-	return func(id string, raw json.RawMessage) (AIProvider, error) { return NewGrokAIProvider(id, raw, manager) }
+	return func(id int, data ProviderData) (AIProvider, error) { return NewGrokAIProvider(id, data, manager) }
 }
 func (p *GrokAIProvider) UpdateConfig(raw json.RawMessage) error {
 	var config GrokConfig

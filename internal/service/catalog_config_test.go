@@ -13,7 +13,14 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 		{"url": "https://legacy.invalid/v1"},
 		{"claude_url": "https://changed.invalid/claude", "codex_url": "https://changed.invalid/codex"},
 	} {
-		db := database.NewMemoryDatabase()
+		db, err := database.NewDatabase("sqlite::memory:")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Open(); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = db.Close() })
 		var suppliers []map[string]any
 		for _, builtin := range aiprovider.SupplierConfigs() {
 			item := map[string]any{"id": builtin.ID, "name": builtin.Name}

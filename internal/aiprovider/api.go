@@ -13,8 +13,8 @@ import (
 type APIProvider struct{ *oauthAIProvider }
 
 func APIProviderFactory(manager *oauth.OAuthManager) AIProviderFactory {
-	return func(id string, raw json.RawMessage) (AIProvider, error) {
-		p, err := newOAuthAIProvider(id, raw, manager)
+	return func(id int, data ProviderData) (AIProvider, error) {
+		p, err := newOAuthAIProvider(id, data, manager)
 		if err != nil {
 			return nil, err
 		}

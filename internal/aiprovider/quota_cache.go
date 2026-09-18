@@ -125,6 +125,37 @@ func (c *quotaCache) get() *Quota {
 	return result
 }
 
+func (c *quotaCache) snapshot() AIProviderQuota {
+	q := c.get()
+	return AIProviderQuota{Subscription: q.Subscription, Items: q.Items, CacheStatus: q.CacheStatus, UpdatedAt: q.UpdatedAt}
+}
+
+func (c *quotaCache) restore(value AIProviderQuota) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries = nil
+	c.windows = nil
+	stamp := time.Now().UTC()
+	if !value.UpdatedAt.IsZero() {
+		stamp = value.UpdatedAt
+	}
+	if len(value.Subscription) != 0 {
+		for _, item := range value.Subscription {
+			c.windows = append(c.windows, subscriptionCacheEntry{
+				update:   subscriptionUpdate{key: item.TimeDimension, item: item, hasUsage: true, hasReset: !item.ResetAt.IsZero()},
+				observed: stamp, resetObserved: stamp, sequence: 1,
+			})
+		}
+	} else {
+		for _, item := range value.Items {
+			c.entries = append(c.entries, quotaCacheEntry{item: item, observed: stamp, sequence: 1})
+		}
+	}
+	c.generation++
+	c.sequence = 1
+	c.fullSequence = 1
+}
+
 func (c *quotaCache) putSubscription(stamp quotaStamp, updates []subscriptionUpdate, partial bool) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()

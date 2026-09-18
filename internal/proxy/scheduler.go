@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 )
 
-func (m *Manager) ResolveProxy(ctx context.Context, groupID, app string, tried []string) (endpoint *Endpoint, err error) {
+func (m *Manager) ResolveProxy(ctx context.Context, groupID int, app string, tried []string) (endpoint *Endpoint, err error) {
 	reason, address := "context", ""
 	var disabled, triedCount, networkBlocked, applicationBlocked int
 	defer func() {
@@ -18,7 +17,7 @@ func (m *Manager) ResolveProxy(ctx context.Context, groupID, app string, tried [
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(groupID) == "" {
+	if groupID == 0 {
 		return nil, nil
 	}
 	m.mu.Lock()
@@ -104,7 +103,7 @@ func (m *Manager) admissible(s *State) bool {
 	}
 	return s.Status != "unavailable" && s.Status != "half_open" || (!m.now().Before(s.CooldownUntil) && s.InFlight < m.policy.HalfOpenLimit)
 }
-func (m *Manager) ProxyRetryLimit(groupID string) int {
+func (m *Manager) ProxyRetryLimit(groupID int) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	groups, err := m.store.ListProxyGroups()

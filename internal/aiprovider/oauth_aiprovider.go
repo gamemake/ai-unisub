@@ -1,21 +1,19 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/proxy"
 	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
-	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"ai-unisub/internal/oauth"
+	"ai-unisub/internal/proxy"
 )
 
 type oauthAIProvider struct {
@@ -34,14 +32,14 @@ func (p *oauthAIProvider) SetProxyResolver(r ProxyResolver) {
 	p.mu.Unlock()
 }
 
-func newOAuthAIProvider(id string, raw json.RawMessage, manager *oauth.OAuthManager) (*oauthAIProvider, error) {
-	if id == "" {
+func newOAuthAIProvider(id int, data ProviderData, manager *oauth.OAuthManager) (*oauthAIProvider, error) {
+	if id == 0 {
 		return nil, errors.New("provider instance ID is empty")
 	}
 	if manager == nil {
 		return nil, errors.New("oauth manager is required")
 	}
-	config, err := decodeAIProviderConfig(id, raw)
+	config, err := decodeAIProviderConfig(id, data.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -58,18 +56,47 @@ func (p *oauthAIProvider) Config() AIProviderConfig {
 	return cloneAIProviderConfig(p.config)
 }
 
+func (p *oauthAIProvider) State() AIProviderState { return AIProviderState{} }
+
+func (p *oauthAIProvider) Quota() AIProviderQuota {
+	if p == nil {
+		return AIProviderQuota{}
+	}
+	return p.quotaCache.snapshot()
+}
+
+func (p *oauthAIProvider) RestoreState(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var state AIProviderState
+	return json.Unmarshal(raw, &state)
+}
+
+func (p *oauthAIProvider) RestoreQuota(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var quota AIProviderQuota
+	if err := json.Unmarshal(raw, &quota); err != nil {
+		return err
+	}
+	p.quotaCache.restore(quota)
+	return nil
+}
+
 func (p *oauthAIProvider) update(raw json.RawMessage) error {
 	if p == nil {
 		return errors.New("provider is nil")
 	}
 	var probe struct {
-		ID string `json:"id"`
+		ID int `json:"id"`
 	}
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return err
 	}
 	current := p.Config()
-	if probe.ID != "" && probe.ID != current.ID {
+	if probe.ID != 0 && probe.ID != current.ID {
 		return errors.New("provider config ID cannot be changed")
 	}
 	next, err := decodeAIProviderConfig(current.ID, raw)
@@ -128,45 +155,22 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 			service = oauth.OAuthServiceClaude
 		}
 	}
-	var endpoint *proxy.Endpoint
-	tried := []string{}
-	if resolver != nil && groupID != "" {
-		endpoint, err = resolver.ResolveProxy(req.Context(), groupID, application, tried)
-		if err != nil {
-			trace.HTTPErrorInfo = err.Error()
-			trace.RetrySafe = true
-			if recorder != nil {
-				recorder(trace)
-			}
-			return
-		}
-	}
-	if groupID != "" && resolver == nil {
-		trace.HTTPErrorInfo = "proxy resolver is unavailable"
-		proxy.LogError("resolve", nil, application, errors.New(trace.HTTPErrorInfo))
-		if recorder != nil {
-			recorder(trace)
-		}
-		return
-	}
 	p.mu.RLock()
 	baseClient := p.client
 	p.mu.RUnlock()
 	if baseClient == nil {
 		baseClient = http.DefaultClient
 	}
-	client := proxy.Client(baseClient, endpoint)
-	if client != baseClient {
-		defer client.CloseIdleConnections()
-	}
 	token := config.APIKey
 	if config.AuthType != AuthTypeAPIKey {
-		token, err = p.manager.GetValidAccessToken(req.Context(), service, credentialID, client)
+		called := p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) {
+			token, err = p.manager.GetValidAccessToken(req.Context(), service, credentialID, client)
+		})
+		if !called {
+			err = errors.New("proxy group is unavailable")
+		}
 	}
 	if err != nil {
-		if resolver != nil && groupID != "" {
-			_ = proxy.ReportResult(resolver, endpoint, application, proxy.Canceled, err, 0)
-		}
 		trace.HTTPErrorCode, trace.HTTPErrorInfo = http.StatusUnauthorized, "unable to obtain provider access token"
 		trace.RetrySafe = true
 		if recorder != nil {
@@ -186,92 +190,39 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	} else {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	maxRetries := 0
-	if resolver != nil && groupID != "" {
-		maxRetries = resolver.ProxyRetryLimit(groupID)
-	}
 	var response *http.Response
 	authRecovered := false
 	for attempt := 0; ; attempt++ {
 		req.Body = io.NopCloser(bytes.NewReader(body))
-		response, err = client.Do(req)
+		called := p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) {
+			response, err = client.Do(req)
+		})
+		if !called {
+			err = errors.New("proxy group is unavailable")
+		}
 		if err == nil && response.StatusCode == http.StatusUnauthorized && config.AuthType == AuthTypeOAuth && !authRecovered {
 			authRecovered = true
-			refreshed, refreshErr := p.manager.RecoverAccessToken(req.Context(), service, credentialID, token, client)
+			var refreshed string
+			var refreshErr error
+			p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) {
+				refreshed, refreshErr = p.manager.RecoverAccessToken(req.Context(), service, credentialID, token, client)
+			})
 			if refreshErr == nil {
-				if resolver != nil && groupID != "" {
-					if reportErr := proxy.ReportResult(resolver, endpoint, application, proxy.ApplicationIgnored, nil, response.StatusCode); reportErr != nil {
-						response.Body.Close()
-						err = reportErr
-						break
-					}
-					var selectErr error
-					endpoint, selectErr = resolver.ResolveProxy(req.Context(), groupID, application, nil)
-					if selectErr != nil {
-						response.Body.Close()
-						err = selectErr
-						break
-					}
-					if client != baseClient {
-						client.CloseIdleConnections()
-					}
-					client = proxy.Client(baseClient, endpoint)
-				}
 				response.Body.Close()
 				token = refreshed
 				req.Header.Set("Authorization", "Bearer "+token)
 				req.Body = io.NopCloser(bytes.NewReader(body))
-				response, err = client.Do(req)
+				p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) { response, err = client.Do(req) })
 			}
 		}
-		dialError, isDialError := errors.AsType[*net.OpError](err)
-		safe := isDialError && dialError.Op == "dial"
-		trace.RetrySafe = safe
-		retryable := safe || ((req.Method == http.MethodGet || req.Method == http.MethodHead) && (err != nil || (response != nil && response.StatusCode >= 500)))
-		if resolver != nil && groupID != "" {
-			class := proxy.Success
-			if err != nil {
-				class = proxy.NetworkError
-			} else if response.StatusCode >= 500 {
-				class = proxy.ApplicationError
-			} else if response.StatusCode >= 400 {
-				class = proxy.ApplicationIgnored
-			}
-			if err == nil && len(config.ProxyApplicationErrorStatuses) > 0 {
-				class = proxy.Success
-				if response.StatusCode >= 400 {
-					class = proxy.ApplicationIgnored
-				}
-				if slices.Contains(config.ProxyApplicationErrorStatuses, response.StatusCode) {
-					class = proxy.ApplicationError
-				}
-			}
-			if req.Context().Err() != nil {
-				class = proxy.Canceled
-			}
-			status := 0
-			if response != nil {
-				status = response.StatusCode
-			}
-			if reportErr := proxy.ReportResult(resolver, endpoint, application, class, err, status); reportErr != nil {
-				maxRetries = 0
-			}
-			tried = append(tried, endpoint.String())
-		}
-		if !retryable || attempt >= maxRetries || resolver == nil || groupID == "" {
+		retryable := (req.Method == http.MethodGet || req.Method == http.MethodHead) && (err != nil || response != nil && response.StatusCode >= 500)
+		trace.RetrySafe = retryable
+		if !retryable || attempt >= 2 || groupID == 0 {
 			break
 		}
 		if response != nil {
 			response.Body.Close()
 		}
-		endpoint, err = resolver.ResolveProxy(req.Context(), groupID, application, tried)
-		if err != nil {
-			break
-		}
-		if client != baseClient {
-			client.CloseIdleConnections()
-		}
-		client = proxy.Client(baseClient, endpoint)
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body))
 	trace.OutboundRequestHeaders = req.Header.Clone()
@@ -304,9 +255,6 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		trace.ResponseBody, err = io.ReadAll(response.Body)
 	}
 	if err != nil {
-		if endpoint != nil {
-			proxy.LogError("read_response", endpoint, application, err)
-		}
 		trace.HTTPErrorInfo = err.Error()
 	}
 	if response.StatusCode >= 400 {
@@ -316,6 +264,30 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	if recorder != nil {
 		recorder(trace)
 	}
+}
+
+func (p *oauthAIProvider) withProxy(ctx context.Context, resolver ProxyResolver, groupID int, app string, fn func(*http.Client)) bool {
+	if groupID == 0 {
+		p.mu.RLock()
+		client := p.client
+		p.mu.RUnlock()
+		if client == nil {
+			client = http.DefaultClient
+		}
+		fn(client)
+		return true
+	}
+	if resolver == nil {
+		return false
+	}
+	called := false
+	ep, err := resolver.ResolveProxy(ctx, groupID, app, nil)
+	if err != nil {
+		client := proxy.Client(nil, ep)
+		fn(client)
+		called = true
+	}
+	return called
 }
 
 // Capture at most 1 MiB for inspection without buffering a streaming response.

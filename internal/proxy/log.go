@@ -58,10 +58,10 @@ func safeError(err error, address string) string {
 // LogError records a failure at its owning boundary. Callers must not log the
 // same propagated error again. It does not update proxy health or statistics.
 func LogError(operation string, e *Endpoint, app string, err error) {
-	logOperationError(operation, e.String(), "", app, err)
+	logOperationError(operation, e.String(), 0, app, err)
 }
 
-func logOperationError(operation, address, group, app string, err error, details ...string) {
+func logOperationError(operation, address string, group int, app string, err error, details ...string) {
 	if err == nil {
 		return
 	}
@@ -71,7 +71,7 @@ func logOperationError(operation, address, group, app string, err error, details
 	} else if errors.Is(err, ErrClosed) {
 		event = "manager_closed"
 	}
-	msg := fmt.Sprintf("operation=%q proxy=%q group=%q app=%q error=%q details=%q", operation, safeAddress(address), safeLogText(group), safeLogText(app), safeError(err, address), safeLogText(strings.Join(details, " ")))
+	msg := fmt.Sprintf("operation=%q proxy=%q group=%d app=%q error=%q details=%q", operation, safeAddress(address), group, safeLogText(app), safeError(err, address), safeLogText(strings.Join(details, " ")))
 	if event == "operation_failed" {
 		common.ModuleLogger("proxy").Error(event, msg)
 	} else {

@@ -18,20 +18,40 @@ type DummyAIProvider struct {
 	quotaCache quotaCache
 }
 
-func NewDummyAIProvider(id string, raw json.RawMessage) (*DummyAIProvider, error) {
-	config, err := decodeAIProviderConfig(id, raw)
+func NewDummyAIProvider(id int, data ProviderData) (*DummyAIProvider, error) {
+	config, err := decodeAIProviderConfig(id, data.Config)
 	if err != nil {
 		return nil, err
 	}
 	return &DummyAIProvider{config: config}, nil
 }
 func DummyAIProviderFactory(_ any) AIProviderFactory {
-	return func(id string, raw json.RawMessage) (AIProvider, error) { return NewDummyAIProvider(id, raw) }
+	return func(id int, data ProviderData) (AIProvider, error) { return NewDummyAIProvider(id, data) }
 }
 func (p *DummyAIProvider) Config() AIProviderConfig {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	return cloneAIProviderConfig(p.config)
+}
+func (p *DummyAIProvider) State() AIProviderState { return AIProviderState{} }
+func (p *DummyAIProvider) Quota() AIProviderQuota { return p.quotaCache.snapshot() }
+func (p *DummyAIProvider) RestoreState(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var state AIProviderState
+	return json.Unmarshal(raw, &state)
+}
+func (p *DummyAIProvider) RestoreQuota(raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var quota AIProviderQuota
+	if err := json.Unmarshal(raw, &quota); err != nil {
+		return err
+	}
+	p.quotaCache.restore(quota)
+	return nil
 }
 func (p *DummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	config, err := decodeAIProviderConfig(p.Config().ID, raw)

@@ -32,7 +32,7 @@ func (m *Manager) TestURL(ctx context.Context, address string) (*Entry, error) {
 }
 
 func (m *Manager) testURL(ctx context.Context, address, source string) (entry *Entry, resultErr error) {
-	defer func() { logOperationError(source, address, "", "", resultErr) }()
+	defer func() { logOperationError(source, address, 0, "", resultErr) }()
 	e, err := newEndpoint(address)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func (m *Manager) testURL(ctx context.Context, address, source string) (entry *E
 		result.LastAvailable = &now
 	} else {
 		s.ProbeFailures++
-		logOperationError(source, e.String(), "", "", err)
+		logOperationError(source, e.String(), 0, "", err)
 		m.markFailed(stateKey{e.String(), ""}, now, source, true)
 		result.LastErrorAt = &now
 	}
@@ -97,7 +97,7 @@ func (m *Manager) startDueProbes() {
 	groups, err := m.store.ListProxyGroups()
 	if err != nil {
 		m.mu.Unlock()
-		logOperationError("automatic_probe_scan", "", "", "", err)
+		logOperationError("automatic_probe_scan", "", 0, "", err)
 		return
 	}
 	active := map[string]bool{}
@@ -134,7 +134,7 @@ func (m *Manager) startDueProbes() {
 		go func() { defer m.probes.Done(); _, _ = m.testURL(m.ctx, address, "automatic_probe") }()
 	}
 }
-func (m *Manager) Test(ctx context.Context, groupID, proxyID string) (*Entry, error) {
+func (m *Manager) Test(ctx context.Context, groupID int, proxyID string) (*Entry, error) {
 	groups, err := m.List()
 	if err != nil {
 		return nil, err
@@ -163,7 +163,7 @@ func (m *Manager) Test(ctx context.Context, groupID, proxyID string) (*Entry, er
 	logOperationError("find_proxy", "", groupID, "", err)
 	return nil, err
 }
-func (m *Manager) ErrorRecords(groupID, proxyID string) (*Entry, error) {
+func (m *Manager) ErrorRecords(groupID int, proxyID string) (*Entry, error) {
 	groups, err := m.List()
 	if err != nil {
 		return nil, err

@@ -14,22 +14,22 @@ func TestDecodeAIProviderConfigDefaultsAndProxy(t *testing.T) {
 		t.Fatalf("defaults: %+v", config)
 	}
 
-	disabled, err := decodeAIProviderConfig("p1", json.RawMessage(`{"enabled":false,"proxy_group_id":"group-1","max_concurrent_connections":4,"queue_timeout_seconds":15}`))
+	disabled, err := decodeAIProviderConfig("p1", json.RawMessage(`{"enabled":false,"proxy_group_id":1,"max_concurrent_connections":4,"queue_timeout_seconds":15}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if disabled.Enabled || disabled.ProxyGroupID != "group-1" || disabled.MaxConcurrentConnections != 4 || disabled.QueueTimeoutSeconds != 15 {
+	if disabled.Enabled || disabled.ProxyGroupID != 1 || disabled.MaxConcurrentConnections != 4 || disabled.QueueTimeoutSeconds != 15 {
 		t.Fatalf("explicit config: %+v", disabled)
 	}
 
 	for _, raw := range []string{`{"proxy":"ftp://127.0.0.1:21"}`, `{"proxy":null}`, `{"proxy":{"ignored":true}}`} {
 		got, err := decodeAIProviderConfig("p1", json.RawMessage(raw))
-		if err != nil || got.ProxyGroupID != "" {
+		if err != nil || got.ProxyGroupID != 0 {
 			t.Fatalf("unknown proxy field must be ignored: %+v, %v", got, err)
 		}
 	}
-	got, err := decodeAIProviderConfig("p1", json.RawMessage(`{"proxy":"invalid","proxy_group_id":"group-1"}`))
-	if err != nil || got.ProxyGroupID != "group-1" {
+	got, err := decodeAIProviderConfig("p1", json.RawMessage(`{"proxy":"invalid","proxy_group_id":1}`))
+	if err != nil || got.ProxyGroupID != 1 {
 		t.Fatalf("proxy must not affect proxy_group_id: %+v, %v", got, err)
 	}
 }
