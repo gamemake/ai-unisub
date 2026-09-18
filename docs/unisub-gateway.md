@@ -76,7 +76,7 @@ AIProviderManager 持有每账号唯一的 Account，所有该账号调用共用
 
 ## 调用记录与代理
 
-应用层把 AIProviderCallTrace 转为数据库记录，包含账号、请求 ID、来源 IP、URL、时间、状态、模型、token 用量和截取的请求／响应。展示头对 Authorization、X-Api-Key、Cookie、Set-Cookie、Proxy-Authorization 脱敏；持久化 APIKey 字段用于归属关联，管理 API 返回前清空。
+应用层把 AIProviderCallTrace 转为数据库记录，包含账号、请求 ID、来源 IP、URL、时间、状态、模型、token 用量和截取的请求／响应。记录中的 `http_error_code` 使用标准 HTTP 状态：有上游／本地 HTTP 响应时写入该状态码（含 2xx）；网络或传输失败且没有 HTTP 响应时为 0，不把写给客户端的 502 回填进记录。展示头对 Authorization、X-Api-Key、Cookie、Set-Cookie、Proxy-Authorization 脱敏；持久化 APIKey 字段用于归属关联，管理 API 返回前清空。
 
 排队中止且未调用 AIProvider 的请求不会产生一次已发送上游调用的记录。当前记录没有完整的队列深度、等待耗时和限流计数指标，不将这些字段写成现有监控能力。
 

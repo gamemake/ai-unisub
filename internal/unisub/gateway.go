@@ -132,10 +132,11 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		apiKey := service.PresentedAPIKey(r.Header)
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
-		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
-		if output.status >= 400 {
-			saved.HTTPErrorCode = output.status
-		}
+		// http_error_code is 0 only for network/transport failures with no HTTP
+		// response. Successful and failed upstream replies store the real status
+		// (including 2xx). Do not replace network failures with the 502 written
+		// to the client.
+		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: persistedCallHTTPCode(trace), HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
 		saved.SessionID = callSessionID(r.Header)
 		if trace.HTTPErrorInfo != "" {
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
@@ -218,6 +219,21 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 func callSessionID(headers http.Header) string {
 	session, _ := aiprovider.SessionID(headers)
 	return session
+}
+
+// persistedCallHTTPCode stores standard HTTP status codes for call traces.
+// Network/transport failures that never received an HTTP response stay 0.
+func persistedCallHTTPCode(trace *aiprovider.AIProviderCallTrace) int {
+	if trace == nil {
+		return 0
+	}
+	if trace.ResponseStatus > 0 {
+		return trace.ResponseStatus
+	}
+	if trace.HTTPErrorCode > 0 {
+		return trace.HTTPErrorCode
+	}
+	return 0
 }
 func upstreamURL(endpoint, name, auth string, incoming *url.URL) (*url.URL, error) {
 	if endpoint == "" {

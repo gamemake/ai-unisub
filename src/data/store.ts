@@ -1,7 +1,7 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, Quota, User } from './types'
+import type { Account, AICatalogResponse, APIKey, Call, CallDetail, List, OAuthStart, Proxy, ProxyGroup, Usage, Quota, User } from './types'
 const id = (value: string | number) => encodeURIComponent(String(value))
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
@@ -38,7 +38,7 @@ export const actions = {
   deleteProxy: (key: number) => request('/api/proxy-groups/' + id(key), json('DELETE')),
   testProxy: (input: { group_id?: number; proxy_id?: string; url?: string }) => request<Proxy>('/api/proxy-groups/test', json('POST', input)),
   proxyErrors: (input: { group_id: number; proxy_id: string }) => request<Proxy>('/api/proxy-groups/errors?' + new URLSearchParams({ group_id: String(input.group_id), proxy_id: input.proxy_id })),
-  callDetail: (call: Call) => request<Record<string, unknown>>('/api/calls/' + id(call.started_at.slice(0, 10).replaceAll('-', '')) + '/' + id(call.id)),
+  callDetail: (call: Call) => request<CallDetail>('/api/calls/' + id(call.started_at.slice(0, 10).replaceAll('-', '')) + '/' + id(call.id)),
   oauthStart: (input: { aiProvider: string; proxy_group_id?: number }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', input.proxy_group_id ? { proxy_group_id: input.proxy_group_id } : {})),
   oauthPoll: (input: { aiProvider: string; session_id: string }) => request<{ status: string; result_id?: string; interval_seconds?: number }>(`/api/oauth/${id(input.aiProvider)}/poll/${id(input.session_id)}`, json('POST', {})),
   oauthComplete: (input: { aiProvider: string; session_id: string; code: string; state: string }) => request<{ result_id: string }>(`/api/oauth/${id(input.aiProvider)}/complete/${id(input.session_id)}`, json('POST', input)),

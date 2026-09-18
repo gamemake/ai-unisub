@@ -132,7 +132,7 @@ name 去除首尾空白后必须为 1–64 个字符；account_id 必须存在�
 
 默认 page=1、page_size=100；page 至少 1，page_size 接受 10–100 的整数。管理员默认查询全部记录，`mine=1` 限制为本人；普通用户始终限制为本人。
 
-q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id，任一字段相等即可；仅管理员额外精确匹配 username，界面不提示该能力。account_id 按账号 ID 匹配；code 省略或为空时查询全部；传入时按存储的 http_error_code 精确匹配，接受 0 或 100–599 的整数。成功记录目前存储为 0，不映射为 200。文本、账号、状态、时间以及归属限制之间使用 AND。
+q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id，任一字段相等即可；仅管理员额外精确匹配 username，界面不提示该能力。account_id 按账号 ID 匹配；code 省略或为空时查询全部；传入时按存储的 http_error_code 精确匹配，接受 0 或 100–599 的整数。`http_error_code` 为标准 HTTP 状态码：上游或本地已产生 HTTP 响应时写入该状态（含 2xx 成功）；仅网络／传输失败、从未收到 HTTP 响应时为 0。文本、账号、状态、时间以及归属限制之间使用 AND。
 
 时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 时与用量统计相同，默认为最近 24 小时（`1d`）；`1m` 为最近 30 天。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
 

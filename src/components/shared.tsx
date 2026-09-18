@@ -37,7 +37,11 @@ export function Modal({ title, description, children, onClose, wide }: { title: 
   </DialogContent></Dialog>
 }
 export function Empty({ children = '暂无数据' }: { children?: ReactNode }) { return <UIEmpty><EmptyDescription>{children}</EmptyDescription></UIEmpty> }
-export function Badge({ enabled, children }: { enabled?: boolean; children?: ReactNode }) { return <UIBadge variant="secondary" className={`h-auto gap-1.5 px-2.5 py-1 ${enabled ? 'bg-emerald-400/10 text-emerald-300' : 'bg-slate-400/10 text-slate-400'}`}><span className={`size-1.5 shrink-0 rounded-full ${enabled ? 'bg-emerald-400' : 'bg-slate-400'}`} />{children || (enabled ? '已启用' : '已停用')}</UIBadge> }
+export function Badge({ enabled, children }: { enabled?: boolean; children?: ReactNode }) {
+  // Nullish only: HTTP status 0 must render as "0", not fall back to 已启用.
+  const label = children != null ? children : (enabled ? '已启用' : '已停用')
+  return <UIBadge variant="secondary" className={`h-auto gap-1.5 px-2.5 py-1 ${enabled ? 'bg-emerald-400/10 text-emerald-300' : 'bg-slate-400/10 text-slate-400'}`}><span className={`size-1.5 shrink-0 rounded-full ${enabled ? 'bg-emerald-400' : 'bg-slate-400'}`} />{label}</UIBadge>
+}
 export function Submit({ pending, children = '保存' }: { pending: boolean; children?: ReactNode }) { return <Button type="submit" disabled={pending}>{pending && <Spinner aria-hidden="true" />}{pending ? '处理中…' : children}</Button> }
 export function Table({ headers, children }: { headers: string[]; children: ReactNode }) { return <UITable><TableHeader className="bg-background/40"><TableRow>{headers.map(h => <TableHead key={h}>{h}</TableHead>)}</TableRow></TableHeader><TableBody>{children}</TableBody></UITable> }
 export function Confirm({ title, pending, error, onConfirm, onClose }: { title: string; pending: boolean; error: Error | null; onConfirm: () => void; onClose: () => void }) { return <AlertDialog open onOpenChange={open => { if (!open && !pending) onClose() }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{title}</AlertDialogTitle><AlertDialogDescription>此操作无法撤销，请确认后继续。</AlertDialogDescription></AlertDialogHeader><ErrorMessage error={error} /><AlertDialogFooter><AlertDialogCancel disabled={pending}>取消</AlertDialogCancel><AlertDialogAction variant="destructive" disabled={pending} onClick={onConfirm}>{pending ? '处理中…' : '确认删除'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> }
