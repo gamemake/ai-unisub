@@ -30,7 +30,8 @@ func TestPersonalAPIPermissions(t *testing.T) {
 			})
 		}
 	}
-	if err := s.Database().SaveAccount(&database.PersistedAccount{ID: "option", Name: "Option", AIProvider: "api", Config: json.RawMessage(`{"api_key":"secret","api_endpoint":"https://private.invalid","enabled":true}`)}); err != nil {
+	account := &database.PersistedAccount{Name: "Option", AIProvider: "api", Config: json.RawMessage(`{"api_key":"secret","api_endpoint":"https://private.invalid","enabled":true}`)}
+	if err := s.Database().SaveAccount(account); err != nil {
 		t.Fatal(err)
 	}
 	out := appRequest(s, "GET", "/api/keys/providers", "", member)
@@ -41,7 +42,7 @@ func TestPersonalAPIPermissions(t *testing.T) {
 		t.Fatal(out.Code, out.Body.String())
 	}
 	item := options.Items[0]
-	if len(item) != 4 || item["id"] != "option" || item["name"] != "Option" || item["provider"] != "api" || item["enabled"] != true {
+	if len(item) != 4 || item["id"] != float64(account.ID) || item["name"] != "Option" || item["provider"] != "api" || item["enabled"] != true {
 		t.Fatal(item)
 	}
 	if out := appRequest(s, "PUT", "/api/keys/providers", "{}", member); out.Code != 405 {
@@ -52,22 +53,22 @@ func TestPersonalAPIPermissions(t *testing.T) {
 			t.Fatal(path, out.Code)
 		}
 	}
-	created := appRequest(s, "POST", "/api/keys", `{"name":"personal","account_id":"option","user_id":"admin"}`, member)
+	created := appRequest(s, "POST", "/api/keys", `{"name":"personal","account_id":`+pathID(account.ID)+`,"user_id":1}`, member)
 	var key struct {
-		ID string `json:"id"`
+		ID int `json:"id"`
 	}
 	if created.Code != 201 || json.Unmarshal(created.Body.Bytes(), &key) != nil {
 		t.Fatal(created.Code, created.Body.String())
 	}
 	for _, method := range []string{"GET", "DELETE"} {
-		if out := appRequest(s, method, "/api/keys/"+key.ID, "", admin); out.Code != 404 {
+		if out := appRequest(s, method, "/api/keys/"+pathID(key.ID), "", admin); out.Code != 404 {
 			t.Fatal("cross-user key access", method, out.Code)
 		}
 	}
-	if out := appRequest(s, "GET", "/api/keys/"+key.ID, "", member); out.Code != 200 {
+	if out := appRequest(s, "GET", "/api/keys/"+pathID(key.ID), "", member); out.Code != 200 {
 		t.Fatal(out.Code)
 	}
-	if out := appRequest(s, "DELETE", "/api/keys/"+key.ID, "", member); out.Code != 204 {
+	if out := appRequest(s, "DELETE", "/api/keys/"+pathID(key.ID), "", member); out.Code != 204 {
 		t.Fatal(out.Code)
 	}
 }

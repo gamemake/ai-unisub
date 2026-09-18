@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-func addRoutingProvider(t *testing.T, s *service.Service, cookie *http.Cookie, name, kind string, c any) string {
+func addRoutingProvider(t *testing.T, s *service.Service, cookie *http.Cookie, name, kind string, c any) int {
 	t.Helper()
 	raw, _ := json.Marshal(map[string]any{"name": name, "provider": kind, "config": c})
 	w := appRequest(s, "POST", "/api/ai-providers", string(raw), cookie)
@@ -24,9 +24,9 @@ func addRoutingProvider(t *testing.T, s *service.Service, cookie *http.Cookie, n
 	_ = json.Unmarshal(w.Body.Bytes(), &a)
 	return a.ID
 }
-func routingKey(t *testing.T, s *service.Service, cookie *http.Cookie, id string) string {
+func routingKey(t *testing.T, s *service.Service, cookie *http.Cookie, id int) string {
 	t.Helper()
-	w := appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"routing","account_id":%q}`, id), cookie)
+	w := appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"routing","account_id":%d}`, id), cookie)
 	var k database.PersistedAPIKey
 	_ = json.Unmarshal(w.Body.Bytes(), &k)
 	if k.Key == "" {
@@ -87,10 +87,10 @@ func TestGatewayGroupNativeAffinityAndRestrictions(t *testing.T) {
 	if w.Code != 403 {
 		t.Fatal("client restriction bypassed", w.Code)
 	}
-	if removed := appRequest(s, "DELETE", "/api/ai-providers/"+id1, "", cookie); removed.Code != 400 {
+	if removed := appRequest(s, "DELETE", "/api/ai-providers/"+pathID(id1), "", cookie); removed.Code != 400 {
 		t.Fatal("deleted referenced member")
 	}
-	traces, count, err := s.Database().QueryCallTraces("", "", nil, 1, 10, nil)
+	traces, count, err := s.Database().QueryCallTraces(database.CallTraceFilter{}, 1, 10)
 	if err != nil || count != 5 || traces[0].AccountID == group || traces[0].SessionID != "native-session" {
 		t.Fatal("member attribution missing", count, err, traces)
 	}

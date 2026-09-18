@@ -45,7 +45,7 @@ func (m *testOAuthModule) Init(ctx service.ModuleContext) error {
 }
 
 func TestOAuthCompleteAndCallbackAreBoundToOwner(t *testing.T) {
-	db := database.NewMemoryDatabase()
+	db := testDatabase(t)
 	srv, err := service.NewWithDependencies(service.Config{DatabaseURL: "sqlite::memory:"}, db, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestOAuthCompleteAndCallbackAreBoundToOwner(t *testing.T) {
 	if err := srv.AddModule(&testOAuthModule{NewOAuthFlowModule(), manager}); err != nil {
 		t.Fatal(err)
 	}
-	users := []*database.PersistedUser{{ID: "alice", Name: "alice", Enabled: true, Role: database.UserRoleAdmin}, {ID: "bob", Name: "bob", Enabled: true, Role: database.UserRoleAdmin}}
+	users := []*database.PersistedUser{{Name: "alice", Enabled: true, Role: database.UserRoleAdmin}, {Name: "bob", Enabled: true, Role: database.UserRoleAdmin}}
 	cookies := make([]*http.Cookie, 2)
 	for i, u := range users {
 		_ = db.SaveUser(u)

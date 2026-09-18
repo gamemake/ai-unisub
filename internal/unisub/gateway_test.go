@@ -48,11 +48,11 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			var created database.PersistedAccount
 			_ = json.Unmarshal(out.Body.Bytes(), &created)
 			// Public edits must not erase the secret, even though the response redacts it.
-			out = appRequest(s, "PUT", "/api/ai-providers/"+created.ID, fmt.Sprintf(`{"name":"renamed","config":{"auth_type":"api_key","api_endpoint":%q,"max_concurrent_connections":2}}`, upstream.URL+"/custom/v1"), cookie)
+			out = appRequest(s, "PUT", "/api/ai-providers/"+pathID(created.ID), fmt.Sprintf(`{"name":"renamed","config":{"auth_type":"api_key","api_endpoint":%q,"max_concurrent_connections":2}}`, upstream.URL+"/custom/v1"), cookie)
 			if out.Code != 200 {
 				t.Fatalf("edit: %d %s", out.Code, out.Body.String())
 			}
-			keyResponse := appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"client","account_id":%q}`, created.ID), cookie)
+			keyResponse := appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"client","account_id":%d}`, created.ID), cookie)
 			var key database.PersistedAPIKey
 			_ = json.Unmarshal(keyResponse.Body.Bytes(), &key)
 			if key.Key == "" {
@@ -68,7 +68,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if result.Code != 201 || result.Header().Get("X-Upstream") != "preserved" || !strings.Contains(result.Body.String(), `"ok":true`) {
 				t.Fatalf("forward: %d %s", result.Code, result.Body.String())
 			}
-			traces, count, err := s.Database().QueryCallTraces("", "", nil, 1, 10, nil)
+			traces, count, err := s.Database().QueryCallTraces(database.CallTraceFilter{}, 1, 10)
 			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "" {
 				t.Fatalf("trace: %#v count=%d err=%v", traces, count, err)
 			}
@@ -102,7 +102,7 @@ func TestGatewayStreamsBeforeUpstreamCompletes(t *testing.T) {
 	out := appRequest(s, "POST", "/api/ai-providers", fmt.Sprintf(`{"name":"stream","provider":"grok","config":{"auth_type":"api_key","api_key":"test","api_endpoint":%q}}`, upstream.URL), cookie)
 	var account database.PersistedAccount
 	_ = json.Unmarshal(out.Body.Bytes(), &account)
-	out = appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"client","account_id":%q}`, account.ID), cookie)
+	out = appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"client","account_id":%d}`, account.ID), cookie)
 	var key database.PersistedAPIKey
 	_ = json.Unmarshal(out.Body.Bytes(), &key)
 	gateway := httptest.NewServer(s.Handler())

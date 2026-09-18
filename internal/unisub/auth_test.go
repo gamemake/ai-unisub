@@ -10,7 +10,7 @@ import (
 )
 
 func TestEnsureAdminCreatesEnabledUserThatCanLogin(t *testing.T) {
-	db := database.NewMemoryDatabase()
+	db := testDatabase(t)
 	s, err := framework.NewWithDependencies(framework.Config{DatabaseURL: "sqlite::memory:"}, db, nil)
 	if err != nil {
 		t.Fatal(err)

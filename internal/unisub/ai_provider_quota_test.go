@@ -12,24 +12,32 @@ import (
 func TestAIProviderQuotaAPI(t *testing.T) {
 	s := testApp(t)
 	cookie := loginTestApp(t, s)
-	for _, tc := range []struct{ id, adapter, config string }{
+	ids := map[string]int{}
+	for _, tc := range []struct{ name, adapter, config string }{
 		{"demo", "dummy", `{}`},
 		{"real", "codex", `{}`},
-		{"group", "group", `{"members":[{"id":"demo","weight":3},{"id":"real","weight":3}]}`},
+		{"group", "group", ``},
 	} {
-		if _, err := s.AIProviders().Create(tc.id, tc.adapter, []byte(tc.config)); err != nil {
+		config := tc.config
+		if tc.adapter == "group" {
+			config = `{"members":[{"id":` + pathID(ids["demo"]) + `,"weight":3},{"id":` + pathID(ids["real"]) + `,"weight":3}]}`
+		}
+		account := &database.PersistedAccount{Name: tc.name, AIProvider: tc.adapter, Config: []byte(config)}
+		if err := s.Database().SaveAccount(account); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.Database().SaveAccount(&database.PersistedAccount{ID: tc.id, Name: tc.id, AIProvider: tc.adapter, Config: []byte(tc.config)}); err != nil {
+		if _, err := s.AIProviders().Create(account.ID, tc.adapter, []byte(config), nil, nil); err != nil {
 			t.Fatal(err)
 		}
+		ids[tc.name] = account.ID
 	}
 	readList := func() map[string]aiprovider.Quota {
 		t.Helper()
 		out := appRequest(s, "GET", "/api/ai-providers", "", cookie)
 		var result struct {
 			Items []struct {
-				ID    string         `json:"id"`
+				ID    int            `json:"id"`
+				Name  string         `json:"name"`
 				Quota jsontext.Value `json:"quota"`
 			} `json:"items"`
 		}
@@ -38,7 +46,7 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 		}
 		cache := make(map[string]aiprovider.Quota)
 		for _, item := range result.Items {
-			if item.ID == "group" {
+			if item.ID == ids["group"] {
 				if len(item.Quota) != 0 {
 					t.Fatalf("group must omit quota, got %s", item.Quota)
 				}
@@ -46,9 +54,9 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 			}
 			var quota aiprovider.Quota
 			if len(item.Quota) == 0 || json.Unmarshal(item.Quota, &quota) != nil {
-				t.Fatalf("missing or invalid quota for %s", item.ID)
+				t.Fatalf("missing or invalid quota for %s", item.Name)
 			}
-			cache[item.ID] = quota
+			cache[item.Name] = quota
 		}
 		return cache
 	}
@@ -60,19 +68,23 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 	}
 
 	for _, tc := range []struct {
-		method, id string
-		status     int
+		method, name string
+		status       int
 	}{
 		{"GET", "demo", 405}, {"POST", "demo", 200},
 		{"GET", "group", 405}, {"POST", "group", 501},
 		{"POST", "real", 400}, {"POST", "unknown", 404}, {"DELETE", "demo", 405},
 	} {
 		before := readList()
-		out := appRequest(s, tc.method, "/api/ai-providers/"+tc.id+"/refresh-quota", "", cookie)
+		id := "unknown"
+		if n, ok := ids[tc.name]; ok {
+			id = pathID(n)
+		}
+		out := appRequest(s, tc.method, "/api/ai-providers/"+id+"/refresh-quota", "", cookie)
 		if out.Code != tc.status {
 			t.Fatalf("%+v: %d %s", tc, out.Code, out.Body.String())
 		}
-		if tc.id == "group" && !reflect.DeepEqual(before, readList()) {
+		if tc.name == "group" && !reflect.DeepEqual(before, readList()) {
 			t.Fatal("group quota request changed a member cache")
 		}
 		if out.Code != 200 {
@@ -82,10 +94,10 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 		if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if tc.id == "demo" && tc.method == "POST" && (result.CacheStatus != aiprovider.QuotaCacheFresh || len(result.Subscription) != 2 || len(result.Items) != 0) {
+		if tc.name == "demo" && tc.method == "POST" && (result.CacheStatus != aiprovider.QuotaCacheFresh || len(result.Subscription) != 2 || len(result.Items) != 0) {
 			t.Fatalf("missing demo data: %+v", result)
 		}
-		if tc.id == "demo" {
+		if tc.name == "demo" {
 			cache := readList()
 			if len(cache["demo"].Subscription) != 2 || !reflect.DeepEqual(cache["demo"].Subscription, result.Subscription) || cache["demo"].CacheStatus != aiprovider.QuotaCacheFresh {
 				t.Fatalf("list did not retain refreshed data: %+v", cache)

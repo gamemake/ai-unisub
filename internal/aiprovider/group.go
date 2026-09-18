@@ -274,7 +274,7 @@ func (m *AIProviderManager) Select(id int, user int, headers http.Header, path s
 	key := ""
 	selected := 0
 	if session != "" && c.Kind == "group" {
-		sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", user, id, client, session)))
+		sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%d\x00%s\x00%s", user, id, client, session)))
 		key = hex.EncodeToString(sum[:])
 		maps.DeleteFunc(m.bindings, func(_ string, b affinityBinding) bool {
 			return now.Sub(b.last) >= 30*time.Minute

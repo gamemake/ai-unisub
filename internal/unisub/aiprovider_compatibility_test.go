@@ -35,11 +35,11 @@ func TestAIProviderLegacyRouteCompatibility(t *testing.T) {
 			t.Fatalf("list %s: %s", base, response.Body.String())
 		}
 	}
-	updated := appRequest(app, "PUT", "/api/ai-providers/"+account.ID, `{"name":"renamed"}`, cookie)
+	updated := appRequest(app, "PUT", "/api/ai-providers/"+pathID(account.ID), `{"name":"renamed"}`, cookie)
 	if updated.Code != 200 {
 		t.Fatalf("canonical update: %d %s", updated.Code, updated.Body.String())
 	}
-	removed := appRequest(app, "DELETE", "/api/providers/"+account.ID, "", cookie)
+	removed := appRequest(app, "DELETE", "/api/providers/"+pathID(account.ID), "", cookie)
 	if removed.Code != 204 {
 		t.Fatalf("legacy delete: %d %s", removed.Code, removed.Body.String())
 	}

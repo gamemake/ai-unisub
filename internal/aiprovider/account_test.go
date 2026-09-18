@@ -23,7 +23,7 @@ func waitQueue(t *testing.T, a *Account, count int) {
 	t.Fatalf("queue did not reach %d", count)
 }
 func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
-	p, _ := NewDummyAIProvider("p", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`))
+	p, _ := NewDummyAIProvider(1, ProviderData{Config: json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`)})
 	a := &Account{aiprovider: p}
 	release, err := a.acquire(t.Context(), 2)
 	if err != nil {
@@ -73,11 +73,11 @@ func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 	manager := NewAIProviderManager()
 	_ = manager.Register("dummy", DummyAIProviderFactory(nil))
-	_, err := manager.Create("p", "dummy", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`))
+	_, err := manager.Create(1, "dummy", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	a, _ := manager.GetAccount("p")
+	a, _ := manager.GetAccount(1)
 	release, _ := a.acquire(t.Context(), 100)
 	granted := make(chan func(), 1)
 	go func() {
@@ -88,14 +88,14 @@ func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 		granted <- r
 	}()
 	waitQueue(t, a, 1)
-	if err := manager.UpdateConfig("p", json.RawMessage(`{"enabled":true,"max_concurrent_connections":2}`)); err != nil {
+	if err := manager.UpdateConfig(1, json.RawMessage(`{"enabled":true,"max_concurrent_connections":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	release2 := <-granted
 	waiting := make(chan error, 1)
 	go func() { _, err := a.acquire(t.Context(), 100); waiting <- err }()
 	waitQueue(t, a, 1)
-	if err := manager.UpdateConfig("p", json.RawMessage(`{"enabled":false,"max_concurrent_connections":2}`)); err != nil {
+	if err := manager.UpdateConfig(1, json.RawMessage(`{"enabled":false,"max_concurrent_connections":2}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-waiting; !errors.Is(err, ErrUnavailable) {

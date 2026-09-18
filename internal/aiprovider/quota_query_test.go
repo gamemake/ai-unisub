@@ -68,7 +68,7 @@ func TestQuotaOAuthRecoveryAndRedirectRefusal(t *testing.T) {
 }
 
 func TestQuotaConfigChangeInvalidatesInflightQuery(t *testing.T) {
-	p := &oauthAIProvider{config: AIProviderConfig{ID: "test", Kind: "api", Supplier: "deepseek", AuthType: AuthTypeAPIKey, APIKey: "old"}}
+	p := &oauthAIProvider{config: AIProviderConfig{ID: 1, Kind: "api", Supplier: "deepseek", AuthType: AuthTypeAPIKey, APIKey: "old"}}
 	p.client = &http.Client{Transport: quotaTransport(func(r *http.Request) (*http.Response, error) {
 		if err := p.update([]byte(`{"kind":"api","supplier":"deepseek","auth_type":"api_key","api_key":"new"}`)); err != nil {
 			t.Fatal(err)
@@ -117,7 +117,7 @@ func TestSupplierQuotaQueriesAndCache(t *testing.T) {
 	} {
 		t.Run(tc.supplier, func(t *testing.T) {
 			store := &quotaCredentialStore{raw: []byte(`{"access_token":"test-oauth","account_id":"account-1"}`)}
-			p := &oauthAIProvider{manager: oauth.NewOAuthManager(store), config: AIProviderConfig{ID: "test", Kind: tc.kind, Supplier: tc.supplier, AuthType: AuthTypeAPIKey, APIKey: "test-key"}}
+			p := &oauthAIProvider{manager: oauth.NewOAuthManager(store), config: AIProviderConfig{ID: 1, Kind: tc.kind, Supplier: tc.supplier, AuthType: AuthTypeAPIKey, APIKey: "test-key"}}
 			if tc.kind == "subscription" {
 				p.config.AuthType = AuthTypeOAuth
 				p.config.CredentialID = "credential"

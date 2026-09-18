@@ -71,51 +71,52 @@ func routingManager(t *testing.T) *AIProviderManager {
 	}
 	return m
 }
-func createRouting(t *testing.T, m *AIProviderManager, id, kind, raw string) {
+func createRouting(t *testing.T, m *AIProviderManager, id int, kind, raw string) {
 	t.Helper()
-	if _, err := m.Create(id, kind, json.RawMessage(raw)); err != nil {
+	if _, err := m.Create(id, kind, json.RawMessage(raw), nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
 func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	m := routingManager(t)
-	createRouting(t, m, "a", "dummy", `{"client_type":"Anthropic"}`)
-	createRouting(t, m, "b", "dummy", `{"client_type":"OpenAI"}`)
-	createRouting(t, m, "b2", "dummy", `{"client_type":"OpenAI"}`)
-	createRouting(t, m, "g", "group", `{"client_type":"OpenAI","members":[{"id":"b","weight":5},{"id":"b2"}]}`)
-	p, _ := m.Get("g")
+	const a, b, b2, g, nested, restricted, c, user, other = 1, 2, 3, 4, 5, 6, 7, 10, 11
+	createRouting(t, m, a, "dummy", `{"client_type":"Anthropic"}`)
+	createRouting(t, m, b, "dummy", `{"client_type":"OpenAI"}`)
+	createRouting(t, m, b2, "dummy", `{"client_type":"OpenAI"}`)
+	createRouting(t, m, g, "group", `{"client_type":"OpenAI","members":[{"id":2,"weight":5},{"id":3}]}`)
+	p, _ := m.Get(g)
 	if p.Config().Members[1].Weight != 3 {
 		t.Fatal("default weight")
 	}
-	if _, e := m.Create("nested", "group", json.RawMessage(`{"members":[{"id":"g"}]}`)); e == nil {
+	if _, e := m.Create(nested, "group", json.RawMessage(`{"members":[{"id":4}]}`), nil, nil); e == nil {
 		t.Fatal("nested group accepted")
 	}
-	createRouting(t, m, "restricted", "group", `{"client_type":"Anthropic","members":[{"id":"a"}]}`)
-	if e := m.UpdateConfig("a", json.RawMessage(`{"client_type":"Any"}`)); e == nil {
+	createRouting(t, m, restricted, "group", `{"client_type":"Anthropic","members":[{"id":1}]}`)
+	if e := m.UpdateConfig(a, json.RawMessage(`{"client_type":"Any"}`)); e == nil {
 		t.Fatal("incompatible member update accepted")
 	}
-	if e := m.UpdateConfig("g", json.RawMessage(`{"client_type":"Anthropic","members":[{"id":"a"},{"id":"b"}]}`)); e == nil {
+	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"Anthropic","members":[{"id":1},{"id":2}]}`)); e == nil {
 		t.Fatal("incompatible group update accepted")
 	}
 	h := http.Header{}
 	h.Set("User-Agent", "codex-tui/1.0")
 	h.Set("Session-Id", "same")
-	selected, err := m.Select("g", "user", h, "/v1/responses", nil)
-	if err != nil || selected.ID != "b" {
+	selected, err := m.Select(g, user, h, "/v1/responses", nil)
+	if err != nil || selected.ID != b {
 		t.Fatalf("filtered selection %v %v", selected.ID, err)
 	}
-	if _, err := m.Select("a", "user", h, "/v1/messages", nil); !errors.Is(err, ErrClientDenied) {
+	if _, err := m.Select(a, user, h, "/v1/messages", nil); !errors.Is(err, ErrClientDenied) {
 		t.Fatal("direct policy bypass", err)
 	}
-	createRouting(t, m, "c", "dummy", `{"client_type":"OpenAI"}`)
-	if e := m.UpdateConfig("g", json.RawMessage(`{"client_type":"OpenAI","members":[{"id":"b","weight":3},{"id":"c","weight":3}]}`)); e != nil {
+	createRouting(t, m, c, "dummy", `{"client_type":"OpenAI"}`)
+	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"OpenAI","members":[{"id":2,"weight":3},{"id":7,"weight":3}]}`)); e != nil {
 		t.Fatal(e)
 	}
 	var wg sync.WaitGroup
-	ids := make(chan string, 40)
+	ids := make(chan int, 40)
 	for range 40 {
 		wg.Go(func() {
-			s, e := m.Select("g", "user", h, "/v1/responses", nil)
+			s, e := m.Select(g, user, h, "/v1/responses", nil)
 			if e != nil {
 				t.Error(e)
 				return
@@ -125,22 +126,22 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	}
 	wg.Wait()
 	close(ids)
-	first := ""
+	first := 0
 	for id := range ids {
-		if first == "" {
+		if first == 0 {
 			first = id
 		}
 		if first != id {
 			t.Fatal("concurrent session split")
 		}
 	}
-	s, _ := m.Select("g", "another-user", h, "/v1/responses", nil)
+	s, _ := m.Select(g, other, h, "/v1/responses", nil)
 	if s.binding == selected.binding {
 		t.Fatal("user scope collided")
 	}
-	current, _ := m.Select("g", "user", h, "/v1/responses", nil)
+	current, _ := m.Select(g, user, h, "/v1/responses", nil)
 	m.ReportSelection(current, &AIProviderCallTrace{ResponseStatus: 429, ResponseHeaders: http.Header{"Retry-After": []string{"120"}}}, false)
-	next, e := m.Select("g", "user", h, "/v1/responses", nil)
+	next, e := m.Select(g, user, h, "/v1/responses", nil)
 	if e != nil || next.ID == current.ID {
 		t.Fatal("rate-limited member selected")
 	}
@@ -163,9 +164,9 @@ func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
 			t.Run(string(groupClient)+"/"+string(memberClient), func(t *testing.T) {
 				m := routingManager(t)
 				raw, _ := json.Marshal(map[string]any{"client_type": memberClient})
-				createRouting(t, m, "member", "dummy", string(raw))
-				raw, _ = json.Marshal(map[string]any{"client_type": groupClient, "members": []map[string]any{{"id": "member"}}})
-				_, err := m.Create("group", "group", raw)
+				createRouting(t, m, 1, "dummy", string(raw))
+				raw, _ = json.Marshal(map[string]any{"client_type": groupClient, "members": []map[string]any{{"id": 1}}})
+				_, err := m.Create(2, "group", raw, nil, nil)
 				if (err == nil) != (groupClient == memberClient) {
 					t.Fatalf("group %s, member %s: %v", groupClient, memberClient, err)
 				}
@@ -175,7 +176,7 @@ func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
 						other = ClientOpenAI
 					}
 					raw, _ = json.Marshal(map[string]any{"client_type": other})
-					if err := m.UpdateConfig("member", raw); err == nil {
+					if err := m.UpdateConfig(1, raw); err == nil {
 						t.Fatal("member update broke group consistency")
 					}
 				}

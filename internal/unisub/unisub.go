@@ -49,7 +49,7 @@ func New(cfg Config) (*service.Service, error) {
 	})
 	for _, account := range accounts {
 		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config, account.State, account.Quota); err != nil {
-			return fail(fmt.Errorf("load provider %s: %w", account.ID, err))
+			return fail(fmt.Errorf("load provider %d: %w", account.ID, err))
 		}
 	}
 	for _, module := range []service.Module{NewStaticModule(files), NewAPIModule(), NewOAuthFlowModule(), NewGatewayModule()} {

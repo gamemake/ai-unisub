@@ -1,30 +1,31 @@
 package aiprovider
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"ai-unisub/internal/proxy"
 )
 
 type callbackProxyResolver struct {
-	clients []*http.Client
 	results int
 }
 
-func (r *callbackProxyResolver) Do(_ int, _ string, callback func(*http.Client) (string, int, string)) {
-	if len(r.clients) == 0 {
-		return
-	}
-	c := r.clients[0]
-	r.clients = r.clients[1:]
-	callback(c)
+func (r *callbackProxyResolver) ResolveProxy(context.Context, int, string, []string) (*proxy.Endpoint, error) {
 	r.results++
+	return proxy.NewEndpoint("http://127.0.0.1:9")
+}
+func (r *callbackProxyResolver) ProxyRetryLimit(int) int { return 0 }
+func (r *callbackProxyResolver) ReportProxy(*proxy.Endpoint, string, proxy.ErrorClass) error {
+	return nil
 }
 
 func TestProxyCallbackReceivesRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
-	resolver := &callbackProxyResolver{clients: []*http.Client{{Transport: http.DefaultTransport}}}
+	resolver := &callbackProxyResolver{}
 	p := &oauthAIProvider{config: AIProviderConfig{AuthType: AuthTypeAPIKey, APIKey: "key", ProxyGroupID: 1, Supplier: "test"}, resolver: resolver}
 	p.handle("test", "", httptest.NewRequest(http.MethodGet, server.URL, nil), nil)
 	if resolver.results != 1 {

@@ -4,6 +4,7 @@ import (
 	"ai-unisub/internal/database"
 	framework "ai-unisub/internal/service"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,8 +12,8 @@ import (
 )
 
 func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	admin := &database.PersistedUser{ID: "admin", Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("old-password")}
+	db := testDatabase(t)
+	admin := &database.PersistedUser{Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("old-password")}
 	if err := db.SaveUser(admin); err != nil {
 		t.Fatal(err)
 	}
@@ -47,11 +48,11 @@ func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
 		t.Fatalf("create user: status=%d body=%s", created.Code, created.Body.String())
 	}
 
-	account := &database.PersistedAccount{ID: "account-1", AIProvider: "claude", Name: "Claude", Config: json.RawMessage(`{"credential_id":"credential-1"}`)}
+	account := &database.PersistedAccount{AIProvider: "claude", Name: "Claude", Config: json.RawMessage(`{"credential_id":"credential-1"}`)}
 	if err := db.SaveAccount(account); err != nil {
 		t.Fatal(err)
 	}
-	updated := request(http.MethodPut, "/api/ai-providers/account-1", `{"name":"Claude updated","provider":"claude","config":{}}`)
+	updated := request(http.MethodPut, "/api/ai-providers/"+pathID(account.ID), `{"name":"Claude updated","provider":"claude","config":{}}`)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update provider: status=%d body=%s", updated.Code, updated.Body.String())
 	}
@@ -59,31 +60,29 @@ func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
 	if err != nil || len(accounts) != 1 || accounts[0].Name != "Claude updated" {
 		t.Fatalf("provider was not updated: accounts=%+v err=%v", accounts, err)
 	}
-	if got := request(http.MethodPost, "/api/keys", `{"account_id":"account-1","valid_seconds":86400}`); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodPost, "/api/keys", fmt.Sprintf(`{"account_id":%d,"valid_seconds":86400}`, account.ID)); got.Code != http.StatusBadRequest {
 		t.Fatalf("missing key name: status=%d body=%s", got.Code, got.Body.String())
 	}
-	key := request(http.MethodPost, "/api/keys", `{"name":"claude-code","account_id":"account-1","valid_seconds":86400}`)
+	key := request(http.MethodPost, "/api/keys", fmt.Sprintf(`{"name":"claude-code","account_id":%d,"valid_seconds":86400}`, account.ID))
 	if key.Code != http.StatusCreated || !strings.Contains(key.Body.String(), `"key"`) || !strings.Contains(key.Body.String(), `"name":"claude-code"`) || !strings.Contains(key.Body.String(), `"valid_seconds":86400`) || !strings.Contains(key.Body.String(), `"expires_at"`) {
 		t.Fatalf("create key: status=%d body=%s", key.Code, key.Body.String())
 	}
-	var createdKey map[string]any
+	var createdKey database.PersistedAPIKey
 	if err := json.Unmarshal(key.Body.Bytes(), &createdKey); err != nil {
 		t.Fatalf("decode created key: %v", err)
 	}
-	keyID, _ := createdKey["id"].(string)
-	secret, _ := createdKey["key"].(string)
-	if keyID == "" || secret == "" {
+	if createdKey.ID == 0 || createdKey.Key == "" {
 		t.Fatalf("created key missing id or secret: %s", key.Body.String())
 	}
-	if got := request(http.MethodPost, "/api/keys", `{"name":"claude-code","account_id":"account-1","valid_seconds":-1}`); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodPost, "/api/keys", fmt.Sprintf(`{"name":"claude-code","account_id":%d,"valid_seconds":-1}`, account.ID)); got.Code != http.StatusBadRequest {
 		t.Fatalf("negative key validity: status=%d body=%s", got.Code, got.Body.String())
 	}
 	listed := request(http.MethodGet, "/api/keys", "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"key":"`+secret+`"`) || !strings.Contains(listed.Body.String(), `"name":"claude-code"`) || !strings.Contains(listed.Body.String(), `"expires_at"`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"key":"`+createdKey.Key+`"`) || !strings.Contains(listed.Body.String(), `"name":"claude-code"`) || !strings.Contains(listed.Body.String(), `"expires_at"`) {
 		t.Fatalf("list keys: status=%d body=%s", listed.Code, listed.Body.String())
 	}
-	fetched := request(http.MethodGet, "/api/keys/"+keyID, "")
-	if fetched.Code != http.StatusOK || !strings.Contains(fetched.Body.String(), `"key":"`+secret+`"`) || !strings.Contains(fetched.Body.String(), `"name":"claude-code"`) {
+	fetched := request(http.MethodGet, "/api/keys/"+pathID(createdKey.ID), "")
+	if fetched.Code != http.StatusOK || !strings.Contains(fetched.Body.String(), `"key":"`+createdKey.Key+`"`) || !strings.Contains(fetched.Body.String(), `"name":"claude-code"`) {
 		t.Fatalf("get key: status=%d body=%s", fetched.Code, fetched.Body.String())
 	}
 
@@ -100,8 +99,8 @@ func TestAPIModuleUserPasswordAndKeyLifecycle(t *testing.T) {
 }
 
 func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	admin := &database.PersistedUser{ID: "admin", Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("password")}
+	db := testDatabase(t)
+	admin := &database.PersistedUser{Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("password")}
 	if err := db.SaveUser(admin); err != nil {
 		t.Fatal(err)
 	}
@@ -129,26 +128,25 @@ func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
 	if got := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"proxy":"ftp://127.0.0.1:21"}}`); got.Code != http.StatusCreated {
 		t.Fatalf("ignored proxy must not reject provider: status=%d body=%s", got.Code, got.Body.String())
 	}
-	created := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"enabled":false,"proxy_group_id":"proxy-one","max_concurrent_connections":4,"queue_timeout_seconds":15}}`)
+	created := request(http.MethodPost, "/api/ai-providers", `{"name":"Dummy","provider":"dummy","config":{"enabled":false,"proxy_group_id":1,"max_concurrent_connections":4,"queue_timeout_seconds":15}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create provider: status=%d body=%s", created.Code, created.Body.String())
 	}
-	var createdBody map[string]any
+	var createdBody database.PersistedAccount
 	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
 		t.Fatal(err)
 	}
-	if createdBody["enabled"] != false {
-		t.Fatalf("created enabled=%v body=%s", createdBody["enabled"], created.Body.String())
+	if createdBody.ID == 0 {
+		t.Fatalf("created missing id body=%s", created.Body.String())
 	}
-	id, _ := createdBody["id"].(string)
 	listed := request(http.MethodGet, "/api/ai-providers", "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":false`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":"proxy-one"`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":false`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":1`) {
 		t.Fatalf("list provider: status=%d body=%s", listed.Code, listed.Body.String())
 	}
 	if err := db.SaveCredential("cred-1", json.RawMessage(`{"service":"dummy","access_token":"secret-token","refresh_token":"secret-refresh","email":"dummy@example.test"}`)); err != nil {
 		t.Fatal(err)
 	}
-	withCred := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"credential_id":"cred-1","enabled":false,"proxy_group_id":"proxy-one"}}`)
+	withCred := request(http.MethodPut, "/api/ai-providers/"+pathID(createdBody.ID), `{"name":"Dummy","provider":"dummy","config":{"credential_id":"cred-1","enabled":false,"proxy_group_id":1}}`)
 	if withCred.Code != http.StatusOK {
 		t.Fatalf("attach credential: status=%d body=%s", withCred.Code, withCred.Body.String())
 	}
@@ -156,26 +154,26 @@ func TestAPIModuleAIProviderEnabledProxyAndConcurrency(t *testing.T) {
 	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"access_token":"secret-token"`) || !strings.Contains(listed.Body.String(), `"email":"dummy@example.test"`) {
 		t.Fatalf("list missing OAuthCredential: status=%d body=%s", listed.Code, listed.Body.String())
 	}
-	updated := request(http.MethodPut, "/api/ai-providers/"+id, `{"name":"Dummy","provider":"dummy","config":{"enabled":true,"proxy_group_id":"proxy-two","max_concurrent_connections":2,"queue_timeout_seconds":30}}`)
+	updated := request(http.MethodPut, "/api/ai-providers/"+pathID(createdBody.ID), `{"name":"Dummy","provider":"dummy","config":{"enabled":true,"proxy_group_id":2,"max_concurrent_connections":2,"queue_timeout_seconds":30}}`)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update provider: status=%d body=%s", updated.Code, updated.Body.String())
 	}
 	listed = request(http.MethodGet, "/api/ai-providers", "")
-	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":true`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":"proxy-two"`) || !strings.Contains(listed.Body.String(), `"max_concurrent_connections":2`) {
+	if listed.Code != http.StatusOK || !strings.Contains(listed.Body.String(), `"enabled":true`) || !strings.Contains(listed.Body.String(), `"proxy_group_id":2`) || !strings.Contains(listed.Body.String(), `"max_concurrent_connections":2`) {
 		t.Fatalf("updated list: status=%d body=%s", listed.Code, listed.Body.String())
 	}
-	p, ok := s.AIProviders().Get(id)
+	p, ok := s.AIProviders().Get(createdBody.ID)
 	if !ok {
 		t.Fatal("runtime provider missing")
 	}
-	if !p.Config().Enabled || p.Config().ProxyGroupID != "proxy-two" || p.Config().MaxConcurrentConnections != 2 || p.Config().QueueTimeoutSeconds != 30 {
+	if !p.Config().Enabled || p.Config().ProxyGroupID != 2 || p.Config().MaxConcurrentConnections != 2 || p.Config().QueueTimeoutSeconds != 30 {
 		t.Fatalf("runtime config: %+v", p.Config())
 	}
 }
 
 func TestAPIModuleRejectsNonAdminManagement(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	user := &database.PersistedUser{ID: "user", Name: "user", Role: database.UserRoleUser, PasswordHash: framework.HashPassword("password")}
+	db := testDatabase(t)
+	user := &database.PersistedUser{Name: "user", Role: database.UserRoleUser, PasswordHash: framework.HashPassword("password")}
 	if err := db.SaveUser(user); err != nil {
 		t.Fatal(err)
 	}
@@ -201,9 +199,9 @@ func TestAPIModuleRejectsNonAdminManagement(t *testing.T) {
 }
 
 func TestAPIModuleAdminUserControls(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	admin := &database.PersistedUser{ID: "admin", Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("admin-password")}
-	other := &database.PersistedUser{ID: "other", Name: "other", Role: database.UserRoleUser, PasswordHash: framework.HashPassword("old-password")}
+	db := testDatabase(t)
+	admin := &database.PersistedUser{Name: "admin", Role: database.UserRoleAdmin, PasswordHash: framework.HashPassword("admin-password")}
+	other := &database.PersistedUser{Name: "other", Role: database.UserRoleUser, PasswordHash: framework.HashPassword("old-password")}
 	if err := db.SaveUser(admin); err != nil {
 		t.Fatal(err)
 	}
@@ -230,10 +228,10 @@ func TestAPIModuleAdminUserControls(t *testing.T) {
 		s.Handler().ServeHTTP(w, r)
 		return w
 	}
-	if got := request(http.MethodPost, "/api/users/other/password", `{"password":"new-password"}`); got.Code != http.StatusOK {
+	if got := request(http.MethodPost, "/api/users/"+pathID(other.ID)+"/password", `{"password":"new-password"}`); got.Code != http.StatusOK {
 		t.Fatalf("reset password: status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := request(http.MethodPut, "/api/users/other", `{"enabled":false}`); got.Code != http.StatusOK {
+	if got := request(http.MethodPut, "/api/users/"+pathID(other.ID), `{"enabled":false}`); got.Code != http.StatusOK {
 		t.Fatalf("disable user: status=%d body=%s", got.Code, got.Body.String())
 	}
 	users, err := db.ListUsers()
@@ -241,17 +239,17 @@ func TestAPIModuleAdminUserControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, user := range users {
-		if user.ID == "other" && user.Enabled {
+		if user.ID == other.ID && user.Enabled {
 			t.Fatal("other user was not disabled")
 		}
 	}
-	if got := request(http.MethodPut, "/api/users/admin", `{"role":"user"}`); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodPut, "/api/users/"+pathID(admin.ID), `{"role":"user"}`); got.Code != http.StatusBadRequest {
 		t.Fatalf("self demotion: status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := request(http.MethodPut, "/api/users/admin", `{"enabled":false}`); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodPut, "/api/users/"+pathID(admin.ID), `{"enabled":false}`); got.Code != http.StatusBadRequest {
 		t.Fatalf("self disable: status=%d body=%s", got.Code, got.Body.String())
 	}
-	if got := request(http.MethodDelete, "/api/users/admin", ""); got.Code != http.StatusBadRequest {
+	if got := request(http.MethodDelete, "/api/users/"+pathID(admin.ID), ""); got.Code != http.StatusBadRequest {
 		t.Fatalf("self delete: status=%d body=%s", got.Code, got.Body.String())
 	}
 }

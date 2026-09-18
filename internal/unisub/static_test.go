@@ -1,12 +1,14 @@
 package unisub
 
 import (
+	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -21,6 +23,19 @@ func testApp(t *testing.T) *service.Service {
 	t.Cleanup(func() { _ = srv.Close() })
 	return srv
 }
+func testDatabase(t *testing.T) database.Database {
+	t.Helper()
+	db, err := database.NewDatabase("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+func pathID(id int) string { return strconv.Itoa(id) }
 func appRequest(s *service.Service, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

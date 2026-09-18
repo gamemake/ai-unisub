@@ -86,16 +86,7 @@ func (m *AIProviderManager) Register(aiProviderType string, factory AIProviderFa
 // Create creates and stores a AIProvider instance under instanceID.
 // The JSON config is passed unchanged to the registered factory.
 func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config json.RawMessage, state json.RawMessage, quota json.RawMessage) (AIProvider, error) {
-	data := ProviderData{}
-	if config != nil {
-
-	}
-	if state != nil {
-
-	}
-	if quota != nil {
-
-	}
+	data := ProviderData{Config: config, State: state, Quota: quota}
 
 	if m == nil {
 		return nil, errors.New("provider manager is nil")

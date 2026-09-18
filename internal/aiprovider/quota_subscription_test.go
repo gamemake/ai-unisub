@@ -19,7 +19,7 @@ const grokMonthlyFixture = `{"config":{"monthlyLimit":{"val":15000},"used":{"val
 func newGrokQuotaTestProvider(t *testing.T) *GrokAIProvider {
 	t.Helper()
 	manager := oauth.NewOAuthManager(&quotaCredentialStore{raw: []byte(`{"access_token":"grok-token","refresh_token":"refresh"}`)})
-	p, err := NewGrokAIProvider("grok", []byte(`{"kind":"subscription","supplier":"grok","credential_id":"credential"}`), manager)
+	p, err := NewGrokAIProvider(1, ProviderData{Config: []byte(`{"kind":"subscription","supplier":"grok","credential_id":"credential"}`)}, manager)
 	if err != nil {
 		t.Fatal(err)
 	}

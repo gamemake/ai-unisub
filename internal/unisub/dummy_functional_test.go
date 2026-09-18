@@ -18,6 +18,10 @@ type dummyAIProvider struct {
 }
 
 func (p *dummyAIProvider) Config() aiprovider.AIProviderConfig { return p.config }
+func (p *dummyAIProvider) State() aiprovider.AIProviderState   { return aiprovider.AIProviderState{} }
+func (p *dummyAIProvider) Quota() aiprovider.AIProviderQuota   { return aiprovider.AIProviderQuota{} }
+func (p *dummyAIProvider) RestoreState(json.RawMessage) error  { return nil }
+func (p *dummyAIProvider) RestoreQuota(json.RawMessage) error  { return nil }
 func (p *dummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	var config aiprovider.AIProviderConfig
 	if err := json.Unmarshal(raw, &config); err != nil {
@@ -42,16 +46,16 @@ func (p *dummyAIProvider) GetCachedQuota() *aiprovider.Quota {
 func (p *dummyAIProvider) ResetUsage(context.Context) error { return nil }
 
 func TestDummyUserAIProviderAndAPIKeyFlow(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	admin := &database.PersistedUser{ID: "admin", Name: "admin", Role: database.UserRoleAdmin, Enabled: true, PasswordHash: framework.HashPassword("password-123")}
+	db := testDatabase(t)
+	admin := &database.PersistedUser{Name: "admin", Role: database.UserRoleAdmin, Enabled: true, PasswordHash: framework.HashPassword("password-123")}
 	if err := db.SaveUser(admin); err != nil {
 		t.Fatal(err)
 	}
 	aiProviders := aiprovider.NewAIProviderManager()
 	var created *dummyAIProvider
-	if err := aiProviders.Register("dummy", func(id string, raw json.RawMessage) (aiprovider.AIProvider, error) {
+	if err := aiProviders.Register("dummy", func(id int, data aiprovider.ProviderData) (aiprovider.AIProvider, error) {
 		var config aiprovider.AIProviderConfig
-		if err := json.Unmarshal(raw, &config); err != nil {
+		if err := json.Unmarshal(data.Config, &config); err != nil {
 			return nil, err
 		}
 		created = &dummyAIProvider{config: aiprovider.AIProviderConfig{ID: id, Name: config.Name, Enabled: true}}
@@ -111,11 +115,11 @@ func TestDummyUserAIProviderAndAPIKeyFlow(t *testing.T) {
 		t.Fatalf("accounts=%+v err=%v", accounts, err)
 	}
 	account = accounts[0]
-	updated := request(http.MethodPut, "/api/ai-providers/"+account.ID, `{"name":"Dummy Updated","provider":"dummy","config":{"name":"updated"}}`)
+	updated := request(http.MethodPut, "/api/ai-providers/"+pathID(account.ID), `{"name":"Dummy Updated","provider":"dummy","config":{"name":"updated"}}`)
 	if updated.Code != http.StatusOK || created.Config().Name != "updated" {
 		t.Fatalf("update dummy provider: status=%d config=%+v body=%s", updated.Code, created.Config(), updated.Body.String())
 	}
-	key := request(http.MethodPost, "/api/keys", `{"name":"dummy-key","account_id":"`+account.ID+`"}`)
+	key := request(http.MethodPost, "/api/keys", `{"name":"dummy-key","account_id":`+pathID(account.ID)+`}`)
 	if key.Code != http.StatusCreated || !strings.Contains(key.Body.String(), `"key"`) {
 		t.Fatalf("create dummy API key: status=%d body=%s", key.Code, key.Body.String())
 	}

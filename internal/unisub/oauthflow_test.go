@@ -13,8 +13,8 @@ import (
 )
 
 func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	user := &database.PersistedUser{ID: "user-1", Name: "one", Role: database.UserRoleAdmin}
+	db := testDatabase(t)
+	user := &database.PersistedUser{Name: "one", Role: database.UserRoleAdmin}
 	if err := db.SaveUser(user); err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	id, err := s.OAuthResults().Put(framework.OAuthResult{SubjectID: user.ID, Service: oauth.OAuthServiceClaude, Credential: oauth.OAuthCredential{AccessToken: "access", RefreshToken: "refresh"}})
+	id, err := s.OAuthResults().Put(framework.OAuthResult{SubjectID: pathID(user.ID), Service: oauth.OAuthServiceClaude, Credential: oauth.OAuthCredential{AccessToken: "access", RefreshToken: "refresh"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ func TestOAuthResultIsAuthenticatedAndOneTime(t *testing.T) {
 }
 
 func TestOAuthStartUsesAndRejectsProxy(t *testing.T) {
-	db := database.NewMemoryDatabase()
-	user := &database.PersistedUser{ID: "user-1", Name: "one", Role: database.UserRoleAdmin, Enabled: true}
+	db := testDatabase(t)
+	user := &database.PersistedUser{Name: "one", Role: database.UserRoleAdmin, Enabled: true}
 	if err := db.SaveUser(user); err != nil {
 		t.Fatal(err)
 	}

@@ -37,7 +37,7 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 		}
 	}
 	users, _ := s.Database().ListUsers()
-	var aliceID, bobID string
+	var aliceID, bobID int
 	for _, u := range users {
 		if u.Name == "alice-filter" {
 			aliceID = u.ID
@@ -46,18 +46,21 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 			bobID = u.ID
 		}
 	}
-	for _, id := range []string{"account-a", "account-b"} {
-		if err := s.Database().SaveAccount(&database.PersistedAccount{ID: id, Name: id, AIProvider: "dummy", Config: json.RawMessage(`{}`)}); err != nil {
-			t.Fatal(err)
-		}
+	accountA := &database.PersistedAccount{Name: "account-a", AIProvider: "dummy", Config: json.RawMessage(`{}`)}
+	accountB := &database.PersistedAccount{Name: "account-b", AIProvider: "dummy", Config: json.RawMessage(`{}`)}
+	if err := s.Database().SaveAccount(accountA); err != nil {
+		t.Fatal(err)
 	}
-	for _, key := range []database.PersistedAPIKey{{ID: "ka", Key: "secret-a", UserID: aliceID, AccountID: "account-a"}, {ID: "kb", Key: "secret-b", UserID: bobID, AccountID: "account-b"}} {
+	if err := s.Database().SaveAccount(accountB); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []database.PersistedAPIKey{{Key: "secret-a", UserID: aliceID, AccountID: accountA.ID}, {Key: "secret-b", UserID: bobID, AccountID: accountB.ID}} {
 		if err := s.Database().SaveAPIKey(&key); err != nil {
 			t.Fatal(err)
 		}
 	}
 	now := time.Now().UTC()
-	for _, trace := range []database.PersistedCallTrace{{ID: "a", APIKey: "secret-a", AccountID: "account-a", SessionID: "shared", StartedAt: now, FinishedAt: now}, {ID: "b", APIKey: "secret-b", AccountID: "account-b", SessionID: "shared", HTTPErrorCode: 500, StartedAt: now, FinishedAt: now}} {
+	for _, trace := range []database.PersistedCallTrace{{APIKey: "secret-a", AccountID: accountA.ID, SessionID: "shared", StartedAt: now, FinishedAt: now}, {APIKey: "secret-b", AccountID: accountB.ID, SessionID: "shared", HTTPErrorCode: 500, StartedAt: now, FinishedAt: now}} {
 		if err := s.Database().RecordCallTrace(&trace); err != nil {
 			t.Fatal(err)
 		}
@@ -68,7 +71,7 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 		query  string
 		cookie *http.Cookie
 		count  int
-	}{{"q=alice-filter", admin, 1}, {"q=alice-filter", member, 0}, {"q=shared&account_id=account-a&code=0&range=1d", admin, 1}, {"q=shared", member, 1}, {"q=bob-filter&search_usernames=true", member, 0}, {"account_id=account-b", member, 0}, {"code=500", admin, 1}, {"code=429", admin, 0}, {"code=500", member, 0}} {
+	}{{"q=alice-filter", admin, 1}, {"q=alice-filter", member, 0}, {"q=shared&account_id=" + pathID(accountA.ID) + "&code=0&range=1d", admin, 1}, {"q=shared", member, 1}, {"q=bob-filter&search_usernames=true", member, 0}, {"account_id=" + pathID(accountB.ID), member, 0}, {"code=500", admin, 1}, {"code=429", admin, 0}, {"code=500", member, 0}} {
 		out := appRequest(s, "GET", "/api/calls?"+tt.query, "", tt.cookie)
 		var result struct {
 			Items []database.PersistedCallTraceSummary `json:"items"`

@@ -36,7 +36,7 @@ func TestGatewayPreservesClientModelNames(t *testing.T) {
 			}
 			provider := addRoutingProvider(t, s, cookie, "direct", "api", map[string]any{"supplier": supplier, "api_key": "test-key", "api_endpoint": upstream.URL})
 			group := addRoutingProvider(t, s, cookie, "group", "group", map[string]any{"members": []map[string]any{{"id": provider}}})
-			for _, id := range []string{provider, group} {
+			for _, id := range []int{provider, group} {
 				key := routingKey(t, s, cookie, id)
 				r := httptest.NewRequest("POST", tc.path, strings.NewReader(body))
 				r.Header.Set("Authorization", "Bearer "+key)
