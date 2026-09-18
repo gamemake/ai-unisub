@@ -4,7 +4,7 @@
 
 ## 路由与账号选择
 
-客户端发送 `Authorization: Bearer <key>`。Key 绑定本地用户和持久化 Account，框架将校验结果放入 Principal；网关通过 Account ID 获取 AIProvider 和运行时 Account。
+客户端发送 `Authorization: Bearer <key>` 或 Claude Code 使用的 `X-Api-Key`。两者都存在时以 Bearer 为准。Key 绑定本地用户和持久化 Account，框架将校验结果放入 Principal；网关通过 Account ID 获取 AIProvider 和运行时 Account。
 
 路径保持 /v1/responses、/v1/messages、/v1/chat/completions 等形式，不增加本项目专用厂商前缀。同一路径可因 Key 绑定账号不同而到达不同上游，不能仅凭 URL 判断厂商。
 

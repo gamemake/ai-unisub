@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { date } from '@/lib/utils'
+import { ccSwitchEndpoint, ccSwitchImport, publicBaseURL } from '@/lib/cc-switch'
 
 export function Keys() {
   const query = useKeys(), accounts = useProviderOptions(), [adding, setAdding] = useState(false), [revealed, setRevealed] = useState<APIKey | null>(null), [removing, setRemoving] = useState<APIKey | null>(null)
@@ -27,7 +28,7 @@ function KeyForm({ onClose, onCreated }: { onClose: () => void; onCreated: (key:
 export function KeyDetails({ value, aiProvider, onClose }: { value: APIKey; aiProvider: string; onClose: () => void }) {
   const [copied, setCopied] = useState(false), [error, setError] = useState<Error | null>(null)
   async function copy() { try { await navigator.clipboard.writeText(value.key); setCopied(true) } catch { setError(new Error('无法访问剪贴板，请手动选择并复制密钥')) } }
-  const endpoint = location.origin + (aiProvider === 'claude' ? '' : '/v1')
-  const params = new URLSearchParams({ resource: 'provider', app: aiProvider === 'grok' ? 'grokbuild' : aiProvider, name: value.name, endpoint, homepage: location.origin, apiKey: value.key })
-  return <Modal title={value.name} description="请妥善保存密钥，仅与需要调用此 AI Provider的客户端共享。" onClose={onClose}><div className="space-y-4"><Field label="API Key"><Input readOnly value={value.key} className="font-mono" onFocus={e => e.target.select()} /></Field><Field label="Base URL"><Input readOnly value={endpoint} /></Field><ErrorMessage error={error} /><div className="flex gap-3"><Button onClick={copy} variant="outline"><Copy />{copied ? '已复制' : '复制密钥'}</Button>{['codex', 'claude', 'grok'].includes(aiProvider) && <Button variant="outline" nativeButton={false} render={<a href={'ccswitch://v1/import?' + params} />}>导入 CC Switch</Button>}</div></div></Modal>
+  const imported = ccSwitchImport({ pageURL: location.href, aiProvider, name: value.name, apiKey: value.key })
+  const endpoint = imported?.endpoint || ccSwitchEndpoint(publicBaseURL(location.href), aiProvider)
+  return <Modal title={value.name} description="请妥善保存密钥，仅与需要调用此 AI Provider的客户端共享。" onClose={onClose}><div className="space-y-4"><Field label="API Key"><Input readOnly value={value.key} className="font-mono" onFocus={e => e.target.select()} /></Field><Field label="Base URL"><Input readOnly value={endpoint} /></Field><ErrorMessage error={error} /><div className="flex gap-3"><Button onClick={copy} variant="outline"><Copy />{copied ? '已复制' : '复制密钥'}</Button>{imported && <Button variant="outline" nativeButton={false} role="link" render={<a href={imported.href} />}>导入 CC Switch</Button>}</div></div></Modal>
 }

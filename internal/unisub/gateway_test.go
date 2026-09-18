@@ -87,6 +87,35 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 	}
 }
 
+func TestGatewayAcceptsXApiKeyFromClaudeCode(t *testing.T) {
+	s := testApp(t)
+	cookie := loginTestApp(t, s)
+	out := appRequest(s, "POST", "/api/ai-providers", `{"name":"dummy","provider":"dummy","config":{"enabled":true}}`, cookie)
+	if out.Code != 201 {
+		t.Fatalf("create: %d %s", out.Code, out.Body.String())
+	}
+	var account database.PersistedAccount
+	_ = json.Unmarshal(out.Body.Bytes(), &account)
+	out = appRequest(s, "POST", "/api/keys", fmt.Sprintf(`{"name":"client","account_id":%d}`, account.ID), cookie)
+	var key database.PersistedAPIKey
+	_ = json.Unmarshal(out.Body.Bytes(), &key)
+	if key.Key == "" {
+		t.Fatalf("create key: %s", out.Body.String())
+	}
+	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
+	req.Header.Set("X-Api-Key", key.Key)
+	req.Header.Set("User-Agent", "claude-cli/2.0")
+	result := httptest.NewRecorder()
+	s.Handler().ServeHTTP(result, req)
+	if result.Code != 200 {
+		t.Fatalf("x-api-key: %d %s", result.Code, result.Body.String())
+	}
+	traces, count, err := s.Database().QueryCallTraces(recentCallFilter(), 1, 10)
+	if err != nil || count != 1 || traces[0].APIKey != key.Key {
+		t.Fatalf("trace key: %#v count=%d err=%v", traces, count, err)
+	}
+}
+
 func TestGatewayStreamsBeforeUpstreamCompletes(t *testing.T) {
 	finish := make(chan struct{})
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

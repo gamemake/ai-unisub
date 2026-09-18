@@ -129,10 +129,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		requestID, _ := service.RequestIDFromContext(r.Context())
 		sourceIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-		apiKey := ""
-		if parts := strings.Fields(r.Header.Get("Authorization")); len(parts) == 2 {
-			apiKey = parts[1]
-		}
+		apiKey := service.PresentedAPIKey(r.Header)
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
 		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: trace.HTTPErrorCode, HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}

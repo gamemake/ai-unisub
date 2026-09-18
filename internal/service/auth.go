@@ -151,9 +151,21 @@ func (a *authService) session(r *http.Request) (Principal, bool) {
 	return Principal{}, false
 }
 
+// PresentedAPIKey returns the client key from Authorization: Bearer or X-Api-Key.
+// Claude Code sends x-api-key for ANTHROPIC_API_KEY and, in some versions, also
+// for ANTHROPIC_AUTH_TOKEN; Codex and Grok Build send Bearer. Bearer wins when both
+// are present so leftover official x-api-key headers cannot shadow a UniSub token.
+func PresentedAPIKey(h http.Header) string {
+	parts := strings.Fields(h.Get("Authorization"))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] != "" {
+		return parts[1]
+	}
+	return strings.TrimSpace(h.Get("X-Api-Key"))
+}
+
 func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
-	parts := strings.Fields(r.Header.Get("Authorization"))
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+	presented := PresentedAPIKey(r.Header)
+	if presented == "" {
 		return Principal{}, http.StatusUnauthorized, false
 	}
 	keys, err := a.s.db.ListAPIKeys(0)
@@ -162,7 +174,7 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 	}
 	var key database.PersistedAPIKey
 	for _, candidate := range keys {
-		if subtle.ConstantTimeCompare([]byte(candidate.Key), []byte(parts[1])) == 1 {
+		if subtle.ConstantTimeCompare([]byte(candidate.Key), []byte(presented)) == 1 {
 			if candidate.ValidSeconds > 0 && !candidate.CreatedAt.Add(time.Duration(candidate.ValidSeconds)*time.Second).After(time.Now().UTC()) {
 				return Principal{}, http.StatusUnauthorized, false
 			}

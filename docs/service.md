@@ -82,7 +82,7 @@ Service 持有内部 authService，模块通过 `ModuleContext.Auth()` 使用它
 | `AuthNone` | 不执行认证；适用于公开静态资源、登录与幂等登出等入口 |
 | `AuthSession` | 校验浏览器 Session 与当前启用用户 |
 | `AuthSessionAdmin` | Session 校验后要求管理员角色 |
-| `AuthAPIKey` | 校验 Bearer Key、有效期、启用用户和绑定账号 |
+| `AuthAPIKey` | 校验 Bearer 或 X-Api-Key、有效期、启用用户和绑定账号 |
 
 认证中间件按路由模式选择分支，不把 Cookie 和 API Key 相互替代。AuthNone 直接调用 Handler，不自动识别会话或写入 Principal。其他模式认证成功后，通过私有 Context key 写入主体，再执行 Handler。
 
@@ -127,7 +127,7 @@ SetSessionCookie 只写响应 Cookie。ClearSessionCookie 在 token 非空时先
 
 ### API Key 校验
 
-1. 使用 strings.Fields 解析 Authorization，要求恰好为 `Bearer <key>`，Bearer 大小写不敏感。
+1. 读取客户端密钥：`Authorization` 恰好为 `Bearer <key>`（Bearer 大小写不敏感）时使用该 token；否则使用 `X-Api-Key`。两者都存在时以 Bearer 为准。缺少有效 token 返回 401。Claude Code 使用 `x-api-key`，Codex 与 Grok Build 使用 Bearer。
 2. 读取全部 API Key，以 ConstantTimeCompare 比较明文 Key；缺少或不匹配返回 401。
 3. ValidSeconds 为正时，按 CreatedAt 加有效秒数判断过期；已过期返回 401，非正值不在此处限制有效期。
 4. Key 所属用户必须存在且启用，否则返回 403。
