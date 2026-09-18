@@ -73,7 +73,7 @@ func routingManager(t *testing.T) *AIProviderManager {
 }
 func createRouting(t *testing.T, m *AIProviderManager, id int, kind, raw string) {
 	t.Helper()
-	if _, err := m.Create(id, kind, json.RawMessage(raw), nil, nil); err != nil {
+	if _, err := m.Create(id, kind, json.RawMessage(raw), nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -88,7 +88,7 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	if p.Config().Members[1].Weight != 3 {
 		t.Fatal("default weight")
 	}
-	if _, e := m.Create(nested, "group", json.RawMessage(`{"members":[{"id":4}]}`), nil, nil); e == nil {
+	if _, e := m.Create(nested, "group", json.RawMessage(`{"members":[{"id":4}]}`), nil); e == nil {
 		t.Fatal("nested group accepted")
 	}
 	createRouting(t, m, restricted, "group", `{"client_type":"Anthropic","members":[{"id":1}]}`)
@@ -166,7 +166,7 @@ func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
 				raw, _ := json.Marshal(map[string]any{"client_type": memberClient})
 				createRouting(t, m, 1, "dummy", string(raw))
 				raw, _ = json.Marshal(map[string]any{"client_type": groupClient, "members": []map[string]any{{"id": 1}}})
-				_, err := m.Create(2, "group", raw, nil, nil)
+				_, err := m.Create(2, "group", raw, nil)
 				if (err == nil) != (groupClient == memberClient) {
 					t.Fatalf("group %s, member %s: %v", groupClient, memberClient, err)
 				}

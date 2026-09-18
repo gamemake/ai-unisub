@@ -8,6 +8,10 @@ import (
 // ErrQuotaNotImplemented distinguishes a placeholder from a successful query.
 var ErrQuotaNotImplemented = errors.New("quota query is not implemented")
 
+// ErrQuotaPersist means the quota snapshot was updated in memory but could not
+// be written through the application-supplied store.
+var ErrQuotaPersist = errors.New("quota snapshot could not be persisted")
+
 // QuotaItem holds an original upstream field name and value text for
 // non-subscription providers.
 // Body values are raw JSON (including nested objects and string quotes); header values are raw text.

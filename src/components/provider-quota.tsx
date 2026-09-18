@@ -5,7 +5,7 @@ import { ErrorMessage } from '@/components/shared'
 import { Button } from '@/components/ui/button'
 
 const statusLabels: Partial<Record<Quota['cache_status'], string>> = { missing: '未知', stale: '部分或全部已过期' }
-const windowLabels: Record<string, string> = { weekly: '周', month: '月' }
+const windowLabels: Record<string, string> = { weekly: '周', monthly: '月' }
 
 function resetCountdown(resetAt: string) {
   const remaining = new Date(resetAt).getTime() - Date.now()

@@ -3,6 +3,7 @@ package aiprovider
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -27,6 +28,7 @@ type AIProviderManager struct {
 	health        map[int]*memberHealth
 	revisions     map[int]uint64
 	revision      uint64
+	stateStore    func(int, json.RawMessage) error
 }
 
 func (m *AIProviderManager) SetProxyResolver(resolver ProxyResolver) {
@@ -42,6 +44,43 @@ func (m *AIProviderManager) SetProxyResolver(resolver ProxyResolver) {
 			x.SetProxyResolver(resolver)
 		}
 	}
+}
+
+// SetStateStore registers the application persistence callback for provider
+// state. aiprovider never imports the database; the callback receives the
+// provider-owned JSON payload, including quota.
+func (m *AIProviderManager) SetStateStore(store func(int, json.RawMessage) error) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.stateStore = store
+	xs := slices.Collect(maps.Values(m.aiProviders))
+	m.mu.Unlock()
+	for _, p := range xs {
+		m.bindStateStore(p, store)
+	}
+}
+
+func (m *AIProviderManager) bindStateStore(p AIProvider, store func(int, json.RawMessage) error) {
+	x, ok := p.(interface{ setStateStore(func(AIProviderState) error) })
+	if !ok {
+		return
+	}
+	id := p.Config().ID
+	x.setStateStore(func(state AIProviderState) error {
+		if store == nil {
+			return nil
+		}
+		raw, err := json.Marshal(state)
+		if err != nil {
+			return fmt.Errorf("%w: %v", ErrQuotaPersist, err)
+		}
+		if err := store(id, raw); err != nil {
+			return fmt.Errorf("%w: %v", ErrQuotaPersist, err)
+		}
+		return nil
+	})
 }
 
 // NewAIProviderManager creates an empty AIProviderManager.
@@ -85,8 +124,8 @@ func (m *AIProviderManager) Register(aiProviderType string, factory AIProviderFa
 
 // Create creates and stores a AIProvider instance under instanceID.
 // The JSON config is passed unchanged to the registered factory.
-func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config json.RawMessage, state json.RawMessage, quota json.RawMessage) (AIProvider, error) {
-	data := ProviderData{Config: config, State: state, Quota: quota}
+func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config json.RawMessage, state json.RawMessage) (AIProvider, error) {
+	data := ProviderData{Config: config, State: state}
 
 	if m == nil {
 		return nil, errors.New("provider manager is nil")
@@ -125,11 +164,6 @@ func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config
 	if err := aiprovider.RestoreState(data.State); err != nil {
 		return nil, err
 	}
-	if aiProviderType != "group" {
-		if err := aiprovider.RestoreQuota(data.Quota); err != nil {
-			return nil, err
-		}
-	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -156,6 +190,7 @@ func (m *AIProviderManager) Create(instanceID int, aiProviderType string, config
 	if x, ok := aiprovider.(interface{ setQuotaSupplier(func(string) Supplier) }); ok {
 		x.setQuotaSupplier(m.quotaSupplier)
 	}
+	m.bindStateStore(aiprovider, m.stateStore)
 	return aiprovider, nil
 }
 
@@ -180,11 +215,7 @@ func (m *AIProviderManager) Export(id int) (ProviderData, bool) {
 	if err != nil {
 		return ProviderData{}, false
 	}
-	quota, err := json.Marshal(p.Quota())
-	if err != nil {
-		return ProviderData{}, false
-	}
-	return ProviderData{Config: config, State: state, Quota: quota}, true
+	return ProviderData{Config: config, State: state}, true
 }
 
 // Get returns the AIProvider instance stored under instanceID.

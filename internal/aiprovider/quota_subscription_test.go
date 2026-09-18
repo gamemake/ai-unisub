@@ -15,6 +15,9 @@ import (
 
 const grokWeeklyFixture = `{"config":{"currentPeriod":{"type":"WEEKLY","start":"2026-07-09T03:25:00Z","end":"2026-07-16T03:25:00Z"},"creditUsagePercent":2.000,"productUsage":[{"product":"Api","quotaPercent":2}],"prepaidBalance":{"val":"12.340000000000001"},"onDemandCap":{"val":100},"onDemandUsed":{"val":5}}}`
 const grokMonthlyFixture = `{"config":{"monthlyLimit":{"val":15000},"used":{"val":"78"},"billingPeriodStart":"2026-07-01T00:00:00Z","billingPeriodEnd":"2026-08-01T00:00:00Z"}}`
+const grokCreditsLiveFixture = `{"config":{"creditUsagePercent":42.5,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-06-01T00:00:00Z","end":"2026-06-08T00:00:00Z"},"onDemandCap":{"val":5000},"onDemandUsed":{},"prepaidBalance":{},"isUnifiedBillingUser":true,"productUsage":[{"product":"PRODUCT_GROK_BUILD","usagePercent":61.2}]}}`
+const grokCreditsZeroFixture = `{"config":{"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","start":"2026-09-16T00:00:00Z","end":"2026-09-23T00:00:00Z"},"onDemandUsed":{"val":0},"onDemandCap":{}}}`
+const grokUnifiedMonthlyFixture = `{"config":{"isUnifiedBillingUser":true,"currentPeriod":{"type":"USAGE_PERIOD_TYPE_WEEKLY","end":"2026-06-08T00:00:00Z"},"creditUsagePercent":42.5}}`
 
 func newGrokQuotaTestProvider(t *testing.T) *GrokAIProvider {
 	t.Helper()
@@ -82,10 +85,15 @@ func TestGrokBillingValidation(t *testing.T) {
 	}{
 		{grokWeeklyFixture, false, true},
 		{grokMonthlyFixture, true, true},
+		{grokCreditsLiveFixture, false, true},
+		{grokCreditsZeroFixture, false, true},
+		{grokUnifiedMonthlyFixture, true, true},
 		{`{"config":{"creditUsagePercent":0}}`, false, true},
+		{`{"config":{"creditUsagePercent":0,"onDemandCap":{}}}`, false, true},
 		{`{"config":{"monthlyLimit":0,"used":"0.00000000000000001"}}`, true, true},
+		{`{"config":{"monthlyLimit":{},"used":{}}}`, true, true},
 		{`{"config":{"monthlyLimit":"12345678901234567890.001","used":0}}`, true, true},
-		{grokWeeklyFixture, true, false},
+		{grokWeeklyFixture, true, true},
 		{grokMonthlyFixture, false, false},
 		{`{"config":null}`, false, false},
 		{`{"config":{}}`, false, false},
@@ -93,7 +101,7 @@ func TestGrokBillingValidation(t *testing.T) {
 		{`{"config":{"creditUsagePercent":-1}}`, false, false},
 		{`{"config":{"creditUsagePercent":0,"productUsage":[null]}}`, false, false},
 		{`{"config":{"creditUsagePercent":0,"prepaidBalance":{"val":"NaN"}}}`, false, false},
-		{`{"config":{"monthlyLimit":{},"used":0}}`, true, false},
+		{`{"config":{"monthlyLimit":{},"used":0}}`, true, true},
 		{`{"config":{"monthlyLimit":{"val":null},"used":0}}`, true, false},
 		{`{"config":{"monthlyLimit":100}}`, true, false},
 		{`{"config":{"monthlyLimit":100,"used":0},"error":"failed"}`, true, false},
@@ -144,6 +152,48 @@ func TestGrokBillingAuthRecoveryAndIsolation(t *testing.T) {
 	p.config.Kind = "api"
 	if _, err := p.FetchQuota(t.Context()); !errors.Is(err, ErrQuotaUnsupported) || calls != 3 {
 		t.Fatal("API account reached subscription billing", err)
+	}
+}
+
+func TestGrokUnifiedBillingKeepsWeeklyWhenMonthlyHasNoAmounts(t *testing.T) {
+	p := newGrokQuotaTestProvider(t)
+	p.client = &http.Client{Transport: quotaTransport(func(r *http.Request) (*http.Response, error) {
+		body := grokCreditsLiveFixture
+		if r.URL.RawQuery == "" {
+			body = grokUnifiedMonthlyFixture
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	result, err := p.FetchQuota(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SubscriptionQuotaItem{
+		{TimeDimension: "weekly", Usage: 42.5, ResetAt: time.Date(2026, 6, 8, 0, 0, 0, 0, time.UTC)},
+	}
+	if len(result.Items) != 0 || !reflect.DeepEqual(result.Subscription, want) {
+		t.Fatalf("unified billing lost weekly window: %+v", result)
+	}
+}
+
+func TestGrokOmittedCreditUsagePercentIsZero(t *testing.T) {
+	p := newGrokQuotaTestProvider(t)
+	p.client = &http.Client{Transport: quotaTransport(func(r *http.Request) (*http.Response, error) {
+		body := grokCreditsZeroFixture
+		if r.URL.RawQuery == "" {
+			body = `{"config":{}}`
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	result, err := p.FetchQuota(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []SubscriptionQuotaItem{
+		{TimeDimension: "weekly", Usage: 0, ResetAt: time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)},
+	}
+	if len(result.Items) != 0 || !reflect.DeepEqual(result.Subscription, want) {
+		t.Fatalf("omitted weekly percent was not treated as 0%%: %+v", result)
 	}
 }
 

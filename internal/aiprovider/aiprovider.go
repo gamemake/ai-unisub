@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,7 +42,10 @@ type AIProviderConfig struct {
 
 // AIProviderState contains provider-owned state that is safe to persist.
 // Runtime coordination state is deliberately kept out of this value.
-type AIProviderState struct{}
+// Quota snapshots are stored here so they share the account state blob.
+type AIProviderState struct {
+	Quota AIProviderQuota `json:"quota,omitempty"`
+}
 
 // AIProviderQuota is the serializable quota snapshot owned by a provider.
 type AIProviderQuota struct {
@@ -52,11 +56,47 @@ type AIProviderQuota struct {
 }
 
 // ProviderData is the persistence boundary between the database layer and a
-// provider. The aiprovider package owns the meaning of all three payloads.
+// provider. The aiprovider package owns the meaning of both payloads.
 type ProviderData struct {
 	Config json.RawMessage `json:"config,omitempty"`
 	State  json.RawMessage `json:"state,omitempty"`
-	Quota  json.RawMessage `json:"quota,omitempty"`
+}
+
+// MergeLegacyQuota copies a previously separate accounts.quota blob into state
+// when state does not already contain quota.
+func MergeLegacyQuota(state, quota json.RawMessage) json.RawMessage {
+	quota = json.RawMessage(strings.TrimSpace(string(quota)))
+	if len(quota) == 0 || string(quota) == "null" || string(quota) == "{}" {
+		return state
+	}
+	var fields map[string]json.RawMessage
+	switch {
+	case len(state) == 0 || string(state) == "null":
+		fields = map[string]json.RawMessage{}
+	case json.Unmarshal(state, &fields) != nil:
+		return state
+	}
+	if _, ok := fields["quota"]; ok {
+		return state
+	}
+	fields["quota"] = quota
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return state
+	}
+	return raw
+}
+
+func restoreAIProviderState(cache *quotaCache, raw json.RawMessage) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var state AIProviderState
+	if err := json.Unmarshal(raw, &state); err != nil {
+		return err
+	}
+	cache.restore(state.Quota)
+	return nil
 }
 
 // AIProviderCallTrace contains the complete request/response data collected by a
@@ -97,7 +137,6 @@ type AIProvider interface {
 	// value is assigned at creation time and must not be changed.
 	UpdateConfig(json.RawMessage) error
 	RestoreState(json.RawMessage) error
-	RestoreQuota(json.RawMessage) error
 	Handle(*http.Request, APICallRecorder)
 	// FetchQuota queries current subscription usage or non-subscription balance.
 	// Groups return ErrQuotaUnsupported. Historical usage/costs and cached fallback are excluded.

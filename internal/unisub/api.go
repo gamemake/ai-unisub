@@ -870,7 +870,7 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 		return
 	}
 
-	if _, err = ctx.AIProviders().Create(account.ID, input.AIProvider, config, nil, nil); err != nil {
+	if _, err = ctx.AIProviders().Create(account.ID, input.AIProvider, config, nil); err != nil {
 		if credentialID != "" && credentialRaw != nil {
 			_ = ctx.Database().DeleteCredential(credentialID)
 		}
@@ -882,6 +882,7 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 	if p, ok := ctx.AIProviders().Get(account.ID); ok {
 		account.Config = canonicalProviderConfig(config, p.Config())
 	}
+	applyExportedState(ctx, account)
 	if err = ctx.Database().SaveAccount(account); err != nil {
 		ctx.AIProviders().Remove(account.ID)
 		if credentialID != "" && credentialRaw != nil {
@@ -1029,6 +1030,7 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 		}
 	}
 	account.UpdatedAt = time.Now().UTC()
+	applyExportedState(ctx, account)
 	if err := ctx.Database().SaveAccount(account); err != nil {
 		_ = ctx.AIProviders().UpdateConfig(id, previousConfig)
 		if createdCredential != "" {
@@ -1041,6 +1043,15 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 		_ = ctx.Database().DeleteCredential(retiredCredential)
 	}
 	writeJSON(w, 200, publicAccount(ctx.Database(), *account))
+}
+
+func applyExportedState(ctx framework.ModuleContext, account *database.PersistedAccount) {
+	if account == nil {
+		return
+	}
+	if data, ok := ctx.AIProviders().Export(account.ID); ok {
+		account.State = data.State
+	}
 }
 
 func canonicalProviderConfig(raw json.RawMessage, c aiprovider.AIProviderConfig) json.RawMessage {

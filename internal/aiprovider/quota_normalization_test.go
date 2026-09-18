@@ -124,6 +124,22 @@ func TestGrokZeroLimitAndNonfiniteUsage(t *testing.T) {
 	if err != nil || len(u) != 1 || u[0].item.TimeDimension != "weekly" {
 		t.Fatal(u, err)
 	}
+	items = []QuotaItem{
+		{Name: "config", Source: "billing?format=credits", Value: `{"currentPeriod":{"end":"2026-09-23T00:00:00Z"}}`},
+		{Name: "config", Source: "billing", Value: `{"isUnifiedBillingUser":true}`},
+	}
+	u, err = subscriptionBodyUpdates("grok", items, time.Now())
+	if err != nil || len(u) != 1 || u[0].item.TimeDimension != "weekly" || u[0].item.Usage != 0 || !u[0].item.ResetAt.Equal(time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)) {
+		t.Fatal("omitted weekly percent or missing monthly amounts", u, err)
+	}
+	items = []QuotaItem{
+		{Name: "config", Source: "billing?format=credits", Value: `{"creditUsagePercent":1}`},
+		{Name: "config", Source: "billing", Value: `{"monthlyLimit":{},"used":{"val":67}}`},
+	}
+	u, err = subscriptionBodyUpdates("grok", items, time.Now())
+	if err != nil || len(u) != 1 || u[0].item.TimeDimension != "weekly" || u[0].item.Usage != 1 {
+		t.Fatal("empty monthly limit fabricated a percentage", u, err)
+	}
 	if _, err = subscriptionBodyUpdates("anthropic", []QuotaItem{{Name: "five_hour", Value: `{"utilization":1e999}`}}, time.Now()); err == nil {
 		t.Fatal("nonfinite usage accepted")
 	}

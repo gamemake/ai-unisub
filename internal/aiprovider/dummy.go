@@ -33,25 +33,12 @@ func (p *DummyAIProvider) Config() AIProviderConfig {
 	defer p.mu.RUnlock()
 	return cloneAIProviderConfig(p.config)
 }
-func (p *DummyAIProvider) State() AIProviderState { return AIProviderState{} }
+func (p *DummyAIProvider) State() AIProviderState {
+	return AIProviderState{Quota: p.quotaCache.snapshot()}
+}
 func (p *DummyAIProvider) Quota() AIProviderQuota { return p.quotaCache.snapshot() }
 func (p *DummyAIProvider) RestoreState(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var state AIProviderState
-	return json.Unmarshal(raw, &state)
-}
-func (p *DummyAIProvider) RestoreQuota(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var quota AIProviderQuota
-	if err := json.Unmarshal(raw, &quota); err != nil {
-		return err
-	}
-	p.quotaCache.restore(quota)
-	return nil
+	return restoreAIProviderState(&p.quotaCache, raw)
 }
 func (p *DummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	config, err := decodeAIProviderConfig(p.Config().ID, raw)
@@ -62,7 +49,7 @@ func (p *DummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	p.config = config
 	p.quotaCache.invalidate()
 	p.mu.Unlock()
-	return nil
+	return p.quotaCache.save()
 }
 func (p *DummyAIProvider) Handle(r *http.Request, recorder APICallRecorder) {
 	body, _ := io.ReadAll(r.Body)
@@ -95,7 +82,13 @@ func (p *DummyAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	if !p.quotaCache.putSubscription(stamp, updates, false) {
 		return nil, ErrQuotaSuperseded
 	}
+	if err := p.quotaCache.save(); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+func (p *DummyAIProvider) setStateStore(store func(AIProviderState) error) {
+	p.quotaCache.setPersist(store)
 }
 func (p *DummyAIProvider) GetCachedQuota() *Quota {
 	return p.quotaCache.get()

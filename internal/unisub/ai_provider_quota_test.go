@@ -26,7 +26,7 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 		if err := s.Database().SaveAccount(account); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := s.AIProviders().Create(account.ID, tc.adapter, []byte(config), nil, nil); err != nil {
+		if _, err := s.AIProviders().Create(account.ID, tc.adapter, []byte(config), nil); err != nil {
 			t.Fatal(err)
 		}
 		ids[tc.name] = account.ID
@@ -101,6 +101,22 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 			cache := readList()
 			if len(cache["demo"].Subscription) != 2 || !reflect.DeepEqual(cache["demo"].Subscription, result.Subscription) || cache["demo"].CacheStatus != aiprovider.QuotaCacheFresh {
 				t.Fatalf("list did not retain refreshed data: %+v", cache)
+			}
+			accounts, err := s.Database().ListAccounts()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var stored aiprovider.AIProviderState
+			for _, account := range accounts {
+				if account.ID == ids["demo"] {
+					if json.Unmarshal(account.State, &stored) != nil {
+						t.Fatalf("persisted state is not JSON: %s", account.State)
+					}
+					break
+				}
+			}
+			if len(stored.Quota.Subscription) != 2 || !reflect.DeepEqual(stored.Quota.Subscription, result.Subscription) {
+				t.Fatalf("refreshed quota was not persisted in state: %+v", stored)
 			}
 		}
 	}

@@ -14,6 +14,7 @@ type quotaCache struct {
 	generation, sequence, fullSequence uint64
 	entries                            []quotaCacheEntry
 	windows                            []subscriptionCacheEntry
+	persist                            func(AIProviderState) error
 }
 
 type subscriptionCacheEntry struct {
@@ -86,9 +87,31 @@ func (c *quotaCache) put(stamp quotaStamp, items []QuotaItem, partial bool) bool
 	return true
 }
 
+func (c *quotaCache) setPersist(store func(AIProviderState) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.persist = store
+}
+
+func (c *quotaCache) save() error {
+	c.mu.Lock()
+	store := c.persist
+	q := c.getLocked()
+	snap := AIProviderState{Quota: AIProviderQuota{Subscription: q.Subscription, Items: q.Items, CacheStatus: q.CacheStatus, UpdatedAt: q.UpdatedAt}}
+	c.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	return store(snap)
+}
+
 func (c *quotaCache) get() *Quota {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.getLocked()
+}
+
+func (c *quotaCache) getLocked() *Quota {
 	result := &Quota{CacheStatus: QuotaCacheMissing}
 	if len(c.windows) != 0 {
 		for _, entry := range c.windows {

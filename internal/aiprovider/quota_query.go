@@ -38,7 +38,14 @@ func (p *oauthAIProvider) setQuotaSupplier(source func(string) Supplier) {
 	p.quotaSupplier = source
 }
 
-func (p *oauthAIProvider) invalidateQuotaCache() { p.quotaCache.invalidate() }
+func (p *oauthAIProvider) setStateStore(store func(AIProviderState) error) {
+	p.quotaCache.setPersist(store)
+}
+
+func (p *oauthAIProvider) invalidateQuotaCache() {
+	p.quotaCache.invalidate()
+	_ = p.quotaCache.save()
+}
 
 func quotaEndpoint(c AIProviderConfig) (endpoint, service string, err error) {
 	if c.Kind == "api" || c.Kind == "" && c.AuthType == AuthTypeAPIKey {
@@ -246,12 +253,17 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 		}
 		monthly, err := query(strings.TrimSuffix(endpointURL, "?format=credits"))
 		if err != nil {
-			return nil, err
+			// Keep a successful weekly window when the monthly body cannot be
+			// recognized. Auth and rate-limit still fail the whole refresh.
+			if !errors.Is(err, ErrQuotaInvalidResponse) {
+				return nil, err
+			}
+		} else {
+			for i := range monthly {
+				monthly[i].Source = "billing"
+			}
+			items = append(items, monthly...)
 		}
-		for i := range monthly {
-			monthly[i].Source = "billing"
-		}
-		items = append(items, monthly...)
 	}
 	// Commit the complete snapshot atomically. A failed window leaves the old
 	// snapshot and its observation times untouched, including on first fetch.
@@ -270,6 +282,9 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 		if !p.quotaCache.putSubscription(stamp, updates, false) {
 			return nil, ErrQuotaSuperseded
 		}
+		if err := p.quotaCache.save(); err != nil {
+			return nil, err
+		}
 		result := &Quota{CacheStatus: QuotaCacheFresh, UpdatedAt: stamp.observed}
 		for _, update := range updates {
 			result.Subscription = append(result.Subscription, update.item)
@@ -278,6 +293,9 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 	}
 	if !p.quotaCache.put(stamp, items, false) {
 		return nil, ErrQuotaSuperseded
+	}
+	if err := p.quotaCache.save(); err != nil {
+		return nil, err
 	}
 	return &Quota{Items: items, CacheStatus: QuotaCacheFresh, UpdatedAt: stamp.observed}, nil
 }

@@ -2,10 +2,13 @@
 package unisub
 
 import (
+	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/service"
 	"ai-unisub/internal/web"
 	"cmp"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -34,6 +37,9 @@ func New(cfg Config) (*service.Service, error) {
 	if err := srv.Auth().EnsureAdmin(cfg.Service.AdminUsername, cfg.Service.AdminPassword); err != nil {
 		return fail(err)
 	}
+	srv.AIProviders().SetStateStore(func(id int, state json.RawMessage) error {
+		return persistAccountState(srv.Database(), id, state)
+	})
 	accounts, err := srv.Database().ListAccounts()
 	if err != nil {
 		return fail(err)
@@ -48,7 +54,7 @@ func New(cfg Config) (*service.Service, error) {
 		return -1
 	})
 	for _, account := range accounts {
-		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config, account.State, account.Quota); err != nil {
+		if _, err := srv.AIProviders().Create(account.ID, account.AIProvider, account.Config, aiprovider.MergeLegacyQuota(account.State, account.Quota)); err != nil {
 			return fail(fmt.Errorf("load provider %d: %w", account.ID, err))
 		}
 	}
@@ -58,6 +64,21 @@ func New(cfg Config) (*service.Service, error) {
 		}
 	}
 	return srv, nil
+}
+
+func persistAccountState(db database.Database, id int, state json.RawMessage) error {
+	accounts, err := db.ListAccounts()
+	if err != nil {
+		return err
+	}
+	for i := range accounts {
+		if accounts[i].ID != id {
+			continue
+		}
+		accounts[i].State = state
+		return db.SaveAccount(&accounts[i])
+	}
+	return errors.New("account not found")
 }
 
 func staticFiles(cfg Config) (fs.FS, error) {

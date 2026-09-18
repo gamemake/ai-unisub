@@ -48,15 +48,6 @@ func (g *groupProvider) RestoreState(raw json.RawMessage) error {
 	var state AIProviderState
 	return json.Unmarshal(raw, &state)
 }
-func (g *groupProvider) RestoreQuota(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	if len(raw) > 0 && string(raw) != "null" {
-		return ErrQuotaUnsupported
-	}
-	return nil
-}
 func (g *groupProvider) UpdateConfig(raw json.RawMessage) error {
 	c, e := decodeAIProviderConfig(g.Config().ID, raw)
 	if e != nil {

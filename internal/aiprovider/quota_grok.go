@@ -12,11 +12,20 @@ func validGrokBilling(fields map[string]jsontext.Value, monthly bool) bool {
 	if config == nil || presentQuotaValue(fields["error"]) || presentQuotaValue(config["error"]) {
 		return false
 	}
+	if presentQuotaValue(config["currentPeriod"]) && quotaObject(config["currentPeriod"]) == nil {
+		return false
+	}
 	if monthly {
-		if !validGrokAmount(config["monthlyLimit"]) || !validGrokAmount(config["used"]) {
+		hasLimit := presentQuotaValue(config["monthlyLimit"])
+		hasUsed := presentQuotaValue(config["used"])
+		if hasLimit || hasUsed {
+			if !validGrokAmount(config["monthlyLimit"]) || !validGrokAmount(config["used"]) {
+				return false
+			}
+		} else if !validGrokCreditsSignal(config) {
 			return false
 		}
-	} else if !quotaPercent(config["creditUsagePercent"]) {
+	} else if !validGrokCreditsSignal(config) {
 		return false
 	}
 	for _, key := range []string{"monthlyLimit", "used", "prepaidBalance", "onDemandCap", "onDemandUsed"} {
@@ -24,15 +33,41 @@ func validGrokBilling(fields map[string]jsontext.Value, monthly bool) bool {
 			return false
 		}
 	}
-	if value := config["productUsage"]; presentQuotaValue(value) {
-		var products []map[string]jsontext.Value
-		if value.Kind() != '[' || json.Unmarshal(value, &products) != nil {
+	if value := config["productUsage"]; presentQuotaValue(value) && !validGrokProductUsage(value) {
+		return false
+	}
+	return true
+}
+
+// proto3 JSON omits default zeros, so a weekly reset arrives without
+// creditUsagePercent. A typed currentPeriod is then the 0% signal.
+func validGrokCreditsSignal(config map[string]jsontext.Value) bool {
+	if presentQuotaValue(config["creditUsagePercent"]) {
+		return quotaPercent(config["creditUsagePercent"])
+	}
+	return quotaObject(config["currentPeriod"]) != nil
+}
+
+func validGrokProductUsage(value jsontext.Value) bool {
+	var products []map[string]jsontext.Value
+	if value.Kind() != '[' || json.Unmarshal(value, &products) != nil {
+		return false
+	}
+	for _, product := range products {
+		if product == nil {
 			return false
 		}
-		for _, product := range products {
-			if _, ok := quotaString(product["product"]); !ok || !quotaPercent(product["quotaPercent"]) {
+		if raw := product["product"]; presentQuotaValue(raw) {
+			if _, ok := quotaString(raw); !ok && !quotaNumber(raw) {
 				return false
 			}
+		}
+		percent := product["quotaPercent"]
+		if !presentQuotaValue(percent) {
+			percent = product["usagePercent"]
+		}
+		if presentQuotaValue(percent) && !quotaPercent(percent) {
+			return false
 		}
 	}
 	return true
@@ -40,7 +75,15 @@ func validGrokBilling(fields map[string]jsontext.Value, monthly bool) bool {
 
 func validGrokAmount(value jsontext.Value) bool {
 	if value.Kind() == '{' {
-		value = quotaObject(value)["val"]
+		obj := quotaObject(value)
+		if obj == nil {
+			return false
+		}
+		value = obj["val"]
+		if len(value) == 0 {
+			// proto3 omits zero scalars; {} is a $0 Cent.
+			return true
+		}
 	}
 	return quotaNumber(value) || quotaDecimalString(value)
 }

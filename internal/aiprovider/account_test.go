@@ -73,7 +73,7 @@ func TestAccountFIFOQueueFullAndCancellation(t *testing.T) {
 func TestAccountConfigIncreaseAndDisableWakeWaiters(t *testing.T) {
 	manager := NewAIProviderManager()
 	_ = manager.Register("dummy", DummyAIProviderFactory(nil))
-	_, err := manager.Create(1, "dummy", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`), nil, nil)
+	_, err := manager.Create(1, "dummy", json.RawMessage(`{"enabled":true,"max_concurrent_connections":1}`), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

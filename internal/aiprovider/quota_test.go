@@ -2,6 +2,7 @@ package aiprovider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"testing"
@@ -58,6 +59,39 @@ func TestDummyQuota(t *testing.T) {
 	}
 	if cached := provider.GetCachedQuota(); !reflect.DeepEqual(cached, result) {
 		t.Fatalf("dummy fetch should populate cache: %+v", cached)
+	}
+}
+
+func TestMergeLegacyQuotaIntoState(t *testing.T) {
+	quota := json.RawMessage(`{"cache_status":"fresh","subscription":[{"time_dimension":"weekly","usage":1}]}`)
+	merged := MergeLegacyQuota(nil, quota)
+	var state AIProviderState
+	if err := json.Unmarshal(merged, &state); err != nil || len(state.Quota.Subscription) != 1 || state.Quota.Subscription[0].Usage != 1 {
+		t.Fatalf("legacy quota was not wrapped in state: %s %v", merged, err)
+	}
+	keep := json.RawMessage(`{"quota":{"cache_status":"stale"}}`)
+	if got := string(MergeLegacyQuota(keep, quota)); got != string(keep) {
+		t.Fatalf("existing state quota was replaced: %s", got)
+	}
+}
+
+func TestDummyQuotaPersistsSnapshot(t *testing.T) {
+	provider := &DummyAIProvider{}
+	var saved AIProviderQuota
+	provider.setStateStore(func(s AIProviderState) error {
+		saved = s.Quota
+		return nil
+	})
+	result, err := provider.FetchQuota(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CacheStatus != QuotaCacheFresh || !reflect.DeepEqual(saved.Subscription, result.Subscription) {
+		t.Fatalf("state store was not given the committed quota snapshot: %+v", saved)
+	}
+	provider.setStateStore(func(AIProviderState) error { return errors.New("disk full") })
+	if _, err := provider.FetchQuota(t.Context()); !errors.Is(err, ErrQuotaPersist) {
+		t.Fatalf("persist failure: %v", err)
 	}
 }
 

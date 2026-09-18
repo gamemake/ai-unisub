@@ -65,7 +65,7 @@ Claude、OpenAI／Codex、Grok 的订阅内容摘自 [sub2api 订阅用量获取
 
 **UniSub 接入方式：** `FetchQuota` 已接入 Claude OAuth usage、Codex wham usage 和 Grok 周／月 billing；正常模型 response 的已知额度 Headers 自动更新同一实例缓存。以下 sub2api 的探测、快照持久化及节流说明属于来源项目，不全部照搬：UniSub 不为刷新 quota 额外发送模型请求，也不额外查询 Codex reset credits 端点。查询复用现有 OAuth 凭据和代理组，401 最多恢复令牌后重试一次；不调用三家的 API 余额接口。
 
-Grok 两个 billing 响应在内部按来源区分，再转换为标准订阅窗口：周用量读取 `creditUsagePercent`，月用量计算 `used / monthlyLimit * 100`，重置时间分别读取 `currentPeriod.end`、`billingPeriodEnd`。月限额为零时不构造无意义的百分比，也不伪装成 0%。两个查询全部成功后一次性更新缓存，任一失败返回错误并保留整个旧快照及原更新时间；订阅对外不再暴露原始 `config` 或 `source`。
+Grok 两个 billing 响应在内部按来源区分，再转换为标准订阅窗口：周用量读取 `creditUsagePercent`，月用量计算 `used / monthlyLimit * 100`，重置时间分别读取 `currentPeriod.end`、`billingPeriodEnd`。proto3 JSON 会省略默认 0：周窗口在缺少 `creditUsagePercent` 但存在 `currentPeriod` 时按 0% 处理；金额字段 `{}` 视为 0。`productUsage` 同时接受 `quotaPercent` 与现行 `usagePercent`。统一计费账号的月响应可能没有 `monthlyLimit`／`used`，此时只保留周窗口。周查询成功后，无法识别的月响应不使整次刷新失败；认证失败和限流仍返回错误并保留整个旧快照及原更新时间。月限额为零时不构造无意义的百分比，也不伪装成 0%。订阅对外不再暴露原始 `config` 或 `source`。
 
 正常 response 在 HTTP 2xx 或 429 时采集 Headers；仅订阅类型生效，未知、重复或格式错误的值不入缓存，不将 API 限流 Header 当作余额。Claude utilization 比例乘以 100；Codex 已用百分数原值保留，相对重置秒数以响应观测时间计算；Grok 在同一响应提供有效 limit 和 remaining 时计算 `(limit - remaining) / limit * 100`。仅重置时间到达时不生成零用量。主动与被动结果按上游窗口标识合并，部分更新不刷新其他窗口或未更新字段的时效。Codex 的 primary／secondary 比例不是单个窗口的已用量，不单独生成窗口。测试使用模拟响应，不表示已进行真实账号在线验证。
 
@@ -227,7 +227,7 @@ Content-Type: application/json
 | --- | --- | --- |
 | 周 credits | `currentPeriod.type/start/end` | 当前窗口类型及时间字符串 |
 | 周 credits | `creditUsagePercent` | 周额度已用百分数 |
-| 周 credits | `productUsage[].product/quotaPercent` | 产品标签及产品维度已用百分数 |
+| 周 credits | `productUsage[].product` 与 `usagePercent` 或 `quotaPercent` | 产品标签及产品维度已用百分数；现行 credits 响应用 `usagePercent` |
 | 周 credits | `prepaidBalance` | 美元，不除以 100 |
 | 周 credits | `onDemandCap`、`onDemandUsed` | 美元，不除以 100 |
 | 月账务 | `monthlyLimit`、`used` | 美元分，展示美元时除以 100 |

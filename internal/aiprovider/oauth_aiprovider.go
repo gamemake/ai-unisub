@@ -56,7 +56,12 @@ func (p *oauthAIProvider) Config() AIProviderConfig {
 	return cloneAIProviderConfig(p.config)
 }
 
-func (p *oauthAIProvider) State() AIProviderState { return AIProviderState{} }
+func (p *oauthAIProvider) State() AIProviderState {
+	if p == nil {
+		return AIProviderState{}
+	}
+	return AIProviderState{Quota: p.quotaCache.snapshot()}
+}
 
 func (p *oauthAIProvider) Quota() AIProviderQuota {
 	if p == nil {
@@ -66,23 +71,7 @@ func (p *oauthAIProvider) Quota() AIProviderQuota {
 }
 
 func (p *oauthAIProvider) RestoreState(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var state AIProviderState
-	return json.Unmarshal(raw, &state)
-}
-
-func (p *oauthAIProvider) RestoreQuota(raw json.RawMessage) error {
-	if len(raw) == 0 || string(raw) == "null" {
-		return nil
-	}
-	var quota AIProviderQuota
-	if err := json.Unmarshal(raw, &quota); err != nil {
-		return err
-	}
-	p.quotaCache.restore(quota)
-	return nil
+	return restoreAIProviderState(&p.quotaCache, raw)
 }
 
 func (p *oauthAIProvider) update(raw json.RawMessage) error {
@@ -104,14 +93,14 @@ func (p *oauthAIProvider) update(raw json.RawMessage) error {
 		return err
 	}
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if next.ProxyGroupID != p.config.ProxyGroupID {
 		client := upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
 		p.client = client
 	}
 	p.config = cloneAIProviderConfig(next)
 	p.quotaCache.invalidate()
-	return nil
+	p.mu.Unlock()
+	return p.quotaCache.save()
 }
 
 func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request, recorder APICallRecorder) {
@@ -237,7 +226,9 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	trace.ResponseHeaders = response.Header.Clone()
 	if response.StatusCode >= 200 && response.StatusCode < 300 || response.StatusCode == http.StatusTooManyRequests {
 		quotaStamp.observed = time.Now().UTC()
-		p.quotaCache.putSubscription(quotaStamp, subscriptionHeaderUpdates(config, service, response.Header, quotaStamp.observed), true)
+		if p.quotaCache.putSubscription(quotaStamp, subscriptionHeaderUpdates(config, service, response.Header, quotaStamp.observed), true) {
+			_ = p.quotaCache.save()
+		}
 	}
 	trace.ResponseStatus = response.StatusCode
 	if w := responseWriter(req.Context()); w != nil {

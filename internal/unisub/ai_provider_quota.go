@@ -39,6 +39,9 @@ func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.R
 		if errors.Is(err, aiprovider.ErrQuotaRateLimited) {
 			status = http.StatusTooManyRequests
 		}
+		if errors.Is(err, aiprovider.ErrQuotaPersist) {
+			status = http.StatusInternalServerError
+		}
 		common.WriteError(w, status, quotaError(err))
 		return
 	}
@@ -63,6 +66,9 @@ func quotaError(err error) string {
 	}
 	if errors.Is(err, aiprovider.ErrQuotaInvalidResponse) {
 		return "The upstream returned invalid quota data"
+	}
+	if errors.Is(err, aiprovider.ErrQuotaPersist) {
+		return common.MessageCouldNotSaveAIProvider
 	}
 	if errors.Is(err, aiprovider.ErrQuotaNotImplemented) {
 		return "Quota queries are not implemented for this supplier"

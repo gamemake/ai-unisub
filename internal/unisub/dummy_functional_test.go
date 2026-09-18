@@ -21,7 +21,6 @@ func (p *dummyAIProvider) Config() aiprovider.AIProviderConfig { return p.config
 func (p *dummyAIProvider) State() aiprovider.AIProviderState   { return aiprovider.AIProviderState{} }
 func (p *dummyAIProvider) Quota() aiprovider.AIProviderQuota   { return aiprovider.AIProviderQuota{} }
 func (p *dummyAIProvider) RestoreState(json.RawMessage) error  { return nil }
-func (p *dummyAIProvider) RestoreQuota(json.RawMessage) error  { return nil }
 func (p *dummyAIProvider) UpdateConfig(raw json.RawMessage) error {
 	var config aiprovider.AIProviderConfig
 	if err := json.Unmarshal(raw, &config); err != nil {

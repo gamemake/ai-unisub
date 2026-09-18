@@ -136,12 +136,21 @@ func subscriptionBodyUpdates(supplier string, items []QuotaItem, observed time.T
 			}
 			config := quotaObject(value)
 			if item.Source == "billing?format=credits" {
-				usage, ok := quotaNumberValue(config["creditUsagePercent"])
-				if !ok {
-					return nil, ErrQuotaInvalidResponse
+				var usage float64
+				if presentQuotaValue(config["creditUsagePercent"]) {
+					var ok bool
+					usage, ok = quotaNumberValue(config["creditUsagePercent"])
+					if !ok {
+						return nil, ErrQuotaInvalidResponse
+					}
+				} else if quotaObject(config["currentPeriod"]) == nil {
+					continue
 				}
 				updates = append(updates, subscriptionUpdate{key: "weekly", item: SubscriptionQuotaItem{"weekly", usage, quotaResetString(quotaObject(config["currentPeriod"])["end"])}, hasUsage: true, hasReset: true})
 			} else if item.Source == "billing" {
+				if !presentQuotaValue(config["monthlyLimit"]) && !presentQuotaValue(config["used"]) {
+					continue
+				}
 				limit, ok := grokAmountNumber(config["monthlyLimit"])
 				used, usedOK := grokAmountNumber(config["used"])
 				// A zero allowance has no meaningful percentage; it is not 0% used.
@@ -167,7 +176,14 @@ func subscriptionBodyUpdates(supplier string, items []QuotaItem, observed time.T
 
 func grokAmountNumber(raw jsontext.Value) (float64, bool) {
 	if raw.Kind() == '{' {
-		raw = quotaObject(raw)["val"]
+		obj := quotaObject(raw)
+		if obj == nil {
+			return 0, false
+		}
+		raw = obj["val"]
+		if len(raw) == 0 {
+			return 0, true
+		}
 	}
 	if raw.Kind() == '"' {
 		s, _ := quotaString(raw)
