@@ -204,7 +204,7 @@ type CallTraceFilter struct {
 	Code            *int      // Optional HTTP error-code filter.
 	Search          string    // Optional exact text filter.
 	SearchUsernames bool      // Optional; enables user-name search when authorized by the application layer.
-	TimeRange       TimeRange // Required time range for the query.
+	TimeRange       TimeRange // Required inclusive time range; start and end must be set.
 }
 
 // ProxyLogFilter combines filters for proxy logs.
@@ -219,6 +219,16 @@ type ProxyLogFilter struct {
 type TimeRange struct {
 	Start time.Time
 	End   time.Time
+}
+
+func validateTimeRange(r TimeRange) error {
+	if r.Start.IsZero() || r.End.IsZero() {
+		return errors.New("start time and end time are required")
+	}
+	if r.Start.After(r.End) {
+		return errors.New("start time must not be after end time")
+	}
+	return nil
 }
 
 // Database is the persistence contract. SQLiteDatabase is the concrete
@@ -286,6 +296,7 @@ type Database interface {
 	// CleanupCallTrace removes call-trace data older than the specified number of days.
 	CleanupCallTrace(days int) error
 	// QueryCallTraces returns call-trace summaries matching filter, with one-based pagination.
+	// filter.TimeRange start and end are required; the database does not cap the window.
 	QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.

@@ -1241,14 +1241,12 @@ func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r 
 		}
 		filter.Code = &code
 	}
-	if r.URL.Query().Get("range") != "" {
-		var err error
-		filter.TimeRange, err = usageTimeRange(r)
-		if err != nil {
-			common.WriteError(w, 400, err.Error())
-			return
-		}
+	timeRange, err := usageTimeRange(r)
+	if err != nil {
+		common.WriteError(w, 400, err.Error())
+		return
 	}
+	filter.TimeRange = timeRange
 	items, total, err := ctx.Database().QueryCallTraces(filter, page, pageSize)
 	if err != nil {
 		common.WriteError(w, 500, common.MessageCouldNotQueryCallRecords)

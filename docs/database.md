@@ -61,6 +61,6 @@ Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供
 - `call_traces_YYYYMMDD`
 - `proxy_logs_YYYYMMDD`
 
-`QueryCallTraces` 和 `QueryProxyLogs` 支持分页与过滤。`GetCallTrace` 使用 UTC 日期和 `int` 类型记录 ID 查询完整内容。
+`QueryCallTraces` 和 `QueryProxyLogs` 支持分页与过滤，过滤条件中的 `TimeRange` 必须同时填写起止时间，且开始时间不得晚于结束时间；数据库不限制该范围是否落在最近 30 天。`GetCallTrace` 使用 UTC 日期和 `int` 类型记录 ID 查询完整内容。
 
 当前实现不提供旧数据库结构迁移。使用旧 schema 的数据库文件需要删除后重新创建。

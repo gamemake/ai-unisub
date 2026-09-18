@@ -17,7 +17,7 @@ export function TimeRangeFilter({ onChange }: { onChange: (value: TimeFilter) =>
       if (next !== 'custom') onChange({ range: next })
       else if (from && to && from <= to) onChange({ range: next, from, to })
     }} className="h-10 rounded-lg border p-1">
-      {[['1d', '24 小时'], ['1w', '7 天'], ['1m', '30 天'], ['custom', '自定义']].map(([value, label]) => <ToggleGroupItem key={value} value={value} className="h-full data-pressed:bg-primary data-pressed:text-primary-foreground">{label}</ToggleGroupItem>)}
+      {[['1d', '1 天'], ['1w', '7 天'], ['1m', '30 天'], ['custom', '自定义']].map(([value, label]) => <ToggleGroupItem key={value} value={value} className="h-full data-pressed:bg-primary data-pressed:text-primary-foreground">{label}</ToggleGroupItem>)}
     </ToggleGroup>
     <form aria-hidden={range !== 'custom'} inert={range !== 'custom'} className={`grid w-full items-end gap-2 sm:w-auto sm:grid-cols-[1fr_1fr_auto] ${range !== 'custom' ? 'invisible' : ''}`} onSubmit={event => {
       event.preventDefault()

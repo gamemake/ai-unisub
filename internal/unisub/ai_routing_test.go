@@ -90,7 +90,7 @@ func TestGatewayGroupNativeAffinityAndRestrictions(t *testing.T) {
 	if removed := appRequest(s, "DELETE", "/api/ai-providers/"+pathID(id1), "", cookie); removed.Code != 400 {
 		t.Fatal("deleted referenced member")
 	}
-	traces, count, err := s.Database().QueryCallTraces(database.CallTraceFilter{}, 1, 10)
+	traces, count, err := s.Database().QueryCallTraces(recentCallFilter(), 1, 10)
 	if err != nil || count != 5 || traces[0].AccountID == group || traces[0].SessionID != "native-session" {
 		t.Fatal("member attribution missing", count, err, traces)
 	}

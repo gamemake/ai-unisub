@@ -111,7 +111,7 @@ func (m *MemoryDatabase) ListUsers() []PersistedUser {
 func (m *MemoryDatabase) HasUser(id int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, ok := m.accounts[id]
+	_, ok := m.users[id]
 	return ok
 }
 

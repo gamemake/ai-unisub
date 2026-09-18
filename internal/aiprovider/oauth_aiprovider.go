@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -181,6 +182,10 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 	}
 	var response *http.Response
 	authRecovered := false
+	maxRetries := 0
+	if resolver != nil && groupID != 0 {
+		maxRetries = resolver.ProxyRetryLimit(groupID)
+	}
 	for attempt := 0; ; attempt++ {
 		req.Body = io.NopCloser(bytes.NewReader(body))
 		called := p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) {
@@ -204,9 +209,11 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 				p.withProxy(req.Context(), resolver, groupID, application, func(client *http.Client) { response, err = client.Do(req) })
 			}
 		}
-		retryable := (req.Method == http.MethodGet || req.Method == http.MethodHead) && (err != nil || response != nil && response.StatusCode >= 500)
-		trace.RetrySafe = retryable
-		if !retryable || attempt >= 2 || groupID == 0 {
+		dialError, isDialError := errors.AsType[*net.OpError](err)
+		safe := isDialError && dialError.Op == "dial"
+		trace.RetrySafe = safe
+		retryable := safe || (req.Method == http.MethodGet || req.Method == http.MethodHead) && (err != nil || response != nil && response.StatusCode >= 500)
+		if !retryable || attempt >= maxRetries || groupID == 0 {
 			break
 		}
 		if response != nil {
@@ -271,14 +278,15 @@ func (p *oauthAIProvider) withProxy(ctx context.Context, resolver ProxyResolver,
 	if resolver == nil {
 		return false
 	}
-	called := false
 	ep, err := resolver.ResolveProxy(ctx, groupID, app, nil)
 	if err != nil {
-		client := proxy.Client(nil, ep)
-		fn(client)
-		called = true
+		return false
 	}
-	return called
+	p.mu.RLock()
+	base := p.client
+	p.mu.RUnlock()
+	fn(proxy.Client(base, ep))
+	return true
 }
 
 // Capture at most 1 MiB for inspection without buffering a streaming response.

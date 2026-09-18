@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 )
 
 func testApp(t *testing.T) *service.Service {
@@ -36,6 +37,10 @@ func testDatabase(t *testing.T) database.Database {
 	return db
 }
 func pathID(id int) string { return strconv.Itoa(id) }
+func recentCallFilter() database.CallTraceFilter {
+	now := time.Now().UTC()
+	return database.CallTraceFilter{TimeRange: database.TimeRange{Start: now.Add(-24 * time.Hour), End: now.Add(time.Minute)}}
+}
 func appRequest(s *service.Service, method, path, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

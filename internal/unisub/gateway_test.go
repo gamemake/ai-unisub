@@ -68,7 +68,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if result.Code != 201 || result.Header().Get("X-Upstream") != "preserved" || !strings.Contains(result.Body.String(), `"ok":true`) {
 				t.Fatalf("forward: %d %s", result.Code, result.Body.String())
 			}
-			traces, count, err := s.Database().QueryCallTraces(database.CallTraceFilter{}, 1, 10)
+			traces, count, err := s.Database().QueryCallTraces(recentCallFilter(), 1, 10)
 			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "" {
 				t.Fatalf("trace: %#v count=%d err=%v", traces, count, err)
 			}

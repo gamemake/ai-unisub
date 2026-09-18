@@ -134,7 +134,7 @@ name 去除首尾空白后必须为 1–64 个字符；account_id 必须存在�
 
 q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id，任一字段相等即可；仅管理员额外精确匹配 username，界面不提示该能力。account_id 按账号 ID 匹配；code 省略或为空时查询全部；传入时按存储的 http_error_code 精确匹配，接受 0 或 100–599 的整数。成功记录目前存储为 0，不映射为 200。文本、账号、状态、时间以及归属限制之间使用 AND。
 
-时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 保留原接口的不限时间行为，调用记录页面默认使用 1d。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
+时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 时与用量统计相同，默认为最近 24 小时（`1d`）；`1m` 为最近 30 天。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
 
 列表摘要和详情均包含 session_id。网关仅按 [AIProvider 原生会话头适配](ai-provider.md) 读取 Claude、Codex、Grok 对应的原生 SessionID，不读取 X-Unisub-Session-ID；未匹配客户端或原生头时留空，不使用通用头或请求正文兜底。调用记录与组内粘性使用相同规则。这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串；组调用的 account_id/provider_type 记录实际执行的成员。
 

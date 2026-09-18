@@ -1,6 +1,8 @@
 package aiprovider
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -102,7 +104,13 @@ func (c *quotaCache) save() error {
 	if store == nil {
 		return nil
 	}
-	return store(snap)
+	if err := store(snap); err != nil {
+		if errors.Is(err, ErrQuotaPersist) {
+			return err
+		}
+		return fmt.Errorf("%w: %v", ErrQuotaPersist, err)
+	}
+	return nil
 }
 
 func (c *quotaCache) get() *Quota {

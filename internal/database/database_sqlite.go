@@ -201,8 +201,8 @@ func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize in
 	if pageSize < 1 {
 		return nil, 0, errors.New("page size must be greater than zero")
 	}
-	if filter.TimeRange.Start.After(filter.TimeRange.End) {
-		return nil, 0, errors.New("start time must not be after end time")
+	if err := validateTimeRange(filter.TimeRange); err != nil {
+		return nil, 0, err
 	}
 	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
 	if err != nil {
@@ -402,7 +402,7 @@ func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
 	if err := validateUser(value); err != nil {
 		return err
 	}
-	if value.ID > 0 && !s.mem.HasAccount(value.ID) {
+	if value.ID > 0 && !s.mem.HasUser(value.ID) {
 		return errors.New("user not found")
 	}
 	if err := s.ensureOpen(); err != nil {
@@ -583,6 +583,9 @@ func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize 
 	values := []string{}
 	if filter.Search != "" {
 		values = append(values, filter.Search)
+	}
+	if err := validateTimeRange(filter.TimeRange); err != nil {
+		return nil, 0, err
 	}
 	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &filter.TimeRange, filter, values...)
 }
