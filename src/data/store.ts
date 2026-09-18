@@ -2,7 +2,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
 import type { Account, AICatalogResponse, APIKey, Call, List, OAuthStart, Proxy, ProxyGroup, Usage, Quota, User } from './types'
-const id = encodeURIComponent
+const id = (value: string | number) => encodeURIComponent(String(value))
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
 export function useFetchQuota() {
@@ -22,24 +22,24 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
   return useMutation({ mutationFn: action, onSuccess: async () => { await Promise.all(invalidate.map(key => queryClient.invalidateQueries({ queryKey: [key] }))) } })
 }
 export const actions = {
-  fetchQuota: (providerID: string) => request<Quota>(`/api/ai-providers/${id(providerID)}/refresh-quota`, json('POST')),
+  fetchQuota: (providerID: number) => request<Quota>(`/api/ai-providers/${id(providerID)}/refresh-quota`, json('POST')),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
-  saveAIProvider: (input: { id?: string; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
-  deleteAIProvider: (key: string) => request('/api/ai-providers/' + id(key), json('DELETE')),
-  createKey: (input: { name: string; account_id: string; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),
-  deleteKey: (key: string) => request('/api/keys/' + id(key), json('DELETE')),
+  saveAIProvider: (input: { id?: number; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
+  deleteAIProvider: (key: number) => request('/api/ai-providers/' + id(key), json('DELETE')),
+  createKey: (input: { name: string; account_id: number; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),
+  deleteKey: (key: number) => request('/api/keys/' + id(key), json('DELETE')),
   createUser: (input: { name: string; password: string; role: string }) => request<User>('/api/users', json('POST', input)),
-  updateUser: (input: { id: string; role?: string; enabled?: boolean }) => request<User>('/api/users/' + id(input.id), json('PUT', input)),
-  resetPassword: (input: { id: string; password: string }) => request('/api/users/' + id(input.id) + '/password', json('POST', input)),
-  deleteUser: (key: string) => request('/api/users/' + id(key), json('DELETE')),
+  updateUser: (input: { id: number; role?: string; enabled?: boolean }) => request<User>('/api/users/' + id(input.id), json('PUT', input)),
+  resetPassword: (input: { id: number; password: string }) => request('/api/users/' + id(input.id) + '/password', json('POST', input)),
+  deleteUser: (key: number) => request('/api/users/' + id(key), json('DELETE')),
   password: (input: { old_password: string; new_password: string }) => request('/api/password', json('POST', input)),
   saveProxy: (input: Partial<ProxyGroup>) => request<ProxyGroup>('/api/proxy-groups' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
-  deleteProxy: (key: string) => request('/api/proxy-groups/' + id(key), json('DELETE')),
-  testProxy: (input: { group_id?: string; proxy_id?: string; url?: string }) => request<Proxy>('/api/proxy-groups/test', json('POST', input)),
-  proxyErrors: (input: { group_id: string; proxy_id: string }) => request<Proxy>('/api/proxy-groups/errors?' + new URLSearchParams(input)),
+  deleteProxy: (key: number) => request('/api/proxy-groups/' + id(key), json('DELETE')),
+  testProxy: (input: { group_id?: number; proxy_id?: string; url?: string }) => request<Proxy>('/api/proxy-groups/test', json('POST', input)),
+  proxyErrors: (input: { group_id: number; proxy_id: string }) => request<Proxy>('/api/proxy-groups/errors?' + new URLSearchParams({ group_id: String(input.group_id), proxy_id: input.proxy_id })),
   callDetail: (call: Call) => request<Record<string, unknown>>('/api/calls/' + id(call.started_at.slice(0, 10).replaceAll('-', '')) + '/' + id(call.id)),
-  oauthStart: (input: { aiProvider: string; proxy_group_id?: string }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', { proxy_group_id: input.proxy_group_id })),
+  oauthStart: (input: { aiProvider: string; proxy_group_id?: number }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', input.proxy_group_id ? { proxy_group_id: input.proxy_group_id } : {})),
   oauthPoll: (input: { aiProvider: string; session_id: string }) => request<{ status: string; result_id?: string; interval_seconds?: number }>(`/api/oauth/${id(input.aiProvider)}/poll/${id(input.session_id)}`, json('POST', {})),
   oauthComplete: (input: { aiProvider: string; session_id: string; code: string; state: string }) => request<{ result_id: string }>(`/api/oauth/${id(input.aiProvider)}/complete/${id(input.session_id)}`, json('POST', input)),
   oauthResult: (key: string) => request<{ result: unknown }>('/api/oauth/results/' + id(key)),

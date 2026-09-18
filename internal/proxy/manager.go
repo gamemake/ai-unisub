@@ -165,6 +165,23 @@ func (m *Manager) List() (groups []Group, err error) {
 	return groups, nil
 }
 
+func (m *Manager) New(g *Group) (err error) {
+	defer func() {
+		group := 0
+		if g != nil {
+			group = g.ID
+		}
+		logOperationError("new_group", "", group, "", err)
+	}()
+	if g == nil || strings.TrimSpace(g.Name) == "" {
+		return errors.New("proxy group name is required")
+	}
+	if g.ID != 0 {
+		return errors.New("new proxy group must not have an ID")
+	}
+	return m.persist(g)
+}
+
 func (m *Manager) Save(g *Group) (err error) {
 	defer func() {
 		group := 0
@@ -176,6 +193,10 @@ func (m *Manager) Save(g *Group) (err error) {
 	if g == nil || g.ID == 0 || strings.TrimSpace(g.Name) == "" {
 		return errors.New("proxy group ID and name are required")
 	}
+	return m.persist(g)
+}
+
+func (m *Manager) persist(g *Group) error {
 	if g.MaxRetries < 0 {
 		return errors.New("max retries must not be negative")
 	}
@@ -208,6 +229,9 @@ func (m *Manager) Save(g *Group) (err error) {
 	}
 	if err := m.store.SaveProxyGroup(&value); err != nil {
 		return err
+	}
+	if value.ID == 0 {
+		return errors.New("store did not assign proxy group ID")
 	}
 	*g = clone(value)
 	return nil

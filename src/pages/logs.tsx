@@ -58,7 +58,7 @@ export function Logs() {
         <Input aria-label="搜索调用记录" className="min-w-60 flex-1" value={search} onChange={event => setSearch(event.target.value)} placeholder="精确搜索 IP、模型、Session ID、Request ID" />
         <AppSelect aria-label="账号" className="w-48" value={account} onValueChange={value => { setAccount(value); setPage(1) }}>
           <SelectItem value="">全部账号</SelectItem>
-          {accounts.data?.items.map(item => <SelectItem key={item.id} value={item.id}>{item.name} · {item.provider}</SelectItem>)}
+          {accounts.data?.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name} · {item.provider}</SelectItem>)}
         </AppSelect>
         <AppSelect aria-label="状态" className="w-24" contentClassName="min-w-56" valueLabel={code || '全部'} value={code} onValueChange={value => { setCode(value); setPage(1) }}>
           <SelectItem value="">全部</SelectItem>

@@ -158,7 +158,7 @@ usage 包含 requests、input_tokens、output_tokens、cache_creation_tokens、c
 | 方法 | 路径 | 输入／用途 |
 | --- | --- | --- |
 | GET | `/api/proxy-groups` | 查询代理组 |
-| POST | `/api/proxy-groups` | 代理组 JSON；生成组 ID |
+| POST | `/api/proxy-groups` | 代理组 JSON；`New` 创建并由存储生成组 ID |
 | GET | `/api/proxy-groups/{id}` | 读取单组 |
 | PUT | `/api/proxy-groups/{id}` | 替换组配置，保留 ID 和创建时间 |
 | DELETE | `/api/proxy-groups/{id}` | 删除组 |

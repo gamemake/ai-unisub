@@ -15,20 +15,26 @@ type testStore struct {
 	groups  []Group
 	buckets map[string]Bucket
 	fail    bool
+	next    int
 }
 
 func (s *testStore) ListProxyGroups() ([]Group, error) { return clone(s.groups), nil }
 func (s *testStore) SaveProxyGroup(g *Group) error {
+	if g.ID == 0 {
+		s.next++
+		g.ID = s.next
+		s.groups = append(s.groups, clone(*g))
+		return nil
+	}
 	for i := range s.groups {
 		if s.groups[i].ID == g.ID {
 			s.groups[i] = clone(*g)
 			return nil
 		}
 	}
-	s.groups = append(s.groups, clone(*g))
-	return nil
+	return errors.New("proxy group not found")
 }
-func (s *testStore) DeleteProxyGroup(id string) error { return nil }
+func (s *testStore) DeleteProxyGroup(int) error { return nil }
 func (s *testStore) SaveProxyStats(v []Bucket) error {
 	if s.fail {
 		return errors.New("storage unavailable")
@@ -72,17 +78,18 @@ func setup(t *testing.T) (*Manager, *testStore, *time.Time) {
 	})
 	return m, store, &now
 }
-func saveGroup(t *testing.T, m *Manager, id string, addresses ...string) {
+func saveGroup(t *testing.T, m *Manager, name string, addresses ...string) int {
 	t.Helper()
-	g := Group{ID: id, Name: id, MaxRetries: 3}
+	g := Group{Name: name, MaxRetries: 3}
 	for _, a := range addresses {
 		g.Proxies = append(g.Proxies, Entry{URL: a, Enabled: true})
 	}
-	if err := m.Save(&g); err != nil {
+	if err := m.New(&g); err != nil {
 		t.Fatal(err)
 	}
+	return g.ID
 }
-func resolve(t *testing.T, m *Manager, group, app string) *Endpoint {
+func resolve(t *testing.T, m *Manager, group int, app string) *Endpoint {
 	t.Helper()
 	e, err := m.ResolveProxy(t.Context(), group, app, nil)
 	if err != nil {
@@ -92,54 +99,54 @@ func resolve(t *testing.T, m *Manager, group, app string) *Endpoint {
 }
 func TestPrioritySharedHealthAndApplicationIsolation(t *testing.T) {
 	m, _, now := setup(t)
-	saveGroup(t, m, "one", "http://LOCALHOST:8001/", "http://localhost:8002")
-	saveGroup(t, m, "two", "http://localhost:8001")
-	first := resolve(t, m, "one", "app-a")
+	one := saveGroup(t, m, "one", "http://LOCALHOST:8001/", "http://localhost:8002")
+	two := saveGroup(t, m, "two", "http://localhost:8001")
+	first := resolve(t, m, one, "app-a")
 	if first.String() != "http://localhost:8001" {
 		t.Fatal(first)
 	}
-	if again := resolve(t, m, "one", "app-a"); again.String() != first.String() {
+	if again := resolve(t, m, one, "app-a"); again.String() != first.String() {
 		t.Fatal("selection must not round robin")
 	}
 	if err := m.ReportProxy(first, "app-a", ApplicationError); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(t.Context(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), two, "app-a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("application failure not shared across groups")
 	}
-	if other := resolve(t, m, "two", "app-b"); other.String() != first.String() {
+	if other := resolve(t, m, two, "app-b"); other.String() != first.String() {
 		t.Fatal("application failure leaked")
 	}
 	m.SetProber(func(context.Context, *Endpoint) error { return nil })
 	if _, err := m.TestURL(t.Context(), first.String()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(t.Context(), "two", "app-a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), two, "app-a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("network probe cleared application failure")
 	}
 	*now = now.Add(2 * time.Minute)
-	recovered := resolve(t, m, "two", "app-a")
+	recovered := resolve(t, m, two, "app-a")
 	if err := m.ReportProxy(recovered, "app-a", Success); err != nil {
 		t.Fatal(err)
 	}
 	if err := m.ReportProxy(first, "app-a", NetworkError); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(t.Context(), "two", "app-b", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), two, "app-b", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("network failure not global")
 	}
 	if m.Snapshot(first, "app-a").Status != "available" {
 		t.Fatal("network failure changed application health")
 	}
-	second := resolve(t, m, "one", "app-b")
+	second := resolve(t, m, one, "app-b")
 	if second.String() == first.String() {
 		t.Fatal("did not fail over")
 	}
 }
 func TestHalfOpenQuotaCancellationAndNoBypass(t *testing.T) {
 	m, _, now := setup(t)
-	saveGroup(t, m, "one", "http://localhost:8001")
-	e := resolve(t, m, "one", "a")
+	one := saveGroup(t, m, "one", "http://localhost:8001")
+	e := resolve(t, m, one, "a")
 	_ = m.ReportProxy(e, "a", NetworkError)
 	*now = now.Add(2 * time.Minute)
 	var admitted atomic.Int32
@@ -147,7 +154,7 @@ func TestHalfOpenQuotaCancellationAndNoBypass(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-			if selected, err := m.ResolveProxy(t.Context(), "one", "a", nil); err == nil {
+			if selected, err := m.ResolveProxy(t.Context(), one, "a", nil); err == nil {
 				admitted.Add(1)
 				leases <- selected
 			}
@@ -158,32 +165,32 @@ func TestHalfOpenQuotaCancellationAndNoBypass(t *testing.T) {
 		t.Fatalf("half-open admitted %d", admitted.Load())
 	}
 	_ = m.ReportProxy(e, "a", Canceled)
-	if _, err := m.ResolveProxy(t.Context(), "one", "a", nil); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), one, "a", nil); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("unrelated cancellation released a half-open lease")
 	}
 	_ = m.ReportProxy(<-leases, "a", Canceled)
-	e = resolve(t, m, "one", "a")
+	e = resolve(t, m, one, "a")
 	_ = m.ReportProxy(e, "a", Success)
-	if _, err := m.ResolveProxy(t.Context(), "one", "a", []string{e.String()}); !errors.Is(err, ErrUnavailable) {
+	if _, err := m.ResolveProxy(t.Context(), one, "a", []string{e.String()}); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("retried an attempted address")
 	}
-	if direct, err := m.ResolveProxy(t.Context(), "", "a", nil); err != nil || direct != nil {
+	if direct, err := m.ResolveProxy(t.Context(), 0, "a", nil); err != nil || direct != nil {
 		t.Fatal("empty group must leave proxy unspecified")
 	}
-	if _, err := m.ResolveProxy(t.Context(), "missing", "a", nil); err == nil {
+	if _, err := m.ResolveProxy(t.Context(), 99, "a", nil); err == nil {
 		t.Fatal("missing group silently bypassed")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := m.ResolveProxy(ctx, "one", "a", nil); !errors.Is(err, context.Canceled) {
+	if _, err := m.ResolveProxy(ctx, one, "a", nil); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
 func TestStatsWindowsFailureRetryAndCapacity(t *testing.T) {
 	m, store, now := setup(t)
 	m.policy.MaxBuckets = 2
-	saveGroup(t, m, "one", "http://localhost:8001")
-	e := resolve(t, m, "one", "a")
+	one := saveGroup(t, m, "one", "http://localhost:8001")
+	e := resolve(t, m, one, "a")
 	_ = m.ReportProxy(e, "a", ApplicationError)
 	store.fail = true
 	if err := m.Flush(); err == nil {
@@ -302,5 +309,30 @@ func TestCloseCancelsProbeAndCanRetryPersistence(t *testing.T) {
 	store.fail = false
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNewAssignsIDAndSaveUpdatesExisting(t *testing.T) {
+	m, _, _ := setup(t)
+	if err := m.Save(&Group{Name: "missing"}); err == nil {
+		t.Fatal("Save must require an ID")
+	}
+	if err := m.New(&Group{ID: 3, Name: "invalid"}); err == nil {
+		t.Fatal("New must reject a preset ID")
+	}
+	g := Group{Name: "created", Remark: "first", Proxies: []Entry{{URL: "http://127.0.0.1:1080", Enabled: true}}}
+	if err := m.New(&g); err != nil {
+		t.Fatal(err)
+	}
+	if g.ID <= 0 || g.Proxies[0].ID == "" {
+		t.Fatalf("New must assign group and proxy IDs: %+v", g)
+	}
+	g.Remark = "updated"
+	if err := m.Save(&g); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := m.List()
+	if err != nil || len(listed) != 1 || listed[0].ID != g.ID || listed[0].Remark != "updated" {
+		t.Fatalf("saved group not loaded: %+v %v", listed, err)
 	}
 }

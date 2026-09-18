@@ -228,7 +228,7 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 		now := time.Now().UTC()
 		value.CreatedAt = now
 		value.UpdatedAt = now
-		if err := ctx.Proxy().Save(&value); err != nil {
+		if err := ctx.Proxy().New(&value); err != nil {
 			common.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}

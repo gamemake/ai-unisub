@@ -47,7 +47,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
   const [members, setMembers] = useState<GroupMember[]>(account?.config.members || [])
   const [name, setName] = useState(account?.name || ''), [aiProvider, setAIProvider] = useState(account?.provider || (kind === 'subscription' ? 'codex' : kind)), auth = kind === 'api' ? 'api_key' : 'oauth'
   const [apiKey, setAPIKey] = useState(''), [credential, setCredential] = useState('')
-  const [enabled, setEnabled] = useState(account?.enabled ?? true), [concurrency, setConcurrency] = useState(account?.config.max_concurrent_connections || 1), [timeout, setTimeout] = useState(account?.config.queue_timeout_seconds || 0), [proxy, setProxy] = useState(account?.config.proxy_group_id || '')
+  const [enabled, setEnabled] = useState(account?.enabled ?? true), [concurrency, setConcurrency] = useState(account?.config.max_concurrent_connections || 1), [timeout, setTimeout] = useState(account?.config.queue_timeout_seconds || 0), [proxy, setProxy] = useState(account?.config.proxy_group_id ? String(account.config.proxy_group_id) : '')
   const [oauth, setOAuth] = useState(false), [validation, setValidation] = useState<Error | null>(null)
   const proxies = useProxies(), save = useAction(actions.saveAIProvider, ['ai-providers', 'provider-options'])
   const isGroup = kind === 'group'
@@ -59,7 +59,8 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
     e.preventDefault(); setValidation(null)
     try {
       if (auth === 'api_key' && !supplier) throw new Error('请选择模型供应商，服务地址在模型供应商中配置')
-      const config: AIProviderConfig = { ...account?.config, kind: isGroup ? 'group' : auth === 'api_key' ? 'api' : 'subscription', auth_type: auth, enabled, max_concurrent_connections: concurrency, queue_timeout_seconds: timeout, proxy_group_id: proxy, client_type: selectedClient }
+      const config: AIProviderConfig = { ...account?.config, kind: isGroup ? 'group' : auth === 'api_key' ? 'api' : 'subscription', auth_type: auth, enabled, max_concurrent_connections: concurrency, queue_timeout_seconds: timeout, client_type: selectedClient }
+      if (proxy) config.proxy_group_id = Number(proxy); else delete config.proxy_group_id
       delete config.api_endpoint; delete config.official_only
       delete config.client_types; delete config.proxy; delete config.members; delete config.supplier
       if (isGroup) {
@@ -126,7 +127,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
             </>}
             </div>
             <div className="space-y-4">
-            <Field label="代理组"><AppSelect value={proxy} onValueChange={value => setProxy(value)}><SelectItem value="">不使用代理组</SelectItem>{proxies.data?.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</AppSelect></Field>
+            <Field label="代理组"><AppSelect value={proxy} onValueChange={value => setProxy(value)}><SelectItem value="">不使用代理组</SelectItem>{proxies.data?.map(p => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}</AppSelect></Field>
             <Field label="最大并发"><Input type="number" min={1} max={100} required value={concurrency} onChange={e => setConcurrency(Number(e.target.value))} /></Field>
             <Field label="排队超时（秒）" hint="0 使用默认 180 秒"><Input type="number" min={0} max={300} required value={timeout} onChange={e => setTimeout(Number(e.target.value))} /></Field>
             </div>
@@ -138,9 +139,9 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
       {kind === 'subscription' && <section aria-label="OAuth 凭据" className="border-t pt-5"><div className="space-y-3"><div className="flex items-center justify-between"><h3 className="text-sm font-medium">OAuth 凭据</h3><Button type="button" size="sm" variant="outline" onClick={() => setOAuth(true)}>网页登录授权<ExternalLink /></Button></div><Textarea aria-label="OAuth 凭据 JSON" value={credential} onChange={e => setCredential(e.target.value)} spellCheck={false} placeholder={account ? '留空保留现有凭据，或粘贴新的 JSON' : '{"access_token":"…","refresh_token":"…"}'} /></div></section>}
     </>}
     <ErrorMessage error={validation || save.error} /><div className="flex justify-end gap-3"><Button type="button" variant="outline" onClick={onClose}>取消</Button><Submit pending={save.isPending} /></div>
-  </form>{oauth && <OAuthForm aiProvider={aiProvider} proxyGroupID={proxy} onClose={() => setOAuth(false)} onComplete={value => { setCredential(JSON.stringify(value, null, 2)); setOAuth(false) }} />}</Modal>
+  </form>{oauth && <OAuthForm aiProvider={aiProvider} proxyGroupID={proxy ? Number(proxy) : undefined} onClose={() => setOAuth(false)} onComplete={value => { setCredential(JSON.stringify(value, null, 2)); setOAuth(false) }} />}</Modal>
 }
-function OAuthForm({ aiProvider, proxyGroupID, onClose, onComplete }: { aiProvider: string; proxyGroupID?: string; onClose: () => void; onComplete: (value: unknown) => void }) {
+function OAuthForm({ aiProvider, proxyGroupID, onClose, onComplete }: { aiProvider: string; proxyGroupID?: number; onClose: () => void; onComplete: (value: unknown) => void }) {
   const [session, setSession] = useState<OAuthStart | null>(null), [code, setCode] = useState(''), [error, setError] = useState<Error | null>(null), [busy, setBusy] = useState(false)
   useEffect(() => {
     let active = true, timer: ReturnType<typeof setTimeout>

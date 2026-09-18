@@ -73,7 +73,7 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	if cfg.ProxyPolicy != nil {
 		policy = *cfg.ProxyPolicy
 	}
-	proxyManager := proxy.NewManager(proxy.NewStoreProxyForDB(&db), policy)
+	proxyManager := proxy.NewManager(proxy.NewStoreProxyForDB(db), policy)
 	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxyManager, oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
 	if raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey); err != nil {

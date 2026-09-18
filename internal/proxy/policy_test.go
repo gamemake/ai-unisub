@@ -16,8 +16,8 @@ func TestWindowRateAndIndependentApplicationRecovery(t *testing.T) {
 	m.policy.ApplicationFailureRate = .5
 	m.policy.ApplicationCooldown = 5 * time.Minute
 	m.policy.ApplicationRecoverySuccesses = 2
-	saveGroup(t, m, "g", "http://localhost:8001")
-	e := resolve(t, m, "g", "claude")
+	id := saveGroup(t, m, "g", "http://localhost:8001")
+	e := resolve(t, m, id, "claude")
 	for _, class := range []ErrorClass{ApplicationError, Success, ApplicationError, Success, ApplicationError} {
 		if err := m.ReportProxy(e, "claude", class); err != nil {
 			t.Fatal(err)
@@ -29,7 +29,7 @@ func TestWindowRateAndIndependentApplicationRecovery(t *testing.T) {
 	if m.Snapshot(e, "").Status != "available" {
 		t.Fatal("application failure broke network")
 	}
-	if _, err := m.ResolveProxy(t.Context(), "g", "codex", nil); err != nil {
+	if _, err := m.ResolveProxy(t.Context(), id, "codex", nil); err != nil {
 		t.Fatal("other application quarantined", err)
 	}
 	m.SetProber(func(context.Context, *Endpoint) error { return nil })
@@ -41,17 +41,17 @@ func TestWindowRateAndIndependentApplicationRecovery(t *testing.T) {
 	if len(m.Recent(e, "claude")) != 0 || m.Snapshot(e, "claude").Status != "unavailable" {
 		t.Fatal("bucket expiry must not recover application")
 	}
-	half := resolve(t, m, "g", "claude")
+	half := resolve(t, m, id, "claude")
 	_ = m.ReportProxy(half, "claude", Success)
 	if m.Snapshot(e, "claude").Status != "half_open" {
 		t.Fatal("one success recovered too early")
 	}
-	half = resolve(t, m, "g", "claude")
+	half = resolve(t, m, id, "claude")
 	_ = m.ReportProxy(half, "claude", Canceled)
 	if m.Snapshot(e, "claude").RecoverySuccesses != 1 {
 		t.Fatal("cancellation changed recovery")
 	}
-	half = resolve(t, m, "g", "claude")
+	half = resolve(t, m, id, "claude")
 	_ = m.ReportProxy(half, "claude", Success)
 	if m.Snapshot(e, "claude").Status != "available" {
 		t.Fatal("did not recover")
@@ -66,10 +66,10 @@ func TestWindowRateAndIndependentApplicationRecovery(t *testing.T) {
 func TestAutomaticProbesAreNetworkOnlyAndRecoverInStages(t *testing.T) {
 	m, _, now := setup(t)
 	m.policy.NetworkRecoverySuccesses = 2
-	saveGroup(t, m, "g", "http://localhost:8001", "http://localhost:8002")
-	first := resolve(t, m, "g", "a")
+	id := saveGroup(t, m, "g", "http://localhost:8001", "http://localhost:8002")
+	first := resolve(t, m, id, "a")
 	_ = m.ReportProxy(first, "a", ApplicationError)
-	second, err := m.ResolveProxy(t.Context(), "g", "a", nil)
+	second, err := m.ResolveProxy(t.Context(), id, "a", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,8 +103,8 @@ func TestAutomaticProbesAreNetworkOnlyAndRecoverInStages(t *testing.T) {
 
 func TestNetworkProbeBackoffAndApplicationNoTraffic(t *testing.T) {
 	m, _, now := setup(t)
-	saveGroup(t, m, "g", "http://localhost:8001")
-	e := resolve(t, m, "g", "a")
+	id := saveGroup(t, m, "g", "http://localhost:8001")
+	e := resolve(t, m, id, "a")
 	_ = m.ReportProxy(e, "a", NetworkError)
 	first := m.Snapshot(e, "").CooldownUntil.Sub(*now)
 	*now = now.Add(time.Minute)

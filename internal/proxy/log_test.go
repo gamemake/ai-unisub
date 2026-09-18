@@ -102,8 +102,8 @@ func TestFailureLogsWithoutTransitionAndDetailedReporting(t *testing.T) {
 func TestTransitionLogsAndCancellation(t *testing.T) {
 	b := captureProxyLogs(t)
 	m, _, now := setup(t)
-	saveGroup(t, m, "g", "http://localhost:8001")
-	e := resolve(t, m, "g", "app")
+	id := saveGroup(t, m, "g", "http://localhost:8001")
+	e := resolve(t, m, id, "app")
 	if err := m.ReportProxy(e, "app", ApplicationError); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestTransitionLogsAndCancellation(t *testing.T) {
 		t.Fatalf("missing application failure transition: %s", text)
 	}
 	*now = now.Add(2 * time.Minute)
-	e = resolve(t, m, "g", "app")
+	e = resolve(t, m, id, "app")
 	text = b.take()
 	if strings.Count(text, "event=state_changed") != 1 || !strings.Contains(text, "from=unavailable to=half_open") || !strings.Contains(text, "in_flight=1") {
 		t.Fatalf("missing half-open admission: %s", text)
@@ -129,7 +129,7 @@ func TestTransitionLogsAndCancellation(t *testing.T) {
 	if after.Failures != before.Failures || after.Status != before.Status || after.InFlight != 0 {
 		t.Fatal("cancellation changed health or leaked quota")
 	}
-	e = resolve(t, m, "g", "app")
+	e = resolve(t, m, id, "app")
 	if err := m.ReportProxy(e, "app", Success); err != nil {
 		t.Fatal(err)
 	}
@@ -193,14 +193,14 @@ func TestOperationErrorsLoggedOnce(t *testing.T) {
 		t.Fatalf("propagated flush failure logged incorrectly: %s", text)
 	}
 	store.fail = false
-	if _, err := m.ResolveProxy(t.Context(), "missing", "app", nil); err == nil {
+	if _, err := m.ResolveProxy(t.Context(), 99, "app", nil); err == nil {
 		t.Fatal("expected missing group")
 	}
 	text = b.take()
 	if strings.Count(text, "event=operation_failed") != 1 || !strings.Contains(text, "reason=group_not_found") {
 		t.Fatalf("missing scheduling reason: %s", text)
 	}
-	if err := m.Save(&Group{ID: "g", Name: "g", Proxies: []Entry{{URL: "bad-address"}}}); err == nil {
+	if err := m.Save(&Group{ID: 1, Name: "g", Proxies: []Entry{{URL: "bad-address"}}}); err == nil {
 		t.Fatal("expected invalid URL")
 	}
 	if text := b.take(); strings.Count(text, "event=operation_failed") != 1 {

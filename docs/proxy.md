@@ -83,7 +83,7 @@ OAuth 启动参数显式携带 Endpoint，Session 保存本次选定的不可变
 
 | 能力 | 输入与输出语义 |
 | --- | --- |
-| 代理组管理 | 查询、保存、删除有序代理引用；校验地址、重复引用和重试参数 |
+| 代理组管理 | 查询、创建、保存、删除有序代理引用；校验地址、重复引用和重试参数。创建由存储分配 ID，保存要求已有正数 ID |
 | 选择代理 | 输入 Context、组 ID、应用标识和已尝试代理；输出选中代理或明确的不可用错误 |
 | 报告结果 | 输入代理标识、应用标识、成功或错误分类、时间；更新共享状态及统计 |
 | 主动探测 | 探测已保存代理或未保存 URL；探测器可注入，不绑定业务 Handler |
@@ -208,7 +208,7 @@ OAuth 启动参数显式携带 Endpoint，Session 保存本次选定的不可变
 - `NewManager(Store, Policy)` 创建 Manager；Service 使用 DefaultPolicy，允许通过 Config.ProxyPolicy 注入策略。
 - `ResolveProxy(ctx, groupID, application, tried)` 返回不可变 Endpoint；空 groupID 返回 nil。Endpoint 内部保存半开租约，调用方必须将选中对象交回 ReportProxy，包括取消分支。
 - `ReportProxy(endpoint, application, class)` 接收 success（空字符串）、network、application、application_ignored、canceled。网络错误只改变网络健康；应用错误只改变该应用健康。`application_ignored` 表示网络可达，但该结果不能判断共享代理的应用健康（例如用户凭据失效），不计入应用健康样本，也不清除应用熔断。网络探测不能恢复应用熔断。
-- `List/Save/Delete` 管理组；组 Enabled 省略时启用，地址顺序表示优先级。旧健康字段保持 JSON 兼容，但不作为调度输入；未知状态允许首次真实请求验证。
+- `List/New/Save/Delete` 管理组；`New` 创建组并由存储分配 ID，`Save` 更新已有组。组 Enabled 省略时启用，地址顺序表示优先级。旧健康字段保持 JSON 兼容，但不作为调度输入；未知状态允许首次真实请求验证。
 - `Test/TestURL` 主动探测，`SetProber` 可注入探测器；默认探测使用 HTTPS 请求确认网络路径，不将目标 HTTP 状态当成应用恢复依据。
 - `Snapshot/Recent/History` 分别返回全局健康快照、最近 10 个分钟桶和历史聚合；`ErrorRecords` 为原管理 API 提供网络错误桶视图。
 
