@@ -93,7 +93,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 	}
 }
 
-func TestGatewayAcceptsXApiKeyFromClaudeCode(t *testing.T) {
+func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 	s := testApp(t)
 	cookie := loginTestApp(t, s)
 	out := appRequest(s, "POST", "/api/ai-providers", `{"name":"dummy","provider":"dummy","config":{"enabled":true}}`, cookie)
@@ -108,6 +108,8 @@ func TestGatewayAcceptsXApiKeyFromClaudeCode(t *testing.T) {
 	if key.Key == "" {
 		t.Fatalf("create key: %s", out.Body.String())
 	}
+
+	// Claude ANTHROPIC_API_KEY → X-Api-Key only.
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
 	req.Header.Set("X-Api-Key", key.Key)
 	req.Header.Set("User-Agent", "claude-cli/2.0")
@@ -116,9 +118,36 @@ func TestGatewayAcceptsXApiKeyFromClaudeCode(t *testing.T) {
 	if result.Code != 200 {
 		t.Fatalf("x-api-key: %d %s", result.Code, result.Body.String())
 	}
+
+	// Claude ANTHROPIC_AUTH_TOKEN → Authorization Bearer only.
+	req = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
+	req.Header.Set("Authorization", "Bearer "+key.Key)
+	req.Header.Set("User-Agent", "claude-cli/2.0")
+	result = httptest.NewRecorder()
+	s.Handler().ServeHTTP(result, req)
+	if result.Code != 200 {
+		t.Fatalf("auth token: %d %s", result.Code, result.Body.String())
+	}
+
+	// Both headers present; leftover official Bearer must not block a valid X-Api-Key.
+	req = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
+	req.Header.Set("Authorization", "Bearer leftover-official-token")
+	req.Header.Set("X-Api-Key", key.Key)
+	req.Header.Set("User-Agent", "claude-cli/2.0")
+	result = httptest.NewRecorder()
+	s.Handler().ServeHTTP(result, req)
+	if result.Code != 200 {
+		t.Fatalf("fallback to x-api-key: %d %s", result.Code, result.Body.String())
+	}
+
 	traces, count, err := s.Database().QueryCallTraces(recentCallFilter(), 1, 10)
-	if err != nil || count != 1 || traces[0].APIKey != key.Key {
-		t.Fatalf("trace key: %#v count=%d err=%v", traces, count, err)
+	if err != nil || count != 3 {
+		t.Fatalf("traces count=%d err=%v", count, err)
+	}
+	for _, trace := range traces {
+		if trace.APIKey != key.Key {
+			t.Fatalf("trace key: %#v", trace)
+		}
 	}
 }
 

@@ -52,7 +52,8 @@ type AuthMethod int
 type Principal struct {
     User     *database.PersistedUser
     Account  *database.PersistedAccount
-    APIKeyID string
+    APIKeyID int
+    APIKey   string // 匹配成功的客户端密钥明文；Session 主体为空
     Method   AuthMethod
 }
 
@@ -71,7 +72,7 @@ Service 持有内部 authService，模块通过 `ModuleContext.Auth()` 使用它
 
 - `Principal(ctx)` 和包级 `PrincipalFromContext(ctx)` 读取中间件已写入的主体，不重新执行认证。
 - `SessionPrincipal(request)` 显式校验 Cookie 和 Session 并返回主体，不把结果写入原请求 Context。
-- Session 主体只设置 User 和 Method；API Key 主体另有绑定的 Account 与 APIKeyID。
+- Session 主体只设置 User 和 Method；API Key 主体另有绑定的 Account、APIKeyID 与匹配到的 APIKey 明文。
 - Account 是持久化账号快照，不是运行时执行队列；运行时对象由 AIProviderManager 管理。
 - 当前 Method 使用 AuthMode 对应值转换为 AuthMethod；管理员 Session 的认证方式仍为 AuthSession，角色由 User 表示。
 
@@ -82,7 +83,7 @@ Service 持有内部 authService，模块通过 `ModuleContext.Auth()` 使用它
 | `AuthNone` | 不执行认证；适用于公开静态资源、登录与幂等登出等入口 |
 | `AuthSession` | 校验浏览器 Session 与当前启用用户 |
 | `AuthSessionAdmin` | Session 校验后要求管理员角色 |
-| `AuthAPIKey` | 校验 Bearer 或 X-Api-Key、有效期、启用用户和绑定账号 |
+| `AuthAPIKey` | 从 Bearer（auth token）与 X-Api-Key（api key）读取候选密钥并校验有效期、启用用户和绑定账号 |
 
 认证中间件按路由模式选择分支，不把 Cookie 和 API Key 相互替代。AuthNone 直接调用 Handler，不自动识别会话或写入 Principal。其他模式认证成功后，通过私有 Context key 写入主体，再执行 Handler。
 
@@ -127,12 +128,12 @@ SetSessionCookie 只写响应 Cookie。ClearSessionCookie 在 token 非空时先
 
 ### API Key 校验
 
-1. 读取客户端密钥：`Authorization` 恰好为 `Bearer <key>`（Bearer 大小写不敏感）时使用该 token；否则使用 `X-Api-Key`。两者都存在时以 Bearer 为准。缺少有效 token 返回 401。Claude Code 使用 `x-api-key`，Codex 与 Grok Build 使用 Bearer。
-2. 读取全部 API Key，以 ConstantTimeCompare 比较明文 Key；缺少或不匹配返回 401。
-3. ValidSeconds 为正时，按 CreatedAt 加有效秒数判断过期；已过期返回 401，非正值不在此处限制有效期。
+1. 收集客户端密钥候选：`Authorization` 恰好为 `Bearer <key>`（Bearer 大小写不敏感）时加入候选（对应 Claude `ANTHROPIC_AUTH_TOKEN`、Codex、Grok Build）；`X-Api-Key` 非空时再加入（对应 Claude `ANTHROPIC_API_KEY`）。相同值只保留一次；顺序为 Bearer 优先。两者皆空返回 401。
+2. 读取全部 API Key，按候选顺序以 ConstantTimeCompare 比较明文 Key；任一候选匹配即采用。全部不匹配返回 401。
+3. ValidSeconds 为正时，按 CreatedAt 加有效秒数判断过期；已过期的匹配跳过并继续尝试后续候选；全部候选均无有效匹配时返回 401，非正值不在此处限制有效期。
 4. Key 所属用户必须存在且启用，否则返回 403。
 5. Key 绑定的持久化账号必须存在，否则返回 403。
-6. 返回包含 User、Account、APIKeyID 和 AuthAPIKey Method 的 Principal。
+6. 返回包含 User、Account、APIKeyID、匹配到的 APIKey 明文和 AuthAPIKey Method 的 Principal。
 
 读取 Key、用户或账号发生存储错误时返回 500。此处不检查账号配置的 enabled、运行时实例或并发可用性；这些由后续执行层处理。
 

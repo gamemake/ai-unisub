@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -20,8 +19,10 @@ type AuthMethod int
 type Principal struct {
 	User     *database.PersistedUser
 	Account  *database.PersistedAccount
-	APIKeyID string
-	Method   AuthMethod
+	APIKeyID int
+	// APIKey is the matched client secret for AuthAPIKey principals (call-trace attribution).
+	APIKey string
+	Method AuthMethod
 }
 type AuthService interface {
 	Principal(context.Context) (Principal, bool)
@@ -151,21 +152,44 @@ func (a *authService) session(r *http.Request) (Principal, bool) {
 	return Principal{}, false
 }
 
-// PresentedAPIKey returns the client key from Authorization: Bearer or X-Api-Key.
-// Claude Code sends x-api-key for ANTHROPIC_API_KEY and, in some versions, also
-// for ANTHROPIC_AUTH_TOKEN; Codex and Grok Build send Bearer. Bearer wins when both
-// are present so leftover official x-api-key headers cannot shadow a UniSub token.
-func PresentedAPIKey(h http.Header) string {
-	parts := strings.Fields(h.Get("Authorization"))
-	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") && parts[1] != "" {
-		return parts[1]
+// PresentedAPIKeys returns client key candidates from Authorization: Bearer
+// (Claude ANTHROPIC_AUTH_TOKEN / Codex / Grok) and X-Api-Key (Claude ANTHROPIC_API_KEY).
+// Order is Bearer first, then X-Api-Key; duplicates are dropped. Auth tries each
+// candidate against stored keys so either header can authenticate when both are sent.
+func PresentedAPIKeys(h http.Header) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
 	}
-	return strings.TrimSpace(h.Get("X-Api-Key"))
+	parts := strings.Fields(h.Get("Authorization"))
+	if len(parts) == 2 && strings.EqualFold(parts[0], "Bearer") {
+		add(parts[1])
+	}
+	add(h.Get("X-Api-Key"))
+	return out
+}
+
+// PresentedAPIKey returns the first candidate from PresentedAPIKeys (Bearer, else X-Api-Key).
+func PresentedAPIKey(h http.Header) string {
+	keys := PresentedAPIKeys(h)
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0]
 }
 
 func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
-	presented := PresentedAPIKey(r.Header)
-	if presented == "" {
+	candidates := PresentedAPIKeys(r.Header)
+	if len(candidates) == 0 {
 		return Principal{}, http.StatusUnauthorized, false
 	}
 	keys, err := a.s.db.ListAPIKeys(0)
@@ -173,12 +197,21 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 		return Principal{}, http.StatusInternalServerError, false
 	}
 	var key database.PersistedAPIKey
-	for _, candidate := range keys {
-		if subtle.ConstantTimeCompare([]byte(candidate.Key), []byte(presented)) == 1 {
+	var matched string
+	for _, presented := range candidates {
+		for _, candidate := range keys {
+			if subtle.ConstantTimeCompare([]byte(candidate.Key), []byte(presented)) != 1 {
+				continue
+			}
 			if candidate.ValidSeconds > 0 && !candidate.CreatedAt.Add(time.Duration(candidate.ValidSeconds)*time.Second).After(time.Now().UTC()) {
-				return Principal{}, http.StatusUnauthorized, false
+				// Expired match: keep looking at other presented headers.
+				continue
 			}
 			key = candidate
+			matched = presented
+			break
+		}
+		if key.ID > 0 {
 			break
 		}
 	}
@@ -213,7 +246,7 @@ func (a *authService) apiKey(r *http.Request) (Principal, int, bool) {
 	if account.ID <= 0 {
 		return Principal{}, http.StatusForbidden, false
 	}
-	return Principal{User: &user, Account: &account, APIKeyID: strconv.Itoa(key.ID), Method: AuthMethod(AuthAPIKey)}, http.StatusOK, true
+	return Principal{User: &user, Account: &account, APIKeyID: key.ID, APIKey: matched, Method: AuthMethod(AuthAPIKey)}, http.StatusOK, true
 }
 
 func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler {

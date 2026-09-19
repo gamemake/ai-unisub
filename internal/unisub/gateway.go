@@ -129,7 +129,10 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		}
 		requestID, _ := service.RequestIDFromContext(r.Context())
 		sourceIP, _, _ := net.SplitHostPort(r.RemoteAddr)
-		apiKey := service.PresentedAPIKey(r.Header)
+		apiKey := principal.APIKey
+		if apiKey == "" {
+			apiKey = service.PresentedAPIKey(r.Header)
+		}
 		// The DB uses the presented key to associate historical records with users.
 		// Headers shown in the UI do not contain downstream/upstream secrets.
 		// http_error_code is 0 only for network/transport failures with no HTTP

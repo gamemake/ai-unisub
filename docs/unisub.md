@@ -78,7 +78,7 @@
 | --- | --- | --- |
 | GET、HEAD | `/` | Static；始终返回相同的静态网页，不判断会话或重定向 |
 | GET、HEAD | `/assets/*` 等存在的公共资源 | Static；公开静态文件 |
-| 上游支持的方法 | `/v1/*` | Gateway；Bearer API Key 认证，转发到绑定账号 |
+| 上游支持的方法 | `/v1/*` | Gateway；Bearer auth token 或 X-Api-Key 认证，转发到绑定账号 |
 
 网关不声明所有 /v1/ 能力都可用，模型与媒体端点由实际账号和上游决定；当前不支持 WebSocket upgrade。
 
