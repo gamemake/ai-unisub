@@ -166,6 +166,7 @@ type PersistedCallTrace struct {
 	SourceIP       string `json:"source_ip"`
 
 	URL                    string      `json:"url"`
+	OutboundURL            string      `json:"outbound_url"`
 	HTTPErrorCode          int         `json:"http_error_code"`
 	HTTPErrorInfo          string      `json:"http_error_info,omitempty"`
 	OriginalRequestHeaders http.Header `json:"original_request_headers"`
@@ -198,6 +199,7 @@ type PersistedCallTraceSummary struct {
 	SessionID           string    `json:"session_id"`
 	SourceIP            string    `json:"source_ip"`
 	URL                 string    `json:"url"`
+	OutboundURL         string    `json:"outbound_url"`
 	HTTPErrorCode       int       `json:"http_error_code"`
 	HTTPErrorInfo       string    `json:"http_error_info,omitempty"`
 	Model               string    `json:"model"`

@@ -318,7 +318,6 @@ function CallDetailContent({ detail }: { detail: CallDetail }) {
               <span className="text-sm font-medium">{detail.model || '—'}</span>
               <span className="text-xs text-muted-foreground">{detail.provider_type || '—'}</span>
             </div>
-            <p className="break-all font-mono text-xs leading-relaxed text-muted-foreground" title={detail.url}>{detail.url || '—'}</p>
           </div>
           <div className="shrink-0 text-right">
             <p className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">耗时</p>
@@ -331,6 +330,8 @@ function CallDetailContent({ detail }: { detail: CallDetail }) {
         ) : null}
 
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+          <InfoItem label="请求路径" mono className="col-span-2 sm:col-span-3 lg:col-span-4">{detail.url}</InfoItem>
+          <InfoItem label="出站 URL" mono className="col-span-2 sm:col-span-3 lg:col-span-4">{detail.outbound_url}</InfoItem>
           <InfoItem label="Request ID" mono>{detail.request_id}</InfoItem>
           <InfoItem label="Session ID" mono>{detail.session_id}</InfoItem>
           <InfoItem label="Source IP" mono>{detail.source_ip}</InfoItem>

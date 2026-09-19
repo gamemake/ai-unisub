@@ -66,6 +66,7 @@ it('renders collapsible sections and header change markers', async () => {
     account_id: 3,
     provider_type: 'claude',
     url: '/v1/messages',
+    outbound_url: 'https://api.anthropic.com/v1/messages',
     model: 'claude-sonnet',
     http_error_code: 200,
     input_tokens: 12,
@@ -93,6 +94,7 @@ it('renders collapsible sections and header change markers', async () => {
     account_id: 3,
     provider_type: 'claude',
     url: '/v1/messages',
+    outbound_url: 'https://api.anthropic.com/v1/messages',
     model: 'claude-sonnet',
     http_error_code: 200,
     input_tokens: 12,
@@ -113,6 +115,8 @@ it('renders collapsible sections and header change markers', async () => {
   const toggleResponseHeaders = () => screen.getByRole('button', { name: /Response Headers.*项/ })
   const toggleResponseBody = () => screen.getByRole('button', { name: /Response Body.*字符/ })
   await waitFor(() => expect(toggleHeaders()).toBeTruthy())
+  expect(screen.getByText('/v1/messages')).toBeTruthy()
+  expect(screen.getByText('https://api.anthropic.com/v1/messages')).toBeTruthy()
 
   // Headers and bodies start collapsed.
   expect(screen.queryByText('Bearer client')).toBeNull()

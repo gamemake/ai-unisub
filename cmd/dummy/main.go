@@ -200,6 +200,7 @@ func recordDummyCall(db database.Database, key *database.PersistedAPIKey, accoun
 		RequestID:              requestID,
 		SourceIP:               "127.0.0.1",
 		URL:                    path,
+		OutboundURL:            "https://upstream.example" + path,
 		HTTPErrorCode:          status,
 		HTTPErrorInfo:          errorInfo(status),
 		OriginalRequestHeaders: originalHeaders,

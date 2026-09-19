@@ -77,9 +77,9 @@ AIProviderManager 持有每账号唯一的 Account，所有该账号调用共用
 
 ## 调用记录与代理
 
-应用层把 AIProviderCallTrace 转为数据库记录，包含账号、请求 ID、来源 IP、URL、时间、状态、模型、token 用量和截取的请求／响应。记录中的 `http_error_code` 使用标准 HTTP 状态：有上游／本地 HTTP 响应时写入该状态码（含 2xx）；网络或传输失败且没有 HTTP 响应时为 0，不把写给客户端的 502 回填进记录。展示头对 Authorization、X-Api-Key、Cookie、Set-Cookie、Proxy-Authorization 脱敏；持久化 APIKey 字段用于归属关联，管理 API 返回前清空。
+应用层把 AIProviderCallTrace 转为数据库记录，包含账号、请求 ID、来源 IP、入站 `url`、出站 `outbound_url`、时间、状态、模型、token 用量和截取的请求／响应。网关记录中 `url` 为客户端 RequestURI（如 `/v1/messages?x=1`），`outbound_url` 为拼好的上游完整 URL（优先取 provider trace 的 URL，否则取转发目标）。记录中的 `http_error_code` 使用标准 HTTP 状态：有上游／本地 HTTP 响应时写入该状态码（含 2xx）；网络或传输失败且没有 HTTP 响应时为 0，不把写给客户端的 502 回填进记录。展示头对 Authorization、X-Api-Key、Cookie、Set-Cookie、Proxy-Authorization 脱敏；持久化 APIKey 字段用于归属关联，管理 API 返回前清空。
 
-除 `/v1/` 网关转发外，管理端 `POST /api/ai-providers/{id}/refresh-quota` 与 `POST /api/ai-providers/{id}/fetch-models` 触发的上游 usage／models 查询也会写入调用记录，归属被查询的账号；URL 为上游地址。这类记录的原始与出站 request headers 均保存脱敏后的出站请求头（不单独保留浏览器管理请求头）。
+除 `/v1/` 网关转发外，管理端 `POST /api/ai-providers/{id}/refresh-quota` 与 `POST /api/ai-providers/{id}/fetch-models` 触发的上游 usage／models 查询也会写入调用记录，归属被查询的账号；`url` 与 `outbound_url` 均为上游地址。这类记录的原始与出站 request headers 均保存脱敏后的出站请求头（不单独保留浏览器管理请求头）。
 
 排队中止且未调用 AIProvider 的请求不会产生一次已发送上游调用的记录。当前记录没有完整的队列深度、等待耗时和限流计数指标，不将这些字段写成现有监控能力。
 

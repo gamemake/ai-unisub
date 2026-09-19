@@ -154,7 +154,11 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		// response. Successful and failed upstream replies store the real status
 		// (including 2xx). Do not replace network failures with the 502 written
 		// to the client.
-		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), HTTPErrorCode: persistedCallHTTPCode(trace), HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
+		outboundURL := trace.URL
+		if outboundURL == "" && outbound.URL != nil {
+			outboundURL = outbound.URL.String()
+		}
+		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), OutboundURL: outboundURL, HTTPErrorCode: persistedCallHTTPCode(trace), HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
 		saved.SessionID = callSessionID(r.Header)
 		if trace.HTTPErrorInfo != "" {
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed

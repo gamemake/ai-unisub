@@ -35,6 +35,7 @@ func recordAdminProviderCall(ctx framework.ModuleContext, r *http.Request, accou
 		RequestID:              requestID,
 		SourceIP:               sourceIP,
 		URL:                    url,
+		OutboundURL:            url,
 		HTTPErrorCode:          persistedCallHTTPCode(trace),
 		OriginalRequestHeaders: outbound,
 		OutboundRequestHeaders: outbound,

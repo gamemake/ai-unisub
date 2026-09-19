@@ -1,6 +1,7 @@
 package database
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -11,6 +12,17 @@ func testDB(t *testing.T) Database {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := db.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+func testFileDB(t *testing.T) *SQLiteDatabase {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "calls.db")
+	db := NewSQLiteDatabase(path)
 	if err := db.Open(); err != nil {
 		t.Fatal(err)
 	}
@@ -47,5 +59,83 @@ func TestQueryProxyLogsRequiresTimeRange(t *testing.T) {
 	}
 	if _, _, err := db.QueryProxyLogs(ProxyLogFilter{GroupID: 1, TimeRange: TimeRange{Start: now.Add(-time.Hour), End: now}}, 1, 10); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCallTraceOutboundURLAndLegacySchema(t *testing.T) {
+	db := testFileDB(t)
+	now := time.Now().UTC()
+	table := traceTable(now)
+
+	// Seed an older daily table without outbound_url (and without session_id).
+	legacySQL := `CREATE TABLE ` + table + ` (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		apikey TEXT, provider_type TEXT, account_id INTEGER, request_id TEXT,
+		source_ip TEXT, url TEXT, http_error_code INTEGER, http_error_info TEXT,
+		original_request_headers BLOB, outbound_request_headers BLOB,
+		request_body BLOB, response_headers BLOB, response_body BLOB,
+		request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0,
+		model TEXT, input_tokens INTEGER, output_tokens INTEGER,
+		cache_creation_tokens INTEGER, cache_read_tokens INTEGER,
+		started_at DATETIME, finished_at DATETIME
+	)`
+	if _, err := db.db.Exec(legacySQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.Exec(
+		`INSERT INTO `+table+`(apikey, provider_type, account_id, request_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, response_headers, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"sk-legacy", "claude", 1, "req-legacy", "127.0.0.1", "/v1/messages", 200, "",
+		[]byte(`{}`), []byte(`{}`), []byte(`{}`), "claude-sonnet", 1, 2, 0, 0, now, now,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reading old rows must upgrade schema and return empty outbound_url.
+	got, err := db.GetCallTrace(now, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.URL != "/v1/messages" || got.OutboundURL != "" || got.SessionID != "" {
+		t.Fatalf("legacy detail: %#v", got)
+	}
+
+	// New writes fill outbound_url on the upgraded table.
+	if err := db.RecordCallTrace(&PersistedCallTrace{
+		APIKey: "sk-new", AIProviderType: "claude", AccountID: 1, RequestID: "req-new",
+		URL: "/v1/messages", OutboundURL: "https://api.anthropic.com/v1/messages",
+		HTTPErrorCode: 201, Model: "claude-sonnet", InputTokens: 3, OutputTokens: 4,
+		StartedAt: now, FinishedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items, total, err := db.QueryCallTraces(CallTraceFilter{TimeRange: TimeRange{Start: now.Add(-time.Hour), End: now.Add(time.Hour)}}, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 2 {
+		t.Fatalf("total=%d items=%#v", total, items)
+	}
+	var foundNew bool
+	for _, item := range items {
+		if item.RequestID == "req-new" {
+			foundNew = true
+			if item.OutboundURL != "https://api.anthropic.com/v1/messages" || item.URL != "/v1/messages" {
+				t.Fatalf("new summary: %#v", item)
+			}
+		}
+		if item.RequestID == "req-legacy" && item.OutboundURL != "" {
+			t.Fatalf("legacy summary should keep empty outbound_url: %#v", item)
+		}
+	}
+	if !foundNew {
+		t.Fatalf("missing new row: %#v", items)
+	}
+	detail, err := db.GetCallTrace(now, items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.RequestID == "req-new" && detail.OutboundURL != "https://api.anthropic.com/v1/messages" {
+		t.Fatalf("new detail: %#v", detail)
 	}
 }

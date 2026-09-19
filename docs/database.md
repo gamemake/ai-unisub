@@ -82,4 +82,6 @@ Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供
 
 两方法均在日表 `call_traces_YYYYMMDD` 上做 `UNION ALL` 后 `GROUP BY`，只扫描时间范围内的日表。
 
-当前实现不提供旧数据库结构迁移。使用旧 schema 的数据库文件需要删除后重新创建。
+调用记录日表在写入与查询前会 `ensureTraceTable`：新建表使用当前 schema；已存在的旧日表通过 `ALTER TABLE ... ADD COLUMN` 补齐缺失列（当前含 `session_id`、`outbound_url`），旧行对应字段读为空默认值。其它核心表仍不提供破坏性迁移；无法加法兼容的旧库需删除后重建。
+
+`url` 为客户端入站请求路径（如 `/v1/messages`）；`outbound_url` 为实际上游完整 URL。管理端 quota／models 查询写入的记录两者均为上游地址。

@@ -141,7 +141,7 @@ q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id�
 
 时间支持 1d、1w、1m、custom，与系统总览一致；custom 的 from/to 为 UTC 日期且包含结束日。省略 range 时与用量统计相同，默认为最近 24 小时（`1d`）；`1m` 为最近 30 天。非法 code 或时间范围返回 400。筛选先于分页执行，total 为全部匹配记录数。
 
-列表摘要和详情均包含 session_id。网关仅按 [AIProvider 原生会话头适配](ai-provider.md) 读取 Claude、Codex、Grok 对应的原生 SessionID，不读取 X-Unisub-Session-ID；未匹配客户端或原生头时留空，不使用通用头或请求正文兜底。调用记录与组内粘性使用相同规则。这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串；组调用的 account_id/provider_type 记录实际执行的成员。
+列表摘要和详情均包含 session_id、`url`（入站请求路径）与 `outbound_url`（出站上游完整 URL）。旧日表在查询时补齐 `outbound_url` 列后，历史行该字段为空字符串。网关仅按 [AIProvider 原生会话头适配](ai-provider.md) 读取 Claude、Codex、Grok 对应的原生 SessionID，不读取 X-Unisub-Session-ID；未匹配客户端或原生头时留空，不使用通用头或请求正文兜底。调用记录与组内粘性使用相同规则。这是客户端调用会话标识，不是 Dashboard 登录会话。旧记录没有该值时返回空字符串；组调用的 account_id/provider_type 记录实际执行的成员。
 
 列表返回摘要，详情包含记录的请求／响应信息。响应前清空用于归属判断的 APIKey 字段；普通用户无权读取的详情返回 `404`。当前详情权限依赖仍存在的所属 Key 匹配，不能将它描述成独立的永久历史授权机制。
 

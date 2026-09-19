@@ -75,12 +75,22 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if traces[0].HTTPErrorCode != 201 {
 				t.Fatalf("success trace should store HTTP status 201, got %d", traces[0].HTTPErrorCode)
 			}
+			if traces[0].URL != "/v1/messages?test=1" {
+				t.Fatalf("inbound url = %q", traces[0].URL)
+			}
+			wantOutbound := upstream.URL + "/custom/v1/messages?test=1"
+			if traces[0].OutboundURL != wantOutbound {
+				t.Fatalf("outbound url = %q, want %q", traces[0].OutboundURL, wantOutbound)
+			}
 			trace, err := s.Database().GetCallTrace(traces[0].StartedAt, traces[0].ID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if trace.HTTPErrorCode != 201 {
 				t.Fatalf("detail HTTPErrorCode = %d, want 201", trace.HTTPErrorCode)
+			}
+			if trace.OutboundURL != wantOutbound {
+				t.Fatalf("detail outbound url = %q, want %q", trace.OutboundURL, wantOutbound)
 			}
 			encoded, _ := json.Marshal(trace.OutboundRequestHeaders)
 			if strings.Contains(string(encoded), "upstream-secret") {
