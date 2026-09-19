@@ -668,6 +668,142 @@ func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize 
 	}
 	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &filter.TimeRange, filter, values...)
 }
+
+func (s *SQLiteDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error) {
+	if err := validateTimeRange(timeRange); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	tables, err := s.callTraceTablesInRange(timeRange)
+	if err != nil {
+		return nil, UsageTotals{}, err
+	}
+	if len(tables) == 0 {
+		return []AccountUsageRow{}, UsageTotals{}, nil
+	}
+	union, args := buildUsageUnionQuery(tables, timeRange, 0)
+	query := `SELECT account_id,
+		COUNT(*) AS requests,
+		COALESCE(SUM(input_tokens), 0),
+		COALESCE(SUM(output_tokens), 0),
+		COALESCE(SUM(cache_creation_tokens), 0),
+		COALESCE(SUM(cache_read_tokens), 0)
+	FROM (` + union + `) GROUP BY account_id ORDER BY account_id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, UsageTotals{}, err
+	}
+	defer rows.Close()
+	result := make([]AccountUsageRow, 0)
+	totals := UsageTotals{}
+	for rows.Next() {
+		var row AccountUsageRow
+		if err := rows.Scan(&row.AccountID, &row.Usage.Requests, &row.Usage.InputTokens, &row.Usage.OutputTokens, &row.Usage.CacheCreationTokens, &row.Usage.CacheReadTokens); err != nil {
+			return nil, UsageTotals{}, err
+		}
+		row.Usage.Finalize()
+		totals.add(row.Usage)
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	return result, totals, nil
+}
+
+func (s *SQLiteDatabase) QueryUserUsage(timeRange TimeRange, accountID int) ([]UserUsageRow, UsageTotals, error) {
+	if err := validateTimeRange(timeRange); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	if accountID < 0 {
+		return nil, UsageTotals{}, errors.New("account ID must not be negative")
+	}
+	if err := s.ensureOpen(); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	tables, err := s.callTraceTablesInRange(timeRange)
+	if err != nil {
+		return nil, UsageTotals{}, err
+	}
+	if len(tables) == 0 {
+		return []UserUsageRow{}, UsageTotals{}, nil
+	}
+	union, args := buildUsageUnionQuery(tables, timeRange, accountID)
+	// Match apikey to key_value or stringified key id (historical gateway variants).
+	query := `SELECT COALESCE(k.user_id, 0) AS user_id,
+		COUNT(*) AS requests,
+		COALESCE(SUM(t.input_tokens), 0),
+		COALESCE(SUM(t.output_tokens), 0),
+		COALESCE(SUM(t.cache_creation_tokens), 0),
+		COALESCE(SUM(t.cache_read_tokens), 0)
+	FROM (` + union + `) AS t
+	LEFT JOIN api_keys k ON (k.key_value = t.apikey OR CAST(k.id AS TEXT) = t.apikey)
+	GROUP BY COALESCE(k.user_id, 0)
+	ORDER BY user_id`
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, UsageTotals{}, err
+	}
+	defer rows.Close()
+	result := make([]UserUsageRow, 0)
+	totals := UsageTotals{}
+	for rows.Next() {
+		var row UserUsageRow
+		if err := rows.Scan(&row.UserID, &row.Usage.Requests, &row.Usage.InputTokens, &row.Usage.OutputTokens, &row.Usage.CacheCreationTokens, &row.Usage.CacheReadTokens); err != nil {
+			return nil, UsageTotals{}, err
+		}
+		row.Usage.Finalize()
+		totals.add(row.Usage)
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, UsageTotals{}, err
+	}
+	return result, totals, nil
+}
+
+func (s *SQLiteDatabase) callTraceTablesInRange(timeRange TimeRange) ([]string, error) {
+	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'call_traces_%'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tables []string
+	tr := timeRange
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		if traceTablePattern.MatchString(name) && traceTableInRange(name, &tr) {
+			tables = append(tables, name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	slices.Sort(tables)
+	return tables, nil
+}
+
+func buildUsageUnionQuery(tables []string, timeRange TimeRange, accountID int) (string, []any) {
+	parts := make([]string, 0, len(tables))
+	args := make([]any, 0, len(tables)*4)
+	start, end := timeRange.Start.UTC(), timeRange.End.UTC()
+	for _, table := range tables {
+		q := fmt.Sprintf(`SELECT account_id, apikey, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
+			FROM %s WHERE started_at >= ? AND started_at <= ?`, table)
+		args = append(args, start, end)
+		if accountID > 0 {
+			q += ` AND account_id = ?`
+			args = append(args, accountID)
+		}
+		parts = append(parts, q)
+	}
+	return strings.Join(parts, " UNION ALL "), args
+}
 func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, filter CallTraceFilter, values ...string) ([]PersistedCallTraceSummary, int, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, 0, err

@@ -231,6 +231,42 @@ type TimeRange struct {
 	End   time.Time
 }
 
+// UsageTotals is aggregated call-trace usage for accounts or users.
+type UsageTotals struct {
+	Requests            int `json:"requests"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
+	CacheReadTokens     int `json:"cache_read_tokens"`
+	TotalTokens         int `json:"total_tokens"`
+}
+
+// AccountUsageRow is per-account usage over a time range.
+type AccountUsageRow struct {
+	AccountID int         `json:"account_id"`
+	Usage     UsageTotals `json:"usage"`
+}
+
+// UserUsageRow is per-user usage over a time range (UserID 0 = unattributed).
+type UserUsageRow struct {
+	UserID int         `json:"user_id"`
+	Usage  UsageTotals `json:"usage"`
+}
+
+// Finalize fills TotalTokens from the four token counters.
+func (t *UsageTotals) Finalize() {
+	t.TotalTokens = t.InputTokens + t.OutputTokens + t.CacheCreationTokens + t.CacheReadTokens
+}
+
+func (t *UsageTotals) add(other UsageTotals) {
+	t.Requests += other.Requests
+	t.InputTokens += other.InputTokens
+	t.OutputTokens += other.OutputTokens
+	t.CacheCreationTokens += other.CacheCreationTokens
+	t.CacheReadTokens += other.CacheReadTokens
+	t.Finalize()
+}
+
 func validateTimeRange(r TimeRange) error {
 	if r.Start.IsZero() || r.End.IsZero() {
 		return errors.New("start time and end time are required")
@@ -324,4 +360,12 @@ type Database interface {
 	// GetCallTrace returns the complete trace, including request/response bodies
 	// and headers. startedAt identifies the UTC daily table containing the trace.
 	GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error)
+
+	// QueryAccountUsage aggregates call-trace usage by account_id in timeRange.
+	// Aggregation runs in SQL over daily call_traces tables; no row bodies are loaded.
+	QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error)
+	// QueryUserUsage aggregates call-trace usage by API-key owner (user_id) in timeRange.
+	// accountID 0 means all accounts; otherwise only that account's traces are included.
+	// UserID 0 groups traces whose apikey does not match any stored key.
+	QueryUserUsage(timeRange TimeRange, accountID int) ([]UserUsageRow, UsageTotals, error)
 }

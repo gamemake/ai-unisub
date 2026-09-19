@@ -151,7 +151,7 @@ q 去除首尾空白后，精确匹配 IP、模型、session_id 或 request_id�
 
 两者均为管理员功能。Query 的 range 支持 `1d`（默认最近 24 小时）、`1w`（7 天）、`1m`（30 天）、`custom`；custom 使用 `from/to=YYYY-MM-DD`，按 UTC 包含结束日。
 
-usage 包含 requests、input_tokens、output_tokens、cache_creation_tokens、cache_read_tokens、total_tokens。total_tokens 是四类 token 数之和；统计来自已记录调用，不代表上游账单或余额。
+usage 包含 requests、input_tokens、output_tokens、cache_creation_tokens、cache_read_tokens、total_tokens。total_tokens 是四类 token 数之和；统计来自已记录调用，不代表上游账单或余额。聚合由 `database.QueryAccountUsage` / `QueryUserUsage` 在 SQLite 上完成（按账号或按 Key 归属用户 GROUP BY），API 层只补全账号名／用户名等展示字段。
 
 ## 代理管理
 

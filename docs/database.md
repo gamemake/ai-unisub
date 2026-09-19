@@ -75,4 +75,11 @@ Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供
 
 `QueryCallTraces` 和 `QueryProxyLogs` 支持分页与过滤，过滤条件中的 `TimeRange` 必须同时填写起止时间，且开始时间不得晚于结束时间；数据库不限制该范围是否落在最近 30 天。`GetCallTrace` 使用 UTC 日期和 `int` 类型记录 ID 查询完整内容。
 
+账号用量与用户用量在数据库层按调用记录聚合，不把明细行拉入应用内存：
+
+- `QueryAccountUsage(timeRange)`：按 `account_id` 聚合 `COUNT` 与各类 token `SUM`，返回 `[]AccountUsageRow` 与合计 `UsageTotals`；
+- `QueryUserUsage(timeRange, accountID)`：按 API Key 归属的 `user_id` 聚合（`LEFT JOIN api_keys`，`apikey` 匹配 `key_value` 或 key id 字符串）；`accountID == 0` 表示全部账号，否则仅该账号；无法归属的记录归入 `user_id = 0`。
+
+两方法均在日表 `call_traces_YYYYMMDD` 上做 `UNION ALL` 后 `GROUP BY`，只扫描时间范围内的日表。
+
 当前实现不提供旧数据库结构迁移。使用旧 schema 的数据库文件需要删除后重新创建。

@@ -7,7 +7,6 @@ import (
 	"ai-unisub/internal/proxy"
 	proxyconfig "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
-	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -308,24 +307,6 @@ func stripProxyErrors(groups []proxy.Group) {
 	}
 }
 
-type usageTotals struct {
-	Requests            int `json:"requests"`
-	InputTokens         int `json:"input_tokens"`
-	OutputTokens        int `json:"output_tokens"`
-	CacheCreationTokens int `json:"cache_creation_tokens"`
-	CacheReadTokens     int `json:"cache_read_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-}
-
-func (t *usageTotals) add(trace database.PersistedCallTraceSummary) {
-	t.Requests++
-	t.InputTokens += trace.InputTokens
-	t.OutputTokens += trace.OutputTokens
-	t.CacheCreationTokens += trace.CacheCreationTokens
-	t.CacheReadTokens += trace.CacheReadTokens
-	t.TotalTokens += trace.InputTokens + trace.OutputTokens + trace.CacheCreationTokens + trace.CacheReadTokens
-}
-
 func usageTimeRange(r *http.Request) (database.TimeRange, error) {
 	query := r.URL.Query()
 	start, end := time.Now().UTC(), time.Now().UTC()
@@ -362,83 +343,54 @@ func (m *APIModule) usage(ctx framework.ModuleContext, w http.ResponseWriter, r 
 		common.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	filter := database.CallTraceFilter{}
-	filter.TimeRange = timeRange
-	traces, _, err := ctx.Database().QueryCallTraces(filter, 1, 1000000)
-	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
-		return
-	}
-	accounts, err := ctx.Database().ListAccounts()
-	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListAIProviders)
-		return
-	}
-	accountByID := make(map[int]database.PersistedAccount, len(accounts))
-	for _, account := range accounts {
-		accountByID[account.ID] = account
-	}
-	keys, err := ctx.Database().ListAPIKeys(0)
-	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListAPIKeys)
-		return
-	}
-	keyBySecret := make(map[string]database.PersistedAPIKey, len(keys))
-	for _, key := range keys {
-		keyBySecret[key.Key] = key
-		keyBySecret[strconv.Itoa(key.ID)] = key
-	}
-
 	if kind == "subscriptions" {
-		groups := map[int]*struct {
-			SubscriptionID   int         `json:"subscription_id"`
-			SubscriptionName string      `json:"subscription_name"`
-			AIProvider       string      `json:"provider"`
-			Usage            usageTotals `json:"usage"`
-		}{}
-		for _, trace := range traces {
-			account, ok := accountByID[trace.AccountID]
+		rows, totals, err := ctx.Database().QueryAccountUsage(timeRange)
+		if err != nil {
+			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
+			return
+		}
+		accounts, err := ctx.Database().ListAccounts()
+		if err != nil {
+			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListAIProviders)
+			return
+		}
+		accountByID := make(map[int]database.PersistedAccount, len(accounts))
+		for _, account := range accounts {
+			accountByID[account.ID] = account
+		}
+		items := make([]any, 0, len(rows))
+		for _, row := range rows {
+			account, ok := accountByID[row.AccountID]
 			if !ok {
 				continue
 			}
-			row := groups[account.ID]
-			if row == nil {
-				row = &struct {
-					SubscriptionID   int         `json:"subscription_id"`
-					SubscriptionName string      `json:"subscription_name"`
-					AIProvider       string      `json:"provider"`
-					Usage            usageTotals `json:"usage"`
-				}{SubscriptionID: account.ID, SubscriptionName: account.Name, AIProvider: account.AIProvider}
-				groups[account.ID] = row
-			}
-			row.Usage.add(trace)
+			items = append(items, map[string]any{
+				"subscription_id":   account.ID,
+				"subscription_name": account.Name,
+				"provider":          account.AIProvider,
+				"usage":             row.Usage,
+			})
 		}
-		items := make([]any, 0, len(groups))
-		totals := usageTotals{}
-		for _, row := range groups {
-			totals.Requests += row.Usage.Requests
-			totals.InputTokens += row.Usage.InputTokens
-			totals.OutputTokens += row.Usage.OutputTokens
-			totals.CacheCreationTokens += row.Usage.CacheCreationTokens
-			totals.CacheReadTokens += row.Usage.CacheReadTokens
-			totals.TotalTokens += row.Usage.TotalTokens
-			items = append(items, row)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": len(traces) > 0})
+		writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": totals.Requests > 0})
 		return
 	}
 	if kind != "users" {
 		http.NotFound(w, r)
 		return
 	}
-	if subscriptionID, err := strconv.Atoi(r.URL.Query().Get("subscription_id")); err == nil || subscriptionID != 0 {
-		filtered := traces[:0]
-		for _, trace := range traces {
-			if trace.AccountID == subscriptionID {
-				filtered = append(filtered, trace)
-			}
+	accountID := 0
+	if raw := r.URL.Query().Get("subscription_id"); raw != "" {
+		id, err := strconv.Atoi(raw)
+		if err != nil || id < 0 {
+			common.WriteError(w, http.StatusBadRequest, "invalid subscription_id")
+			return
 		}
-		traces = filtered
+		accountID = id
+	}
+	rows, totals, err := ctx.Database().QueryUserUsage(timeRange, accountID)
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
+		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
@@ -449,45 +401,20 @@ func (m *APIModule) usage(ctx framework.ModuleContext, w http.ResponseWriter, r 
 	for _, user := range users {
 		userByID[user.ID] = user
 	}
-	type userUsageRow struct {
-		UserID   int         `json:"user_id,omitempty"`
-		Username string      `json:"username,omitempty"`
-		Role     string      `json:"role,omitempty"`
-		Enabled  bool        `json:"enabled"`
-		Usage    usageTotals `json:"usage"`
-	}
-	groups := map[int]*userUsageRow{}
-	for _, trace := range traces {
-		key, ok := keyBySecret[trace.APIKey]
-		id := 0
-		name, role := "", ""
-		if ok {
-			id = key.UserID
+	items := make([]any, 0, len(rows))
+	for _, row := range rows {
+		item := map[string]any{"usage": row.Usage, "enabled": true}
+		if row.UserID != 0 {
+			item["user_id"] = row.UserID
+			if user, ok := userByID[row.UserID]; ok {
+				item["username"] = user.Name
+				item["role"] = string(user.Role)
+				item["enabled"] = user.Enabled
+			}
 		}
-		enabled := true
-		if user, found := userByID[id]; found {
-			name, role, enabled = user.Name, string(user.Role), user.Enabled
-		}
-		groupID := cmp.Or(id, 0)
-		row := groups[groupID]
-		if row == nil {
-			row = &userUsageRow{UserID: id, Username: name, Role: role, Enabled: enabled}
-			groups[groupID] = row
-		}
-		row.Usage.add(trace)
+		items = append(items, item)
 	}
-	items := make([]any, 0, len(groups))
-	totals := usageTotals{}
-	for _, row := range groups {
-		totals.Requests += row.Usage.Requests
-		totals.InputTokens += row.Usage.InputTokens
-		totals.OutputTokens += row.Usage.OutputTokens
-		totals.CacheCreationTokens += row.Usage.CacheCreationTokens
-		totals.CacheReadTokens += row.Usage.CacheReadTokens
-		totals.TotalTokens += row.Usage.TotalTokens
-		items = append(items, row)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": len(traces) > 0})
+	writeJSON(w, http.StatusOK, map[string]any{"data": items, "totals": totals, "has_records": totals.Requests > 0})
 }
 
 func currentUser(r *http.Request) (*database.PersistedUser, bool) {
