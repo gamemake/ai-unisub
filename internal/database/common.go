@@ -34,6 +34,41 @@ func validateModuleName(module string) error {
 	return nil
 }
 
+func validateConfig(value *PersistedConfig) error {
+	if value == nil || value.ID < 0 {
+		return errors.New("config and config ID are required")
+	}
+	if err := validateConfigType(value.Type); err != nil {
+		return err
+	}
+	if err := validateConfigName(value.Name); err != nil {
+		return err
+	}
+	if len(value.Value) == 0 || !json.Valid(value.Value) {
+		return errors.New("config value must be valid JSON")
+	}
+	return nil
+}
+
+func validateConfigType(configType string) error {
+	if configType == "" || strings.TrimSpace(configType) != configType {
+		return errors.New("config type is required and must not have surrounding whitespace")
+	}
+	return nil
+}
+
+func validateConfigName(name string) error {
+	if name == "" || strings.TrimSpace(name) != name {
+		return errors.New("config name is required and must not have surrounding whitespace")
+	}
+	return nil
+}
+
+func cloneConfig(value PersistedConfig) PersistedConfig {
+	value.Value = append([]byte(nil), value.Value...)
+	return value
+}
+
 func cloneAccount(value PersistedAccount) PersistedAccount {
 	value.Config = append([]byte(nil), value.Config...)
 	value.State = append([]byte(nil), value.State...)

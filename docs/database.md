@@ -25,17 +25,18 @@
 - API Key 本身
 - OAuth SubjectID
 
-实体 ID 包括账号、用户、API Key、代理组和调用记录 ID，以及 `UserID`、`AccountID`、`GroupID` 等关联字段。
+实体 ID 包括账号、用户、API Key、代理组、通用配置对象和调用记录 ID，以及 `UserID`、`AccountID`、`GroupID` 等关联字段。
 
 ## MemoryDatabase 缓存
 
 `NewMemoryDatabase` 只用于构造 SQLite 内部缓存，不应作为 `Database` 传给业务层。缓存内容包括：
 
 - 账号、用户、API Key 和代理组；
+- 通用配置对象（Config）；
 - Module Config；
 - Credential。
 
-SQLite 启动时从持久化表加载实体缓存。Module Config 和 Credential 在成功从 SQLite 读取后写入缓存；写入或删除 SQLite 成功后同步更新缓存。调用记录和代理日志不进入缓存，始终直接使用 SQLite。
+SQLite 启动时从持久化表加载实体缓存（含 Config）。Module Config 和 Credential 在成功从 SQLite 读取后写入缓存；写入或删除 SQLite 成功后同步更新缓存。调用记录和代理日志不进入缓存，始终直接使用 SQLite。
 
 ## Database 接口
 
@@ -53,6 +54,15 @@ SaveProxyGroup(*PersistedProxyGroup) error
 `Save*` 使用 `ID == 0` 创建记录，使用正数 ID 更新记录。删除和查询方法的实体 ID 参数也使用 `int`。
 
 Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供的字符串 ID，并以不透明 JSON 保存。OAuth 的 `CredentialStore` 契约保持不变。
+
+通用配置对象（`PersistedConfig`）字段为 `id`、`type`、`name`、`value`（不透明 JSON）。`(type, name)` 唯一。接口提供：
+
+- `ListConfigs` / `ListConfigsByType`：列出全部或指定类型；
+- `LoadConfig(type, name)`：按类型与名称加载；不存在时返回零值（`ID == 0`）和 `nil` error；
+- `SaveConfig`：创建或更新；更新时只允许修改 `value`，`type` 与 `name` 不可变；
+- `DeleteConfig(id)`：按 ID 删除。
+
+通用配置与 Module Config 独立：后者仍是「模块名 → 单份 JSON」；前者用于同类型下多条命名配置对象。
 
 ## 调用记录与代理日志
 

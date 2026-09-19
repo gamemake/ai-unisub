@@ -19,6 +19,7 @@ type MemoryDatabase struct {
 	users         map[int]PersistedUser
 	apiKeys       map[int]PersistedAPIKey
 	proxyGroups   map[int]PersistedProxyGroup
+	configs       map[int]PersistedConfig
 }
 
 func NewMemoryDatabase() *MemoryDatabase {
@@ -26,6 +27,7 @@ func NewMemoryDatabase() *MemoryDatabase {
 		moduleConfigs: make(map[string]json.RawMessage), credentials: make(map[string]json.RawMessage),
 		accounts: make(map[int]PersistedAccount), users: make(map[int]PersistedUser),
 		apiKeys: make(map[int]PersistedAPIKey), proxyGroups: make(map[int]PersistedProxyGroup),
+		configs: make(map[int]PersistedConfig),
 	}
 }
 
@@ -190,4 +192,72 @@ func (m *MemoryDatabase) DeleteProxyGroup(id int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.proxyGroups, id)
+}
+
+func (m *MemoryDatabase) ListConfigs() []PersistedConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]PersistedConfig, 0, len(m.configs))
+	for value := range maps.Values(m.configs) {
+		result = append(result, cloneConfig(value))
+	}
+	slices.SortFunc(result, func(a, b PersistedConfig) int { return cmp.Compare(a.ID, b.ID) })
+	return result
+}
+
+func (m *MemoryDatabase) ListConfigsByType(configType string) []PersistedConfig {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	result := make([]PersistedConfig, 0)
+	for value := range maps.Values(m.configs) {
+		if value.Type == configType {
+			result = append(result, cloneConfig(value))
+		}
+	}
+	slices.SortFunc(result, func(a, b PersistedConfig) int { return cmp.Compare(a.ID, b.ID) })
+	return result
+}
+
+func (m *MemoryDatabase) GetConfigByTypeName(configType, name string) (PersistedConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for value := range maps.Values(m.configs) {
+		if value.Type == configType && value.Name == name {
+			return cloneConfig(value), true
+		}
+	}
+	return PersistedConfig{}, false
+}
+
+func (m *MemoryDatabase) HasConfig(id int) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.configs[id]
+	return ok
+}
+
+func (m *MemoryDatabase) GetConfig(id int) (PersistedConfig, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	value, ok := m.configs[id]
+	if !ok {
+		return PersistedConfig{}, false
+	}
+	return cloneConfig(value), true
+}
+
+func (m *MemoryDatabase) SaveConfig(value PersistedConfig) error {
+	if value.ID <= 0 {
+		return errors.New("config ID must be positive")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.configs[value.ID] = cloneConfig(value)
+	return nil
+}
+
+func (m *MemoryDatabase) DeleteConfig(id int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.configs, id)
 }

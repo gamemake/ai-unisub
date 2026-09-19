@@ -132,6 +132,85 @@ func (s *SQLiteDatabase) SaveModuleConfig(module string, raw json.RawMessage) er
 	return err
 }
 
+func (s *SQLiteDatabase) ListConfigs() ([]PersistedConfig, error) {
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return s.mem.ListConfigs(), nil
+}
+
+func (s *SQLiteDatabase) ListConfigsByType(configType string) ([]PersistedConfig, error) {
+	if err := validateConfigType(configType); err != nil {
+		return nil, err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return s.mem.ListConfigsByType(configType), nil
+}
+
+func (s *SQLiteDatabase) LoadConfig(configType, name string) (PersistedConfig, error) {
+	if err := validateConfigType(configType); err != nil {
+		return PersistedConfig{}, err
+	}
+	if err := validateConfigName(name); err != nil {
+		return PersistedConfig{}, err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return PersistedConfig{}, err
+	}
+	value, ok := s.mem.GetConfigByTypeName(configType, name)
+	if !ok {
+		return PersistedConfig{}, nil
+	}
+	return value, nil
+}
+
+func (s *SQLiteDatabase) SaveConfig(value *PersistedConfig) error {
+	if err := validateConfig(value); err != nil {
+		return err
+	}
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if value.ID > 0 {
+		existing, ok := s.mem.GetConfig(value.ID)
+		if !ok {
+			return errors.New("config not found")
+		}
+		if existing.Type != value.Type || existing.Name != value.Name {
+			return errors.New("config type and name cannot be changed")
+		}
+	}
+	result, err := s.db.Exec(
+		`INSERT INTO configs(id, type, name, value) VALUES(?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET value=excluded.value`,
+		databaseID(value.ID), value.Type, value.Name, string(value.Value),
+	)
+	if err != nil {
+		return err
+	}
+	if value.ID == 0 {
+		id, err := result.LastInsertId()
+		if err != nil {
+			return err
+		}
+		value.ID = int(id)
+	}
+	return s.mem.SaveConfig(*value)
+}
+
+func (s *SQLiteDatabase) DeleteConfig(id int) error {
+	if err := s.ensureOpen(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM configs WHERE id = ?`, id); err != nil {
+		return err
+	}
+	s.mem.DeleteConfig(id)
+	return nil
+}
+
 func (s *SQLiteDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
 	return s.mem.ListProxyGroups(), nil
 }
@@ -756,7 +835,29 @@ func (s *SQLiteDatabase) loadMemory() error {
 			return err
 		}
 	}
-	return keys.Err()
+	if err = keys.Err(); err != nil {
+		keys.Close()
+		return err
+	}
+	keys.Close()
+	configs, err := s.db.Query(`SELECT id, type, name, value FROM configs`)
+	if err != nil {
+		return err
+	}
+	for configs.Next() {
+		var v PersistedConfig
+		var raw []byte
+		if err = configs.Scan(&v.ID, &v.Type, &v.Name, &raw); err != nil {
+			configs.Close()
+			return err
+		}
+		v.Value = append([]byte(nil), raw...)
+		if err = s.mem.SaveConfig(v); err != nil {
+			configs.Close()
+			return err
+		}
+	}
+	return configs.Err()
 }
 
 func (s *SQLiteDatabase) insertTrace(table string, t *PersistedCallTrace) error {
@@ -969,6 +1070,8 @@ CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, user_
 CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_account_id ON api_keys(account_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
-CREATE TABLE IF NOT EXISTS proxy_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);`
+CREATE TABLE IF NOT EXISTS proxy_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
+CREATE TABLE IF NOT EXISTS configs (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(type, name));
+CREATE INDEX IF NOT EXISTS idx_configs_type ON configs(type);`
 
 var _ Database = (*SQLiteDatabase)(nil)

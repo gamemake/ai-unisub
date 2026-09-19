@@ -78,6 +78,16 @@ type PersistedProxyGroup struct {
 	UpdatedAt time.Time       `json:"updated_at"`
 }
 
+// PersistedConfig is a generic named configuration object.
+// Value is opaque JSON; the caller owns schema validation.
+// Type and Name form a unique identity and cannot change on update.
+type PersistedConfig struct {
+	ID    int             `json:"id"`
+	Type  string          `json:"type"`
+	Name  string          `json:"name"`
+	Value json.RawMessage `json:"value"`
+}
+
 // PersistedProxyLog records an upstream HTTP error for a proxy.
 type PersistedProxyLog struct {
 	GroupID          int       `json:"group_id"`
@@ -247,6 +257,19 @@ type Database interface {
 	LoadModuleConfig(module string) (json.RawMessage, error)
 	// SaveModuleConfig validates and stores a module configuration.
 	SaveModuleConfig(module string, config json.RawMessage) error
+
+	// ListConfigs returns all generic configuration objects, ordered by ID.
+	ListConfigs() ([]PersistedConfig, error)
+	// ListConfigsByType returns configuration objects of the given type, ordered by ID.
+	ListConfigsByType(configType string) ([]PersistedConfig, error)
+	// LoadConfig loads one configuration by type and name.
+	// Missing configurations return a zero-value PersistedConfig (ID == 0) and a nil error.
+	LoadConfig(configType, name string) (PersistedConfig, error)
+	// SaveConfig creates (ID == 0) or updates (ID > 0) a configuration object.
+	// Updates may only change Value; Type and Name are immutable after create.
+	SaveConfig(config *PersistedConfig) error
+	// DeleteConfig deletes a configuration object by ID.
+	DeleteConfig(id int) error
 
 	// ListProxyGroups returns all persisted proxy groups.
 	ListProxyGroups() ([]PersistedProxyGroup, error)
