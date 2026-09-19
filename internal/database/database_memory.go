@@ -140,7 +140,7 @@ func (m *MemoryDatabase) ListAPIKeys(userID int) []PersistedAPIKey {
 	result := make([]PersistedAPIKey, 0)
 	for value := range maps.Values(m.apiKeys) {
 		if userID == 0 || value.UserID == userID {
-			result = append(result, value)
+			result = append(result, cloneAPIKey(value))
 		}
 	}
 	slices.SortFunc(result, func(a, b PersistedAPIKey) int { return cmp.Compare(a.ID, b.ID) })
@@ -160,7 +160,7 @@ func (m *MemoryDatabase) SaveAPIKey(value PersistedAPIKey) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.apiKeys[value.ID] = value
+	m.apiKeys[value.ID] = cloneAPIKey(value)
 	return nil
 }
 func (m *MemoryDatabase) DeleteAPIKey(id int) {

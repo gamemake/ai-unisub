@@ -133,15 +133,17 @@ const (
 
 // PersistedAPIKey is created by a user and is bound to exactly one provider
 // instance. Key stores the actual API key value.
+// Config is opaque JSON owned by the caller.
 type PersistedAPIKey struct {
-	ID           int       `json:"id"`
-	Name         string    `json:"name"`
-	UserID       int       `json:"user_id"`
-	AccountID    int       `json:"account_id"`
-	Key          string    `json:"key"`
-	ValidSeconds int64     `json:"valid_seconds"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int             `json:"id"`
+	Name         string          `json:"name"`
+	UserID       int             `json:"user_id"`
+	AccountID    int             `json:"account_id"`
+	Key          string          `json:"key"`
+	Config       json.RawMessage `json:"config"`
+	ValidSeconds int64           `json:"valid_seconds"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // PersistedCallTrace is the database-owned representation of one API call.

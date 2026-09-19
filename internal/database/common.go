@@ -87,6 +87,11 @@ func cloneProxyGroup(value PersistedProxyGroup) PersistedProxyGroup {
 	return value
 }
 
+func cloneAPIKey(value PersistedAPIKey) PersistedAPIKey {
+	value.Config = append([]byte(nil), value.Config...)
+	return value
+}
+
 func cloneJSON[T any](value T) T {
 	raw, _ := json.Marshal(value)
 	var clone T
