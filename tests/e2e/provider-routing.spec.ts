@@ -13,12 +13,12 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   // API setup does not invalidate the already-mounted browser query cache.
   await page.reload()
   await expect(page.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: 'AI Provider', exact: true }).click()
-  await page.getByRole('button', { name: '添加 AI Provider', exact: true }).click()
-  await page.getByRole('button', { name: '添加组 AI Provider', exact: true }).click()
+  await page.getByRole('button', { name: '账号', exact: true }).click()
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await page.getByRole('button', { name: '添加组账号', exact: true }).click()
   let dialog = page.getByRole('dialog')
   await dialog.getByLabel('名称', { exact: true }).fill('Routing Group')
-  await expect(dialog.getByRole('heading', { name: '添加组 AI Provider', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '添加组账号', exact: true })).toBeVisible()
   await expect(dialog.getByRole('combobox', { name: '类型', exact: true })).toHaveCount(0)
   await expect(dialog.getByLabel('最大并发', { exact: true })).toHaveCount(0)
   await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('Any')
@@ -46,8 +46,8 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('OpenAI')
   await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
 
-  await page.getByRole('button', { name: '添加 AI Provider', exact: true }).click()
-  await page.getByRole('button', { name: '添加订阅 AI Provider', exact: true }).click()
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await page.getByRole('button', { name: '添加订阅账号', exact: true }).click()
   dialog = page.getByRole('dialog')
   await dialog.getByLabel('名称', { exact: true }).fill('Routing Dummy')
   await dialog.getByRole('combobox', { name: '订阅平台', exact: true }).click()
@@ -68,8 +68,8 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   dummyProviders = await (await page.request.get('/api/ai-providers')).json()
   expect(dummyProviders.items.find((p: { name: string }) => p.name === 'Routing Dummy').config.client_type).toBe('Any')
 
-  await page.getByRole('button', { name: '添加 AI Provider', exact: true }).click()
-  await page.getByRole('button', { name: '添加订阅 AI Provider', exact: true }).click()
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await page.getByRole('button', { name: '添加订阅账号', exact: true }).click()
   dialog = page.getByRole('dialog')
   await expect(dialog.getByRole('button', { name: '网页登录授权' })).toBeVisible()
   await dialog.getByRole('checkbox', { name: '仅允许原厂客户端' }).check()
@@ -77,10 +77,10 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(dialog.getByLabel('认证方式', { exact: true })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('provider-subscription.png'), fullPage: true, animations: 'disabled' })
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
-  await page.getByRole('button', { name: '添加 AI Provider', exact: true }).click()
-  await page.getByRole('button', { name: '添加API AI Provider', exact: true }).click()
+  await page.getByRole('button', { name: '添加账号', exact: true }).click()
+  await page.getByRole('button', { name: '添加API账号', exact: true }).click()
   dialog = page.getByRole('dialog')
-  await expect(dialog.getByRole('heading', { name: '添加API AI Provider', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('heading', { name: '添加API账号', exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: '网页登录授权' })).toHaveCount(0)
   await expect(dialog.getByRole('combobox', { name: '订阅平台' })).toHaveCount(0)
   await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toBeEnabled()
@@ -99,7 +99,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page.getByRole('cell', { name: 'Routing API', exact: true })).toBeVisible()
   await expect(page.getByRole('cell', { name: 'Routing Group', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '编辑 Routing API', exact: true }).click()
-  await expect(page.getByRole('dialog').getByRole('heading', { name: '编辑API AI Provider', exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('heading', { name: '编辑API账号', exact: true })).toBeVisible()
   await expect(page.getByRole('dialog').getByRole('combobox', { name: '类型', exact: true })).toHaveCount(0)
   await page.getByRole('dialog').getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
@@ -121,13 +121,14 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   dialog = page.getByRole('dialog')
   await expect(dialog.getByLabel('Anthropic Claude URL', { exact: true })).toHaveValue('https://api.anthropic.com/v1')
   await expect(dialog.getByLabel('Anthropic Claude URL', { exact: true })).toHaveAttribute('readonly')
-  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('form', { name: '供应商配置', exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(page).toHaveURL(/#ai-catalog$/)
   await page.getByRole('row', { name: '查看 Kimi 详情', exact: true }).press('Enter')
   await expect(page).toHaveURL(/#ai-catalog\/kimi$/)
-  await expect(dialog.getByLabel('Kimi Codex / Grok URL', { exact: true })).toHaveValue('https://api.moonshot.cn/v1')
-  await expect(dialog.getByLabel('Kimi Codex / Grok URL', { exact: true })).toHaveAttribute('readonly')
+  await expect(dialog.getByLabel('Kimi OpenAI URL', { exact: true })).toHaveValue('https://api.moonshot.cn/v1')
+  await expect(dialog.getByLabel('Kimi OpenAI URL', { exact: true })).toHaveAttribute('readonly')
   await page.reload()
   dialog = page.getByRole('dialog', { name: 'Kimi 详情', exact: true })
   await expect(dialog).toBeVisible()
@@ -136,7 +137,15 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   const value = await (await page.request.get('/api/ai-catalog')).json()
   expect(value.catalog.suppliers).toHaveLength(6)
   for (const supplier of value.catalog.suppliers) {
-    expect(Object.keys(supplier).sort()).toEqual(['claude_url', 'codex_url', 'id', 'name'])
+    expect(supplier).toEqual(expect.objectContaining({
+      id: expect.any(String),
+      name: expect.any(String),
+      claude_url: expect.any(String),
+      openai_url: expect.any(String),
+      models: expect.any(Array),
+      supported_clients: expect.any(Array),
+    }))
+    expect(supplier).not.toHaveProperty('codex_url')
   }
   await dialog.getByRole('button', { name: '关闭', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)

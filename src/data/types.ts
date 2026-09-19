@@ -5,13 +5,24 @@ export interface User { id: number; name: string; role: 'admin' | 'user'; enable
 export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
 export interface GroupMember { id: number; weight: number }
 // Only fixed, non-authentication header overrides; request defaults live in Go.
-export interface Supplier { id: string; name: string; claude_url: string; codex_url: string; subscription_usage_header_overrides?: Record<string, string>; api_usage_header_overrides?: Record<string, string> }
+// claude_url / openai_url / supported_clients are code-owned; models/name are configurable.
+export interface Supplier {
+  id: string
+  name: string
+  claude_url: string
+  openai_url: string
+  models: string[]
+  supported_clients: ClientType[]
+  subscription_usage_header_overrides?: Record<string, string>
+  api_usage_header_overrides?: Record<string, string>
+}
 export interface AICatalog { suppliers: Supplier[] }
 export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supplier[] }
 export interface AIProviderConfig { kind?: 'subscription' | 'api' | 'group'; supplier?: string; client_type?: ClientType; official_only?: boolean; members?: GroupMember[]; auth_type?: string; api_endpoint?: string; api_key?: string; credential_id?: string; credential?: unknown; oauth?: { credential_id?: string }; proxy_group_id?: number; enabled?: boolean; max_concurrent_connections?: number; queue_timeout_seconds?: number; [key: string]: unknown }
 // Wire DTO: provider/provider_type retain their serialized names for existing clients and data.
 export interface Account { id: number; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown; quota?: Quota; created_at?: string; updated_at?: string }
-export interface APIKey { id: number; name: string; account_id: number; key: string; valid_seconds: number; created_at: string; updated_at?: string; expires_at?: string }
+export interface ProviderOption { id: number; name: string; provider: string; enabled: boolean; client_types: ClientType[] }
+export interface APIKey { id: number; name: string; account_id: number; key: string; valid_seconds: number; created_at: string; updated_at?: string; expires_at?: string; client_types?: ClientType[] }
 export interface ProxyHealth { status: string; requests: number; failures: number; consecutive_failures: number; cooldown_until?: string; probe_requests: number; probe_failures: number }
 export interface Proxy { id?: string; url: string; enabled: boolean; status?: string; last_available?: string; network?: ProxyHealth; applications?: Record<string, ProxyHealth>; error_records?: { start_at: string; count: number }[] }
 export interface ProxyGroup { id: number; name: string; remark: string; max_retries: number; proxies: Proxy[]; created_at?: string; updated_at?: string }

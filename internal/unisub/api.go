@@ -1108,7 +1108,7 @@ func (m *APIModule) listKeys(ctx framework.ModuleContext, w http.ResponseWriter,
 	}
 	items := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
-		items = append(items, publicAPIKey(k))
+		items = append(items, publicAPIKeyWithClients(k, ctx.AIProviders().SupportedClientsForProvider(k.AccountID)))
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 }
@@ -1162,7 +1162,7 @@ func (m *APIModule) createKey(ctx framework.ModuleContext, w http.ResponseWriter
 		common.WriteError(w, 500, common.MessageCouldNotSaveAPIKey)
 		return
 	}
-	writeJSON(w, 201, publicAPIKey(*key))
+	writeJSON(w, 201, publicAPIKeyWithClients(*key, ctx.AIProviders().SupportedClientsForProvider(key.AccountID)))
 }
 
 func (m *APIModule) getKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int) {
@@ -1170,7 +1170,7 @@ func (m *APIModule) getKey(ctx framework.ModuleContext, w http.ResponseWriter, u
 	if !ok {
 		return
 	}
-	writeJSON(w, 200, publicAPIKey(*key))
+	writeJSON(w, 200, publicAPIKeyWithClients(*key, ctx.AIProviders().SupportedClientsForProvider(key.AccountID)))
 }
 
 func (m *APIModule) deleteKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int) {
@@ -1201,10 +1201,16 @@ func ownedAPIKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id 
 }
 
 func publicAPIKey(k database.PersistedAPIKey) map[string]any {
-	item := map[string]any{"id": k.ID, "name": k.Name, "account_id": k.AccountID, "key": k.Key, "valid_seconds": k.ValidSeconds, "created_at": k.CreatedAt, "updated_at": k.UpdatedAt}
+	item := map[string]any{"id": k.ID, "name": k.Name, "account_id": k.AccountID, "key": k.Key, "valid_seconds": k.ValidSeconds, "created_at": k.CreatedAt, "updated_at": k.UpdatedAt, "client_types": []string{}}
 	if k.ValidSeconds > 0 {
 		item["expires_at"] = k.CreatedAt.Add(time.Duration(k.ValidSeconds) * time.Second)
 	}
+	return item
+}
+
+func publicAPIKeyWithClients(k database.PersistedAPIKey, clients []aiprovider.ClientType) map[string]any {
+	item := publicAPIKey(k)
+	item["client_types"] = clientTypesJSON(clients)
 	return item
 }
 

@@ -1,7 +1,7 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalogResponse, APIKey, Call, CallDetail, List, OAuthStart, Proxy, ProxyGroup, Usage, Quota, User } from './types'
+import type { Account, AICatalogResponse, APIKey, Call, CallDetail, List, OAuthStart, ProviderOption, Proxy, ProxyGroup, Supplier, Usage, Quota, User } from './types'
 const id = (value: string | number) => encodeURIComponent(String(value))
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
@@ -12,7 +12,7 @@ export function useFetchQuota() {
   } })
 }
 export const useAICatalog = () => useQuery({ queryKey: ['ai-catalog'], queryFn: ({ signal }) => request<AICatalogResponse>('/api/ai-catalog', { signal }) })
-export const useProviderOptions = () => useQuery({ queryKey: ['provider-options'], queryFn: ({ signal }) => request<List<Pick<Account, 'id' | 'name' | 'provider' | 'enabled'>>>('/api/keys/providers', { signal }) })
+export const useProviderOptions = () => useQuery({ queryKey: ['provider-options'], queryFn: ({ signal }) => request<List<ProviderOption>>('/api/keys/providers', { signal }) })
 export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }) => request<List<APIKey>>('/api/keys', { signal }) })
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: ({ signal }) => request<List<User>>('/api/users', { signal }) })
 export const useProxies = (enabled = true) => useQuery({ queryKey: ['proxies'], enabled, queryFn: ({ signal }) => request<ProxyGroup[] | null>('/api/proxy-groups', { signal }) })
@@ -27,6 +27,7 @@ export const actions = {
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: number; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
   deleteAIProvider: (key: number) => request('/api/ai-providers/' + id(key), json('DELETE')),
+  saveSupplier: (input: { id: string; name: string; models: string[] }) => request<Supplier>('/api/ai-catalog/' + id(input.id), json('PUT', input)),
   createKey: (input: { name: string; account_id: number; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),
   deleteKey: (key: number) => request('/api/keys/' + id(key), json('DELETE')),
   createUser: (input: { name: string; password: string; role: string }) => request<User>('/api/users', json('POST', input)),

@@ -24,6 +24,7 @@ type AIProviderManager struct {
 	proxyResolver ProxyResolver
 	adapters      map[int]string
 	catalog       Catalog
+	overlayStore  SupplierOverlayStore
 	bindings      map[string]affinityBinding
 	health        map[int]*memberHealth
 	revisions     map[int]uint64

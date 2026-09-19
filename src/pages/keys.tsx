@@ -2,16 +2,16 @@ import { DetailTableRow } from '@/components/detail-table-row'
 import { TableCell } from '@/components/ui/table'
 import { AppSelect } from '@/components/app-select'
 import { SelectItem } from '@/components/ui/select'
-import { useId, useState, type MouseEvent } from 'react'
-import { Check, Copy, Eye, Plus, Share2, Trash2 } from 'lucide-react'
+import { useId, useMemo, useState, type MouseEvent } from 'react'
+import { Check, Copy, Eye, Plus, Trash2 } from 'lucide-react'
 import { actions, useProviderOptions, useAction, useKeys } from '@/data/store'
-import type { APIKey } from '@/data/types'
+import type { APIKey, ClientType, ProviderOption } from '@/data/types'
 import { Badge, Confirm, Empty, ErrorMessage, Field, Modal, PageHeader, QueryState, Submit, Table } from '@/components/shared'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
+import { cn, date } from '@/lib/utils'
 import { Field as UIField, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
-import { date } from '@/lib/utils'
 import { ccSwitchEndpoint, ccSwitchImport, publicBaseURL } from '@/lib/cc-switch'
 
 function CopyIconButton({ text, label }: { text: string; label: string }) {
@@ -48,26 +48,8 @@ function CopyField({ label, value, mono }: { label: string; value: string; mono?
   )
 }
 
-function KeyActions({ value, aiProvider }: { value: APIKey; aiProvider: string }) {
-  const imported = ccSwitchImport({ pageURL: location.href, aiProvider, name: value.name, apiKey: value.key })
-  return (
-    <div className="flex gap-1">
-      {imported ? (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="text-muted-foreground"
-          aria-label={`导入 ${value.name} 到 CC Switch`}
-          title="导入 CC Switch"
-          nativeButton={false}
-          render={<a href={imported.href} />}
-        >
-          <Share2 />
-        </Button>
-      ) : null}
-      <CopyIconButton text={value.key} label={`${value.name} API Key`} />
-    </div>
-  )
+function clientTypesOf(key: APIKey, provider?: ProviderOption): ClientType[] {
+  return (key.client_types?.length ? key.client_types : provider?.client_types) || []
 }
 
 export function Keys() {
@@ -78,17 +60,20 @@ export function Keys() {
     return accounts.data?.items.find(a => a.id === key.account_id)
   }
   return <>
-    <PageHeader title="API Key" description="为客户端签发访问密钥，每把 Key 绑定一个 AI Provider（订阅、API 或组）。" action={<Button onClick={() => setAdding(true)}><Plus />签发 Key</Button>} />
+    <PageHeader title="API Key" description="为客户端签发访问密钥，每把 Key 绑定一个账号（订阅、API 或组）。" action={<Button onClick={() => setAdding(true)}><Plus />签发 Key</Button>} />
     <Card>
       <QueryState query={query}>
         {rows.length ? (
-          <Table headers={['名称', '绑定 AI Provider', '密钥', '有效期', '操作']}>
+          <Table headers={['名称', '绑定账号', '密钥', '有效期', '操作']}>
             {rows.map(k => {
               const provider = providerOf(k)
               return (
                 <DetailTableRow key={k.id} aria-label={`查看 ${k.name} 详情`} onOpen={() => setRevealed(k)}>
                   <TableCell className="font-medium">{k.name}</TableCell>
-                  <TableCell>{provider?.name || k.account_id}</TableCell>
+                  <TableCell>
+                    <div>{provider?.name || k.account_id}</div>
+                    {clientTypesOf(k, provider).length > 0 && <div className="mt-1 text-xs text-muted-foreground">{clientTypesOf(k, provider).join(' · ')}</div>}
+                  </TableCell>
                   <TableCell className="font-mono text-muted-foreground">••••••••{k.key.slice(-4)}</TableCell>
                   <TableCell>
                     {k.expires_at ? (
@@ -100,7 +85,7 @@ export function Keys() {
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
-                      <KeyActions value={k} aiProvider={provider?.provider || ''} />
+                      <CopyIconButton text={k.key} label={`${k.name} API Key`} />
                       <Button variant="ghost" size="icon" aria-label={`查看 ${k.name}`} onClick={() => setRevealed(k)}><Eye /></Button>
                       <Button variant="ghost" size="icon" aria-label={`删除 ${k.name}`} onClick={() => { remove.reset(); setRemoving(k) }}><Trash2 /></Button>
                     </div>
@@ -113,7 +98,7 @@ export function Keys() {
       </QueryState>
     </Card>
     {adding && <KeyForm onClose={() => setAdding(false)} onCreated={k => { setAdding(false); setRevealed(k) }} />}
-    {revealed && <KeyDetails value={revealed} aiProvider={providerOf(revealed)?.provider || ''} onClose={() => setRevealed(null)} />}
+    {revealed && <KeyDetails value={revealed} provider={providerOf(revealed)} onClose={() => setRevealed(null)} />}
     {removing && <Confirm title={`删除密钥「${removing.name}」？`} error={remove.error} pending={remove.isPending} onClose={() => setRemoving(null)} onConfirm={() => remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })} />}
   </>
 }
@@ -125,9 +110,9 @@ function KeyForm({ onClose, onCreated }: { onClose: () => void; onCreated: (key:
       <QueryState query={accounts}>
         <form className="space-y-5" onSubmit={e => { e.preventDefault(); create.mutate({ name, account_id: Number(account), valid_seconds: days * 86400 }, { onSuccess: onCreated }) }}>
           <Field label="名称"><Input required maxLength={64} value={name} onChange={e => setName(e.target.value)} placeholder="例如 Claude Code" /></Field>
-          <Field label="绑定 AI Provider">
+          <Field label="绑定账号">
             <AppSelect required value={account} onValueChange={value => setAccount(value)}>
-              <SelectItem value="">请选择 AI Provider</SelectItem>
+              <SelectItem value="">请选择账号</SelectItem>
               {accounts.data?.items.filter(a => a.enabled).map(a => <SelectItem key={a.id} value={String(a.id)}>{a.name} · {a.provider}</SelectItem>)}
             </AppSelect>
           </Field>
@@ -140,14 +125,61 @@ function KeyForm({ onClose, onCreated }: { onClose: () => void; onCreated: (key:
   )
 }
 
-export function KeyDetails({ value, aiProvider, onClose }: { value: APIKey; aiProvider: string; onClose: () => void }) {
-  const imported = ccSwitchImport({ pageURL: location.href, aiProvider, name: value.name, apiKey: value.key })
-  const endpoint = imported?.endpoint || ccSwitchEndpoint(publicBaseURL(location.href), aiProvider)
+/** Key detail + optional CC Switch import in one dialog. */
+export function KeyDetails({ value, provider, clientTypes, onClose }: { value: APIKey; provider?: ProviderOption; clientTypes?: ClientType[]; onClose: () => void }) {
+  const clients = clientTypes?.length ? clientTypes : clientTypesOf(value, provider)
+  const [client, setClient] = useState<ClientType | ''>(clients[0] || '')
+  const [model, setModel] = useState('')
+  const selected = (client || clients[0] || '') as ClientType | ''
+  const base = publicBaseURL(location.href)
+  const endpoint = selected ? ccSwitchEndpoint(base, selected) : base
+  const imported = useMemo(() => {
+    if (!selected || !clients.includes(selected)) return null
+    return ccSwitchImport({ pageURL: location.href, clientType: selected, name: value.name, apiKey: value.key, model })
+  }, [selected, clients, model, value.key, value.name])
+
   return (
-    <Modal title={value.name} description="请妥善保存密钥，仅与需要调用此 AI Provider的客户端共享。" onClose={onClose}>
+    <Modal title={`API Key 详情 · ${value.name}`} onClose={onClose}>
       <div className="space-y-4">
-        <CopyField label="API Key" value={value.key} mono />
-        <CopyField label="Base URL" value={endpoint} />
+        {clients.length > 0 ? (
+          <>
+            <Field label="客户端">
+              <AppSelect value={selected} onValueChange={v => setClient(v as ClientType)}>
+                {clients.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+              </AppSelect>
+            </Field>
+            <CopyField label="Base URL" value={endpoint} mono />
+            <CopyField label="API Key" value={value.key} mono />
+            <Field label="模型名" hint="导入 CC Switch 时必填">
+              <Input value={model} onChange={e => setModel(e.target.value)} placeholder="例如 claude-sonnet-4-6" />
+            </Field>
+            <div className="flex justify-end gap-2 pt-1">
+              <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
+              {imported ? (
+                <a
+                  href={imported.href}
+                  className={cn(
+                    buttonVariants(),
+                    'no-underline hover:no-underline text-primary-foreground hover:text-primary-foreground visited:text-primary-foreground',
+                  )}
+                  onClick={() => onClose()}
+                >
+                  打开 CC Switch
+                </a>
+              ) : (
+                <Button type="button" disabled title="请先填写模型名">打开 CC Switch</Button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <CopyField label="Base URL" value={base} mono />
+            <CopyField label="API Key" value={value.key} mono />
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" onClick={onClose}>关闭</Button>
+            </div>
+          </>
+        )}
       </div>
     </Modal>
   )

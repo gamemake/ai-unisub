@@ -64,6 +64,8 @@ Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供
 
 通用配置与 Module Config 独立：后者仍是「模块名 → 单份 JSON」；前者用于同类型下多条命名配置对象。
 
+模型供应商可配置覆盖使用 `type=supplier`、`name=<supplier id>`；`value` 仅为相对代码缺省的 overlay。diff 由 `aiprovider` 计算，database 不解释 `value` 内容。
+
 ## 调用记录与代理日志
 
 调用记录和代理日志按 UTC 日期写入日表：

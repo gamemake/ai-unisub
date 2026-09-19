@@ -42,8 +42,11 @@ func TestPersonalAPIPermissions(t *testing.T) {
 		t.Fatal(out.Code, out.Body.String())
 	}
 	item := options.Items[0]
-	if len(item) != 4 || item["id"] != float64(account.ID) || item["name"] != "Option" || item["provider"] != "api" || item["enabled"] != true {
+	if item["id"] != float64(account.ID) || item["name"] != "Option" || item["provider"] != "api" || item["enabled"] != true {
 		t.Fatal(item)
+	}
+	if _, ok := item["client_types"]; !ok {
+		t.Fatal("missing client_types", item)
 	}
 	if out := appRequest(s, "PUT", "/api/keys/providers", "{}", member); out.Code != 405 {
 		t.Fatal(out.Code)

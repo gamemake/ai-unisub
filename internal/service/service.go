@@ -7,7 +7,6 @@ import (
 	"ai-unisub/internal/oauth"
 	"ai-unisub/internal/oauth/adapters"
 	"ai-unisub/internal/proxy"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -76,20 +75,9 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	proxyManager := proxy.NewManager(proxy.NewStoreProxyForDB(db), policy)
 	s := &Service{cfg: cfg, db: db, aiProviders: p, proxy: proxyManager, oauth: oauth.NewManager(db), router: newRouter(), results: NewOAuthResultStore()}
 	p.SetProxyResolver(s.proxy)
-	if raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey); err != nil {
+	if err := loadSupplierCatalog(db, p); err != nil {
 		_ = s.proxy.Close()
 		return nil, fmt.Errorf("load AI catalog: %w", err)
-	} else if len(raw) > 0 {
-		var catalog aiprovider.Catalog
-		if err = json.Unmarshal(raw, &catalog); err != nil {
-			_ = s.proxy.Close()
-			return nil, err
-		}
-		aiprovider.RestoreBuiltinURLs(&catalog)
-		if err = p.SetCatalog(catalog); err != nil {
-			_ = s.proxy.Close()
-			return nil, err
-		}
 	}
 	s.authSvc = &authService{s: s, sessions: map[string]session{}}
 	for _, adapter := range []oauth.OAuthAdapter{adapters.NewGrok(adapters.GrokConfig{}), adapters.NewCodex(adapters.CodexConfig{}), adapters.NewClaude(adapters.ClaudeConfig{}), oauth.NewDummyAdapter()} {
@@ -113,6 +101,33 @@ func NewWithDependencies(cfg Config, db database.Database, p *aiprovider.AIProvi
 	}
 	return s, nil
 }
+
+func loadSupplierCatalog(db database.Database, p *aiprovider.AIProviderManager) error {
+	store := newSupplierOverlayStore(db)
+	overlays, err := store.ListSupplierOverlays()
+	if err != nil {
+		return err
+	}
+	if len(overlays) == 0 {
+		raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey)
+		if err != nil {
+			return err
+		}
+		if len(raw) > 0 {
+			migrated, err := aiprovider.MigrateLegacyCatalogOverlays(raw)
+			if err != nil {
+				return err
+			}
+			for name, value := range migrated {
+				if err := store.PutSupplierOverlay(name, value); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return p.SetOverlayStore(store)
+}
+
 func (s *Service) AddModule(m Module) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -45,7 +45,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 非管理员仅可见个人总览、API Key、调用记录、安全设置。直接访问管理页面地址不会渲染管理界面；后端独立拦截管理 API，包括兼容别名及 OAuth API。个人接口仅允许 `me`、`password`、`keys`、`calls`；Key 和调用记录仍按当前用户校验归属。登录、登出不受此限制。
 
-`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled}],total}`，不包含配置、URL、组成员或凭据；其他方法返回 405。
+`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled,client_types}],total}`，不包含配置、URL、组成员或凭据；`client_types` 为绑定供应商协议能力（有 Claude URL → Anthropic；有 OpenAI URL → OpenAI 与 Grok；group 为成员能力交集），不与策略 `client_type` 求交；其他方法返回 405。
 
 ## 当前用户与密码
 
@@ -92,14 +92,16 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 | 方法与路径 | 权限 | 语义 |
 | --- | --- | --- |
-| GET /api/ai-catalog | 管理员 | 返回 `{catalog: {suppliers}, builtin_suppliers}` |
-| PUT /api/ai-catalog | 管理员 | 整体保存 `{suppliers}`；数据库成功后原子更新运行时目录 |
-| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商 `{id, name, claude_url, codex_url}`；不存在返回 404 |
-| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商，body 为 `{id, name, claude_url, codex_url}`；路径与 body 的 id 必须一致，其他供应商配置不变；响应格式与目录 GET 一致 |
+| GET /api/ai-catalog | 管理员 | 返回 `{catalog: {suppliers}, builtin_suppliers}`；前者为合并后的生效视图，后者为代码缺省 |
+| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商生效视图；不存在返回 404 |
+| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商的可配置字段；无整表批量 PUT（`PUT /api/ai-catalog` 返回 405） |
 
-`suppliers` 和 `builtin_suppliers` 项为 `{id, name, claude_url, codex_url}`，必须保留 anthropic、openai、grok、deepseek、zhipu、kimi 六项，不能删除或重复。模型映射功能尚未实现；接口不提供模型映射字段，所有请求模型名原样转发。
+供应商项字段：`{id, name, claude_url, openai_url, models, supported_clients}`，以及可选的 usage header overrides。六大内置 id（anthropic、openai、grok、deepseek、zhipu、kimi）不能删除。
 
-`claude_url`、`codex_url` 为代码维护的只读内置值，Grok 共用 `codex_url`。目录整体 PUT 和单供应商 PUT 修改 URL 均返回 400；仍可保存供应商名称。加载数据库时恢复内置 URL，旧 `url` 字段不生效。
+- `claude_url` / `openai_url` / `supported_clients` 为代码维护：由内置 URL 推导客户端（Grok 供应商的 OpenAI 兼容 URL 对应 `Grok` 客户端）。PUT body 携带 URL 字段返回 400。
+- `name` / `models` 可配置；代码有缺省。PUT body 提交**期望生效值**；`aiprovider` 相对缺省做 diff，仅将差异写入 `PersistedConfig`（`type=supplier`, `name=<id>`）；全部恢复缺省则删除该行。database 不做 diff。
+- 模型映射功能尚未实现；`models` 仅供展示与 CC Switch 建议，请求中的 model 仍原样转发。
+- 旧 `module_configs["aiprovider"]` 整包在启动时只读迁移为 per-supplier overlay；新写入不再使用整包 catalog。
 
 当前响应边界：
 
@@ -121,7 +123,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 name 去除首尾空白后必须为 1–64 个字符；account_id 必须存在；valid_seconds 不得为负，0 表示无固定过期时间。创建时使用当前用户 ID，不由请求体指定。
 
-创建、列表和单个读取均返回明文 key，不是仅创建时返回一次。管理员也使用自己的 Key 范围，不能通过此接口读取其他用户的 Key。跨用户 ID 按不存在处理。
+创建、列表和单个读取均返回明文 key，不是仅创建时返回一次。响应额外包含 `client_types`（字符串数组）：绑定供应商协议能力（URL 推导；group 为成员交集），供 Dashboard CC Switch 使用，不与策略 `client_type` 求交；无能力时为空数组。管理员也使用自己的 Key 范围，不能通过此接口读取其他用户的 Key。跨用户 ID 按不存在处理。
 
 ## 调用记录
 
