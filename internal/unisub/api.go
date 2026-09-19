@@ -679,14 +679,16 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 			item := publicAccount(nil, a)
 			if isAdmin(r) {
 				item = publicAccount(ctx.Database(), a)
-				if a.AIProvider != "group" {
-					if provider, ok := ctx.AIProviders().Get(a.ID); ok {
+				if provider, ok := ctx.AIProviders().Get(a.ID); ok {
+					// Runtime config includes load-time defaults (e.g. subscription_plan).
+					item["config"] = sanitizeJSON(canonicalProviderConfig(a.Config, provider.Config()))
+					if a.AIProvider != "group" {
 						if quota := provider.GetCachedQuota(); quota != nil {
 							item["quota"] = quota
 						}
-					} else {
-						item["quota"] = &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
 					}
+				} else if a.AIProvider != "group" {
+					item["quota"] = &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
 				}
 			}
 			items = append(items, item)

@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button'
 import { SelectItem } from '@/components/ui/select'
 import { Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import { clientTypeLabel } from '@/lib/utils'
+import { samePlanWeights, subscriptionPlanLabel, subscriptionPlansForSupplier } from '@/lib/subscription-plan'
 
 const platformSuppliers: Record<string, string> = { claude: 'anthropic', codex: 'openai', grok: 'grok' }
 
@@ -54,7 +55,7 @@ export function AICatalogPage() {
   useEffect(() => { const update = () => { setSupplierID(supplierFromHash()); window.scrollTo(0, 0) }; addEventListener('hashchange', update); return () => removeEventListener('hashchange', update) }, [])
   const supplier = query.data?.catalog.suppliers.find(s => s.id === supplierID)
   const builtin = query.data?.builtin_suppliers.find(s => s.id === supplierID)
-  return <div><PageHeader title="模型供应商" description="查看内置服务地址，编辑支持模型与模型映射；URL 与支持客户端由代码固定。" />
+  return <div><PageHeader title="模型供应商" description="查看内置服务地址，编辑支持模型、模型映射与订阅套餐用量权重；URL 与支持客户端由代码固定。" />
     <QueryState query={query}>{query.data && <>
       <Card><Table className="table-fixed" headers={['供应商', '支持客户端', '默认 URL', '模型']}>{query.data.catalog.suppliers.map(s =>
         <DetailTableRow key={s.id} aria-label={`查看 ${s.name} 详情`} onOpen={() => { location.hash = `ai-catalog/${s.id}` }}>
@@ -67,6 +68,7 @@ export function AICatalogPage() {
           <TableCell className="w-[26%] max-w-0 whitespace-normal break-all text-xs text-muted-foreground">
             <div>{s.models?.length ? `${s.models.slice(0, 2).join('、')}${s.models.length > 2 ? ` 等 ${s.models.length} 个` : ''}` : '—'}</div>
             {!!s.model_mappings?.length && <div className="mt-1 text-muted-foreground/80">映射 {s.model_mappings.length} 条</div>}
+            {!!Object.keys(s.subscription_plan_weights || {}).length && <div className="mt-1 text-muted-foreground/80">套餐权重 {Object.keys(s.subscription_plan_weights || {}).length} 项</div>}
           </TableCell>
         </DetailTableRow>
       )}</Table></Card>
@@ -74,7 +76,7 @@ export function AICatalogPage() {
         <DialogContent className="flex h-[min(40rem,calc(100dvh-2rem))] min-w-0 flex-col gap-4 overflow-hidden p-6 sm:max-w-2xl">
           <DialogHeader className="shrink-0 pr-8">
             <DialogTitle className="text-lg font-semibold leading-snug">{supplier ? `模型供应商 ${supplier.name}` : '模型供应商'}</DialogTitle>
-            <DialogDescription className="sr-only">编辑支持模型与模型映射；服务地址只读。</DialogDescription>
+            <DialogDescription className="sr-only">编辑支持模型、模型映射与订阅套餐用量权重；服务地址只读。</DialogDescription>
           </DialogHeader>
           {supplier && builtin ? (
             <SupplierEditor key={supplier.id} supplier={supplier} builtin={builtin} onClose={() => { location.hash = 'ai-catalog' }} />
@@ -93,9 +95,9 @@ function FieldReset({ label, disabled, onReset }: { label: string; disabled: boo
   )
 }
 
-type EditorTab = 'models' | 'mappings'
+type EditorTab = 'models' | 'mappings' | 'weights'
 
-function validateSupplierForm(models: string[], mappings: ModelMapping[]) {
+function validateSupplierForm(models: string[], mappings: ModelMapping[], planIDs: string[], weights: Record<string, number>) {
   for (const model of models) {
     if (!model || model !== model.trim()) {
       return '模型名不能为空或含首尾空格'
@@ -114,14 +116,27 @@ function validateSupplierForm(models: string[], mappings: ModelMapping[]) {
     if ((from.match(/\*/g) || []).length > 1) return `第 ${i + 1} 条映射的客户端模型至多一个 * 通配符`
     if (!models.includes(to)) return `第 ${i + 1} 条映射的上游模型「${to}」不在支持模型列表中`
   }
+  for (const id of planIDs) {
+    const value = weights[id]
+    if (!Number.isInteger(value) || value < 1) return `套餐「${subscriptionPlanLabel(id)}」的用量权重须为不小于 1 的整数`
+  }
   return ''
 }
 
 function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; builtin: Supplier; onClose: () => void }) {
   const providers = useAIProviders()
+  const planOptions = useMemo(() => subscriptionPlansForSupplier(supplier.id), [supplier.id])
+  const hasPlans = planOptions.length > 0
   const [tab, setTab] = useState<EditorTab>('models')
   const [modelsText, setModelsText] = useState((supplier.models || []).join('\n'))
   const [mappings, setMappings] = useState<ModelMapping[]>(() => (supplier.model_mappings || []).map(row => ({ ...row })))
+  const [weights, setWeights] = useState<Record<string, number>>(() => {
+    const next: Record<string, number> = {}
+    for (const plan of subscriptionPlansForSupplier(supplier.id)) {
+      next[plan.id] = supplier.subscription_plan_weights?.[plan.id] ?? builtin.subscription_plan_weights?.[plan.id] ?? 1
+    }
+    return next
+  })
   const [refreshProviderID, setRefreshProviderID] = useState('')
   const [formError, setFormError] = useState('')
   const save = useAction(actions.saveSupplier, ['ai-catalog'])
@@ -130,6 +145,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
   const normalizedMappings = useMemo(() => normalizeMappings(mappings), [mappings])
   const modelsDirty = !sameModels(models, builtin.models || [])
   const mappingsDirty = !sameMappings(normalizedMappings, builtin.model_mappings || [])
+  const weightsDirty = hasPlans && !samePlanWeights(weights, builtin.subscription_plan_weights || {})
   const matchingProviders = useMemo(
     () => (providers.data?.items || []).filter(account => providerKind(account) !== 'group' && accountSupplier(account) === supplier.id),
     [providers.data?.items, supplier.id],
@@ -138,13 +154,15 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
   function submit(e: React.FormEvent) {
     e.preventDefault()
     const cleaned = normalizeMappings(mappings)
-    const error = validateSupplierForm(models, cleaned)
+    const error = validateSupplierForm(models, cleaned, planOptions.map(p => p.id), weights)
     if (error) {
       setFormError(error)
       return
     }
     setFormError('')
-    save.mutate({ id: supplier.id, name: supplier.name, models, model_mappings: cleaned }, { onSuccess: onClose })
+    const payload: Parameters<typeof actions.saveSupplier>[0] = { id: supplier.id, name: supplier.name, models, model_mappings: cleaned }
+    if (hasPlans) payload.subscription_plan_weights = weights
+    save.mutate(payload, { onSuccess: onClose })
   }
 
   function refreshFromProvider() {
@@ -180,9 +198,10 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
         <div className="flex shrink-0 items-end gap-2 border-b">
           <div role="tablist" aria-label="供应商配置分区" className="flex min-w-0 flex-1 gap-1">
             {([
-              ['models', '支持模型'],
-              ['mappings', '模型映射'],
-            ] as const).map(([id, label]) => (
+              ['models', '支持模型'] as const,
+              ['mappings', '模型映射'] as const,
+              ...(hasPlans ? [['weights', '套餐权重'] as const] : []),
+            ]).map(([id, label]) => (
               <button
                 key={id}
                 type="button"
@@ -199,8 +218,15 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
           </div>
           {tab === 'models' ? (
             <FieldReset label="支持模型" disabled={!modelsDirty} onReset={() => { setModelsText((builtin.models || []).join('\n')); setFormError('') }} />
-          ) : (
+          ) : tab === 'mappings' ? (
             <FieldReset label="模型映射" disabled={!mappingsDirty} onReset={() => { setMappings((builtin.model_mappings || []).map(row => ({ ...row }))); setFormError('') }} />
+          ) : (
+            <FieldReset label="套餐权重" disabled={!weightsDirty} onReset={() => {
+              const next: Record<string, number> = {}
+              for (const plan of planOptions) next[plan.id] = builtin.subscription_plan_weights?.[plan.id] ?? 1
+              setWeights(next)
+              setFormError('')
+            }} />
           )}
         </div>
 
@@ -300,6 +326,36 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
                 <Plus />添加映射
               </Button>
               <p className="min-w-0 flex-1 text-right text-xs text-muted-foreground">自上而下首条命中；from 支持一个 *，to 选自支持模型。</p>
+            </div>
+          </div>
+        )}
+
+        {tab === 'weights' && hasPlans && (
+          <div role="tabpanel" id="supplier-panel-weights" aria-labelledby="supplier-tab-weights" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+            <p className="text-xs text-muted-foreground">用量权重表示同优先级档内的相对容量，供将来负载均衡使用；不等于组员调度优先级。只使用配置值。</p>
+            <div className="space-y-3">
+              {planOptions.map(plan => (
+                <div key={plan.id} className="flex flex-wrap items-center gap-3">
+                  <div className="min-w-36 flex-1">
+                    <div className="text-sm font-medium">{plan.label}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{plan.id}</div>
+                  </div>
+                  <Input
+                    aria-label={`${plan.label} 用量权重`}
+                    className="w-28"
+                    type="number"
+                    min={1}
+                    step={1}
+                    required
+                    value={weights[plan.id] ?? 1}
+                    onChange={e => {
+                      setFormError('')
+                      const value = Number(e.target.value)
+                      setWeights(prev => ({ ...prev, [plan.id]: value }))
+                    }}
+                  />
+                </div>
+              ))}
             </div>
           </div>
         )}

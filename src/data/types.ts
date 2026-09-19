@@ -19,12 +19,38 @@ export interface Supplier {
   /** Client model → upstream model; `from` allows one `*` wildcard. */
   model_mappings?: ModelMapping[]
   supported_clients: ClientType[]
+  /** Flat plan_id → capacity weight for same-tier load balancing. */
+  subscription_plan_weights?: Record<string, number>
   subscription_usage_header_overrides?: Record<string, string>
   api_usage_header_overrides?: Record<string, string>
 }
 export interface AICatalog { suppliers: Supplier[] }
 export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supplier[] }
-export interface AIProviderConfig { kind?: 'subscription' | 'api' | 'group'; supplier?: string; client_type?: ClientType; official_only?: boolean; members?: GroupMember[]; auth_type?: string; api_endpoint?: string; api_key?: string; credential_id?: string; credential?: unknown; oauth?: { credential_id?: string }; proxy_group_id?: number; enabled?: boolean; max_concurrent_connections?: number; queue_timeout_seconds?: number; [key: string]: unknown }
+/** Highest subscription tier for kind=subscription; config-only, adapter-prefixed IDs. */
+export type SubscriptionPlan =
+  | 'codex_plus' | 'codex_pro_5x' | 'codex_pro_20x'
+  | 'claude_pro' | 'claude_max'
+  | 'super_grok' | 'super_grok_plus' | 'super_grok_heavy'
+
+export interface AIProviderConfig {
+  kind?: 'subscription' | 'api' | 'group'
+  supplier?: string
+  subscription_plan?: SubscriptionPlan | string
+  client_type?: ClientType
+  official_only?: boolean
+  members?: GroupMember[]
+  auth_type?: string
+  api_endpoint?: string
+  api_key?: string
+  credential_id?: string
+  credential?: unknown
+  oauth?: { credential_id?: string }
+  proxy_group_id?: number
+  enabled?: boolean
+  max_concurrent_connections?: number
+  queue_timeout_seconds?: number
+  [key: string]: unknown
+}
 // Wire DTO: provider/provider_type retain their serialized names for existing clients and data.
 export interface Account { id: number; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown; quota?: Quota; created_at?: string; updated_at?: string }
 export interface ProviderOption { id: number; name: string; provider: string; enabled: boolean; client_types: ClientType[] }

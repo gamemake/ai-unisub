@@ -34,6 +34,69 @@ func TestDecodeAIProviderConfigDefaultsAndProxy(t *testing.T) {
 	}
 }
 
+func TestPrepareConfigSubscriptionPlan(t *testing.T) {
+	raw, err := prepareConfig(1, "codex", json.RawMessage(`{"kind":"subscription","credential_id":"c"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := decodeAIProviderConfig(1, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SubscriptionPlan != PlanCodexPlus {
+		t.Fatalf("codex default plan: %q", c.SubscriptionPlan)
+	}
+
+	raw, err = prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"claude_max"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = decodeAIProviderConfig(1, raw)
+	if err != nil || c.SubscriptionPlan != PlanClaudeMax {
+		t.Fatalf("claude plan: %+v %v", c, err)
+	}
+
+	raw, err = prepareConfig(1, "dummy", json.RawMessage(`{"kind":"subscription"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = decodeAIProviderConfig(1, raw)
+	if err != nil || c.SubscriptionPlan != PlanClaudePro {
+		t.Fatalf("dummy uses claude plans: %+v %v", c, err)
+	}
+
+	raw, err = prepareConfig(1, "grok", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"super_grok_heavy"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = decodeAIProviderConfig(1, raw)
+	if err != nil || c.SubscriptionPlan != PlanSuperGrokHeavy {
+		t.Fatalf("grok plan: %+v %v", c, err)
+	}
+
+	if _, err := prepareConfig(1, "codex", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"plus"}`)); err == nil {
+		t.Fatal("unprefixed plan must be rejected")
+	}
+	if _, err := prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"claude_free"}`)); err == nil {
+		t.Fatal("removed free plan must be rejected")
+	}
+	if _, err := prepareConfig(1, "codex", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"codex_pro"}`)); err == nil {
+		t.Fatal("codex_pro baseline must be rejected")
+	}
+	if _, err := prepareConfig(1, "api", json.RawMessage(`{"kind":"api","auth_type":"api_key","api_key":"k","supplier":"openai","subscription_plan":"codex_plus"}`)); err == nil {
+		t.Fatal("api must reject subscription_plan")
+	}
+
+	raw, err = prepareConfig(1, "api", json.RawMessage(`{"kind":"api","auth_type":"api_key","api_key":"k","supplier":"openai"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err = decodeAIProviderConfig(1, raw)
+	if err != nil || c.SubscriptionPlan != "" {
+		t.Fatalf("api plan must stay empty: %+v %v", c, err)
+	}
+}
+
 func TestDecodeAIProviderConfigAPIKey(t *testing.T) {
 	config, err := decodeAIProviderConfig(1, json.RawMessage(`{"auth_type":"api_key","api_endpoint":"https://api.default.test/v1","api_key":" key-one "}`))
 	if err != nil {

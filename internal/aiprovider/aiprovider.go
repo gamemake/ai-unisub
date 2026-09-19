@@ -23,6 +23,7 @@ type ProxyResolver interface {
 type AIProviderConfig struct {
 	Kind                          string        `json:"kind,omitempty"`
 	Supplier                      string        `json:"supplier,omitempty"`
+	SubscriptionPlan              string        `json:"subscription_plan,omitempty"`
 	ClientType                    ClientType    `json:"client_type"`
 	OfficialOnly                  bool          `json:"official_only,omitzero"`
 	Members                       []GroupMember `json:"members,omitempty"`

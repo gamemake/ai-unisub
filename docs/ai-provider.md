@@ -22,11 +22,11 @@
 
 ### 模型供应商
 
-内置模型供应商为 **Anthropic、OpenAI、xAI、Deepseek、智谱、Kimi**，记录不允许删除。运行时视图为 `{id, name, claude_url, openai_url, models, model_mappings, supported_clients}`。API 类型 AIProvider 使用所选供应商的默认服务地址；已有接口配置中的 `api_endpoint` 仍可指定独立上游地址。
+内置模型供应商为 **Anthropic、OpenAI、xAI、Deepseek、智谱、Kimi**，记录不允许删除。运行时视图为 `{id, name, claude_url, openai_url, models, model_mappings, supported_clients, subscription_plan_weights?}`。API 类型 AIProvider 使用所选供应商的默认服务地址；已有接口配置中的 `api_endpoint` 仍可指定独立上游地址。
 
-**不可配置（代码）**：`claude_url`、`openai_url`。由二者推导 `supported_clients`：有 Claude URL → Anthropic（Claude Code）；有 OpenAI URL → OpenAI（Codex）与 Grok。与供应商 id 无关。PUT 不得修改 URL。
+**不可配置（代码）**：`claude_url`、`openai_url`。由二者推导 `supported_clients`：有 Claude URL → Anthropic（Claude Code）；有 OpenAI URL → OpenAI（Codex）与 Grok。与供应商 id 无关。PUT 不得修改 URL。订阅套餐 **ID 目录与缺省 plan** 仍由代码按适配器固定（见账号 `subscription_plan`）；供应商配置不增删 plan ID，只配置各 ID 的用量权重。
 
-**可配置**：`name`、`models`、`model_mappings`（及可选 usage header overrides）。代码内有缺省（映射缺省为空）；相对缺省的差异写入 `PersistedConfig`（`type=supplier`, `name=<supplier id>`）。diff / merge 在 `aiprovider` 完成，database 只存不透明 JSON。全部字段恢复缺省后删除对应配置行。不提供整表批量 PUT。
+**可配置**：`name`、`models`、`model_mappings`、可选 usage header overrides，以及 **`subscription_plan_weights`**（订阅套餐用量权重）。代码内有缺省；相对缺省的差异写入 `PersistedConfig`（`type=supplier`, `name=<supplier id>`）。diff / merge 在 `aiprovider` 完成，database 只存不透明 JSON。全部字段恢复缺省后删除对应配置行。不提供整表批量 PUT。
 
 | 供应商 | Claude URL | OpenAI URL | 支持客户端 |
 | --- | --- | --- | --- |
@@ -37,7 +37,31 @@
 | 智谱 | https://open.bigmodel.cn/api/anthropic/v1 | https://open.bigmodel.cn/api/paas/v4 | Anthropic, OpenAI, Grok |
 | Kimi | https://api.moonshot.cn/anthropic/v1 | https://api.moonshot.cn/v1 | Anthropic, OpenAI, Grok |
 
-模型供应商页面（`/#ai-catalog`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑模型列表与模型映射（支持「恢复默认」；模型列表可从同供应商账号刷新），URL 与客户端只读。
+#### 订阅套餐用量权重（供应商）
+
+用于将来同组成员、**同一 `members[].weight` 优先级档内**按相对容量做负载均衡；**不等于**组成员优先级权重。
+
+- **存放位置**：模型供应商运行时字段 `subscription_plan_weights`。
+- **摊开存储**：一层 `map[plan_id]weight`（JSON 对象），`plan_id` 为键、正整数权重为值；**不**使用嵌套数组或 `{id, weight}` 列表，也**不**把权重写在账号 `AIProviderConfig` 上。
+- **代码缺省**（builtin；overlay 仅存与缺省不同的项，与 models 等 overlay 规则一致）：
+
+| 供应商 | plan_id | 缺省用量权重 |
+| --- | --- | --- |
+| openai | `codex_plus` | 1 |
+| openai | `codex_pro_5x` | 5 |
+| openai | `codex_pro_20x` | 20 |
+| anthropic | `claude_pro` | 1 |
+| anthropic | `claude_max` | **20** |
+| grok | `super_grok` | 1 |
+| grok | `super_grok_plus` | 3 |
+| grok | `super_grok_heavy` | 10 |
+| deepseek / zhipu / kimi | （无订阅 plan 目录） | 空 map；不参与订阅加权 |
+
+- **校验**：键必须是该供应商允许的 plan ID（openai 仅 `codex_*`，anthropic 仅 `claude_*`，grok 仅 `super_grok*`）；值为整数且 **≥ 1**；未知键、非正数拒绝保存。恢复缺省时 map 与 builtin 完全一致则删除 overlay 中该字段。
+- **查询函数（已实现）**：`UsageWeight(supplierID, plan)`（builtin）与 `AIProviderManager.UsageWeight` / `UsageWeightFromConfig`（合并 catalog）只读供应商表 + 账号 `subscription_plan`；不读 quota、不读上游。空 plan 用该适配器缺省 plan；API／组固定权重 **1**。Dummy 订阅读 **anthropic** 供应商权重。
+- **调度**：当前 `Select` 同档仍均匀随机；接入加权随机为后续，不改变 `members[].weight` 档位语义。
+
+模型供应商页面（`/#ai-catalog`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑模型列表、模型映射与**订阅套餐用量权重**（openai／anthropic／grok；支持「恢复默认」；模型列表可从同供应商账号刷新），URL 与客户端只读。
 
 ### 模型映射
 
@@ -174,9 +198,10 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 | id/name/labels | 实例标识和元数据；创建时 ID 由调用方指定 |
 | kind | subscription、api 或 group；旧配置由适配器及 auth_type 推导 |
 | supplier | 供应商标识；订阅由账户适配器确定，API 可指定 |
+| subscription_plan | 仅订阅：最高套餐档 ID（只相信配置，不从上游推断）。Codex：`codex_plus` / `codex_pro_5x` / `codex_pro_20x`（缺省 `codex_plus`）；Claude 与 Dummy：`claude_pro` / `claude_max`（缺省 `claude_pro`）；Grok：`super_grok` / `super_grok_plus` / `super_grok_heavy`（缺省 `super_grok`）。加载时空值补缺省；非法 ID 拒绝。API／组不得携带。用量权重不在此字段，见供应商 `subscription_plan_weights` |
 | client_type | 单值枚举：Any、Anthropic、OpenAI、Grok；省略视为 Any；数组不合法 |
 | official_only | 仅订阅有效，只允许供应商对应的原厂客户端类型 |
-| members | 组成员 `{id, weight}` 列表，weight 缺省 3，取整数 1～5；禁止嵌套 |
+| members | 组成员 `{id, weight}` 列表，weight 缺省 3，取整数 1～5；禁止嵌套。此为**调度优先级**，与供应商上的订阅用量权重无关 |
 | enabled | 未指定时为 true |
 | auth_type | oauth（默认）或 api_key |
 | credential_id | OAuth 凭据引用，兼容嵌套 oauth.credential_id |

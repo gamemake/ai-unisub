@@ -4,6 +4,7 @@ import (
 	"ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/service"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -42,18 +43,33 @@ func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, 
 		return
 	}
 	var body struct {
-		ID                                   string                   `json:"id"`
-		Name                                 string                   `json:"name"`
-		Models                               []string                 `json:"models"`
-		ModelMappings                        *[]aiprovider.ModelMapping `json:"model_mappings"`
-		SubscriptionUsageHeaderOverrides     map[string]string        `json:"subscription_usage_header_overrides"`
-		APIUsageHeaderOverrides              map[string]string        `json:"api_usage_header_overrides"`
-		ClaudeURL                            *string                  `json:"claude_url"`
-		OpenAIURL                            *string                  `json:"openai_url"`
-		CodexURL                             *string                  `json:"codex_url"`
+		ID                               string                     `json:"id"`
+		Name                             string                     `json:"name"`
+		Models                           []string                   `json:"models"`
+		ModelMappings                    *[]aiprovider.ModelMapping `json:"model_mappings"`
+		SubscriptionPlanWeights          map[string]int             `json:"subscription_plan_weights"`
+		SubscriptionPlanWeightsSet       bool                       `json:"-"`
+		SubscriptionUsageHeaderOverrides map[string]string          `json:"subscription_usage_header_overrides"`
+		APIUsageHeaderOverrides          map[string]string          `json:"api_usage_header_overrides"`
+		ClaudeURL                        *string                    `json:"claude_url"`
+		OpenAIURL                        *string                    `json:"openai_url"`
+		CodexURL                         *string                    `json:"codex_url"`
 	}
-	if !decodeJSON(w, r, &body) {
+	// Distinguish omitted weights from explicit {} via raw presence.
+	var raw map[string]json.RawMessage
+	if !decodeJSON(w, r, &raw) {
 		return
+	}
+	rawBody, _ := json.Marshal(raw)
+	if err := json.Unmarshal(rawBody, &body); err != nil {
+		common.WriteError(w, 400, common.MessageInvalidJSONBody)
+		return
+	}
+	if _, ok := raw["subscription_plan_weights"]; ok {
+		body.SubscriptionPlanWeightsSet = true
+		if body.SubscriptionPlanWeights == nil {
+			body.SubscriptionPlanWeights = map[string]int{}
+		}
 	}
 	if body.ID != "" && body.ID != parts[1] {
 		common.WriteError(w, 400, "supplier ID must match the URL")
@@ -80,6 +96,9 @@ func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, 
 	} else if current, ok := ctx.AIProviders().Supplier(parts[1]); ok {
 		// Missing model_mappings key: keep current mappings.
 		desired.ModelMappings = current.ModelMappings
+	}
+	if body.SubscriptionPlanWeightsSet {
+		desired.SubscriptionPlanWeights = body.SubscriptionPlanWeights
 	}
 	m.mutations.Lock()
 	defer m.mutations.Unlock()

@@ -28,6 +28,9 @@ type Supplier struct {
 	ModelMappings []ModelMapping `json:"model_mappings,omitempty"`
 	// SupportedClients is derived from non-empty URLs (code-owned).
 	SupportedClients []ClientType `json:"supported_clients"`
+	// SubscriptionPlanWeights is a flat plan_id → capacity weight map for
+	// future same-tier load balancing. Code defaults; overlay may replace.
+	SubscriptionPlanWeights map[string]int `json:"subscription_plan_weights,omitempty"`
 	// Only non-authentication header overrides are persisted. Request defaults
 	// and endpoint behavior are code-owned; credentials are injected externally.
 	SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides,omitempty"`
@@ -44,11 +47,12 @@ type Catalog struct {
 // SupplierOverlay holds only fields that differ from SupplierBuiltin.
 // Nil pointer / nil slice pointer means "not overridden".
 type SupplierOverlay struct {
-	Name                             *string            `json:"name,omitempty"`
-	Models                           *[]string          `json:"models,omitempty"`
-	ModelMappings                    *[]ModelMapping    `json:"model_mappings,omitempty"`
-	SubscriptionUsageHeaderOverrides map[string]string  `json:"subscription_usage_header_overrides,omitempty"`
-	APIUsageHeaderOverrides          map[string]string  `json:"api_usage_header_overrides,omitempty"`
+	Name                             *string           `json:"name,omitempty"`
+	Models                           *[]string         `json:"models,omitempty"`
+	ModelMappings                    *[]ModelMapping   `json:"model_mappings,omitempty"`
+	SubscriptionPlanWeights          map[string]int    `json:"subscription_plan_weights,omitempty"`
+	SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides,omitempty"`
+	APIUsageHeaderOverrides          map[string]string `json:"api_usage_header_overrides,omitempty"`
 }
 
 // SupplierConfigurable is the desired effective configurable state for a PUT.
@@ -56,6 +60,7 @@ type SupplierConfigurable struct {
 	Name                             string            `json:"name"`
 	Models                           []string          `json:"models"`
 	ModelMappings                    []ModelMapping    `json:"model_mappings"`
+	SubscriptionPlanWeights          map[string]int    `json:"subscription_plan_weights,omitempty"`
 	SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides,omitempty"`
 	APIUsageHeaderOverrides          map[string]string `json:"api_usage_header_overrides,omitempty"`
 }
@@ -83,12 +88,13 @@ func SupportedClientsForBuiltin(b SupplierBuiltin) []ClientType {
 // MergeSupplier applies an overlay onto code defaults.
 func MergeSupplier(b SupplierBuiltin, o SupplierOverlay) Supplier {
 	s := Supplier{
-		ID:               b.ID,
-		Name:             b.Name,
-		ClaudeURL:        b.ClaudeURL,
-		OpenAIURL:        b.OpenAIURL,
-		Models:           slices.Clone(b.Models),
-		SupportedClients: SupportedClientsForBuiltin(b),
+		ID:                      b.ID,
+		Name:                    b.Name,
+		ClaudeURL:               b.ClaudeURL,
+		OpenAIURL:               b.OpenAIURL,
+		Models:                  slices.Clone(b.Models),
+		SupportedClients:        SupportedClientsForBuiltin(b),
+		SubscriptionPlanWeights: maps.Clone(BuiltinSubscriptionPlanWeights(b.ID)),
 	}
 	if o.Name != nil {
 		s.Name = *o.Name
@@ -98,6 +104,10 @@ func MergeSupplier(b SupplierBuiltin, o SupplierOverlay) Supplier {
 	}
 	if o.ModelMappings != nil {
 		s.ModelMappings = cloneModelMappings(*o.ModelMappings)
+	}
+	if len(o.SubscriptionPlanWeights) > 0 {
+		// Overlay stores the full effective map when any weight differs.
+		s.SubscriptionPlanWeights = maps.Clone(o.SubscriptionPlanWeights)
 	}
 	if len(o.SubscriptionUsageHeaderOverrides) > 0 {
 		s.SubscriptionUsageHeaderOverrides = maps.Clone(o.SubscriptionUsageHeaderOverrides)
@@ -141,7 +151,14 @@ func DiffSupplier(b SupplierBuiltin, desired SupplierConfigurable) (SupplierOver
 			o.APIUsageHeaderOverrides = maps.Clone(desired.APIUsageHeaderOverrides)
 		}
 	}
-	changed := o.Name != nil || o.Models != nil || o.ModelMappings != nil || len(o.SubscriptionUsageHeaderOverrides) > 0 || len(o.APIUsageHeaderOverrides) > 0
+	// nil desired weights means "leave unchanged" at the call site; callers that
+	// rebuild a full overlay should pass the current effective map explicitly.
+	if desired.SubscriptionPlanWeights != nil {
+		if weights, err := diffSubscriptionPlanWeights(b.ID, desired.SubscriptionPlanWeights); err == nil && len(weights) > 0 {
+			o.SubscriptionPlanWeights = weights
+		}
+	}
+	changed := o.Name != nil || o.Models != nil || o.ModelMappings != nil || len(o.SubscriptionPlanWeights) > 0 || len(o.SubscriptionUsageHeaderOverrides) > 0 || len(o.APIUsageHeaderOverrides) > 0
 	return o, changed
 }
 
@@ -181,6 +198,11 @@ func ParseSupplierOverlay(raw json.RawMessage) (SupplierOverlay, error) {
 }
 
 func ValidateSupplierOverlay(o SupplierOverlay) error {
+	return ValidateSupplierOverlayFor("", o)
+}
+
+// ValidateSupplierOverlayFor checks overlay fields; supplierID enables plan-weight key checks.
+func ValidateSupplierOverlayFor(supplierID string, o SupplierOverlay) error {
 	if o.Name != nil {
 		n := strings.TrimSpace(*o.Name)
 		if n == "" || n != *o.Name {
@@ -199,6 +221,19 @@ func ValidateSupplierOverlay(o SupplierOverlay) error {
 	}
 	if o.ModelMappings != nil {
 		if err := validateModelMappings(*o.ModelMappings); err != nil {
+			return err
+		}
+	}
+	if len(o.SubscriptionPlanWeights) > 0 {
+		id := strings.TrimSpace(supplierID)
+		if id == "" {
+			// Without id, only check value floor; key set validated on apply.
+			for _, w := range o.SubscriptionPlanWeights {
+				if w < 1 {
+					return errors.New("subscription plan weight must be at least 1")
+				}
+			}
+		} else if err := validateSubscriptionPlanWeights(id, o.SubscriptionPlanWeights); err != nil {
 			return err
 		}
 	}
@@ -221,6 +256,9 @@ func ValidateCatalog(c Catalog) error {
 		}
 		if s.ClaudeURL != b.ClaudeURL || s.OpenAIURL != b.OpenAIURL {
 			return errors.New("built-in supplier URLs cannot be modified")
+		}
+		if err := validateSubscriptionPlanWeights(s.ID, s.SubscriptionPlanWeights); err != nil {
+			return err
 		}
 		seen[s.ID] = true
 	}
@@ -281,6 +319,7 @@ func cloneSupplier(s Supplier) Supplier {
 	s.Models = slices.Clone(s.Models)
 	s.ModelMappings = cloneModelMappings(s.ModelMappings)
 	s.SupportedClients = slices.Clone(s.SupportedClients)
+	s.SubscriptionPlanWeights = maps.Clone(s.SubscriptionPlanWeights)
 	s.SubscriptionUsageHeaderOverrides = maps.Clone(s.SubscriptionUsageHeaderOverrides)
 	s.APIUsageHeaderOverrides = maps.Clone(s.APIUsageHeaderOverrides)
 	return s
@@ -302,6 +341,9 @@ func (m *AIProviderManager) SetCatalog(c Catalog) error {
 			}
 			if c.Suppliers[i].Models == nil {
 				c.Suppliers[i].Models = slices.Clone(b.Models)
+			}
+			if c.Suppliers[i].SubscriptionPlanWeights == nil {
+				c.Suppliers[i].SubscriptionPlanWeights = maps.Clone(BuiltinSubscriptionPlanWeights(b.ID))
 			}
 		}
 	}
@@ -349,7 +391,7 @@ func (m *AIProviderManager) applyOverlays(overlays map[string]json.RawMessage) e
 			if err != nil {
 				return err
 			}
-			if err := ValidateSupplierOverlay(parsed); err != nil {
+			if err := ValidateSupplierOverlayFor(b.ID, parsed); err != nil {
 				return err
 			}
 			o = parsed
@@ -387,14 +429,26 @@ func (m *AIProviderManager) UpdateSupplier(id string, desired SupplierConfigurab
 	if !validQuotaHeaders(desired.SubscriptionUsageHeaderOverrides) || !validQuotaHeaders(desired.APIUsageHeaderOverrides) {
 		return Supplier{}, errors.New("usage header overrides contain invalid or authentication headers")
 	}
-	overlay, changed := DiffSupplier(b, desired)
-	if err := ValidateSupplierOverlay(overlay); err != nil {
-		return Supplier{}, err
-	}
-
 	m.mu.RLock()
 	store := m.overlayStore
+	var currentWeights map[string]int
+	for _, s := range m.catalog.Suppliers {
+		if s.ID == id {
+			currentWeights = maps.Clone(s.SubscriptionPlanWeights)
+			break
+		}
+	}
 	m.mu.RUnlock()
+	if desired.SubscriptionPlanWeights == nil {
+		// Preserve effective weights on name/models-only updates.
+		desired.SubscriptionPlanWeights = currentWeights
+	} else if _, err := normalizeSubscriptionPlanWeights(id, desired.SubscriptionPlanWeights); err != nil {
+		return Supplier{}, err
+	}
+	overlay, changed := DiffSupplier(b, desired)
+	if err := ValidateSupplierOverlayFor(id, overlay); err != nil {
+		return Supplier{}, err
+	}
 	if store != nil {
 		if !changed {
 			if err := store.DeleteSupplierOverlay(id); err != nil {
@@ -460,6 +514,9 @@ func RestoreBuiltinURLs(c *Catalog) {
 			if c.Suppliers[i].Models == nil {
 				c.Suppliers[i].Models = slices.Clone(b.Models)
 			}
+			if c.Suppliers[i].SubscriptionPlanWeights == nil {
+				c.Suppliers[i].SubscriptionPlanWeights = maps.Clone(BuiltinSubscriptionPlanWeights(b.ID))
+			}
 		}
 	}
 }
@@ -474,15 +531,15 @@ func MigrateLegacyCatalogOverlays(raw json.RawMessage) (map[string]json.RawMessa
 	// Accept legacy codex_url by decoding into a flexible shape first.
 	var wire struct {
 		Suppliers []struct {
-			ID                                   string            `json:"id"`
-			Name                                 string            `json:"name"`
-			ClaudeURL                            string            `json:"claude_url"`
-			OpenAIURL                            string            `json:"openai_url"`
-			CodexURL                             string            `json:"codex_url"`
-			Models                               []string          `json:"models"`
-			ModelMappings                        []ModelMapping    `json:"model_mappings"`
-			SubscriptionUsageHeaderOverrides     map[string]string `json:"subscription_usage_header_overrides"`
-			APIUsageHeaderOverrides              map[string]string `json:"api_usage_header_overrides"`
+			ID                               string            `json:"id"`
+			Name                             string            `json:"name"`
+			ClaudeURL                        string            `json:"claude_url"`
+			OpenAIURL                        string            `json:"openai_url"`
+			CodexURL                         string            `json:"codex_url"`
+			Models                           []string          `json:"models"`
+			ModelMappings                    []ModelMapping    `json:"model_mappings"`
+			SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides"`
+			APIUsageHeaderOverrides          map[string]string `json:"api_usage_header_overrides"`
 		} `json:"suppliers"`
 	}
 	if err := json.Unmarshal(raw, &wire); err != nil {

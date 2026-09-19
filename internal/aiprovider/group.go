@@ -119,6 +119,11 @@ func prepareConfig(id int, adapter string, raw json.RawMessage) (json.RawMessage
 	if c.Kind == "api" && c.Supplier == "" && c.APIEndpoint == "" {
 		return nil, errors.New("API URL or supplier is required")
 	}
+	plan, err := normalizeSubscriptionPlan(adapter, c.Kind, c.SubscriptionPlan)
+	if err != nil {
+		return nil, err
+	}
+	c.SubscriptionPlan = plan
 	if adapter == "group" {
 		var explicit struct {
 			Members []struct {
@@ -133,7 +138,7 @@ func prepareConfig(id int, adapter string, raw json.RawMessage) (json.RawMessage
 				return nil, errors.New("member weight must be an integer from 1 to 5")
 			}
 		}
-		if c.APIKey != "" || c.CredentialID != "" || c.Supplier != "" || c.APIEndpoint != "" || c.ProxyGroupID != 0 || c.OfficialOnly {
+		if c.APIKey != "" || c.CredentialID != "" || c.Supplier != "" || c.APIEndpoint != "" || c.ProxyGroupID != 0 || c.OfficialOnly || c.SubscriptionPlan != "" {
 			return nil, errors.New("groups cannot own credentials, supplier, endpoint or proxy group")
 		}
 		if len(c.Members) == 0 {
@@ -156,6 +161,9 @@ func prepareConfig(id int, adapter string, raw json.RawMessage) (json.RawMessage
 	var values map[string]json.RawMessage
 	_ = json.Unmarshal(normalized, &values)
 	maps.Copy(fields, values)
+	if c.SubscriptionPlan == "" {
+		delete(fields, "subscription_plan")
+	}
 	return json.Marshal(fields)
 }
 
