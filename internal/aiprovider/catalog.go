@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 )
@@ -22,6 +23,9 @@ type Supplier struct {
 	ClaudeURL string   `json:"claude_url"`
 	OpenAIURL string   `json:"openai_url"`
 	Models    []string `json:"models"`
+	// ModelMappings rewrites client model names before upstream forward.
+	// Empty means passthrough. First matching rule wins; From supports one '*'.
+	ModelMappings []ModelMapping `json:"model_mappings,omitempty"`
 	// SupportedClients is derived from non-empty URLs (code-owned).
 	SupportedClients []ClientType `json:"supported_clients"`
 	// Only non-authentication header overrides are persisted. Request defaults
@@ -42,6 +46,7 @@ type Catalog struct {
 type SupplierOverlay struct {
 	Name                             *string            `json:"name,omitempty"`
 	Models                           *[]string          `json:"models,omitempty"`
+	ModelMappings                    *[]ModelMapping    `json:"model_mappings,omitempty"`
 	SubscriptionUsageHeaderOverrides map[string]string  `json:"subscription_usage_header_overrides,omitempty"`
 	APIUsageHeaderOverrides          map[string]string  `json:"api_usage_header_overrides,omitempty"`
 }
@@ -50,6 +55,7 @@ type SupplierOverlay struct {
 type SupplierConfigurable struct {
 	Name                             string            `json:"name"`
 	Models                           []string          `json:"models"`
+	ModelMappings                    []ModelMapping    `json:"model_mappings"`
 	SubscriptionUsageHeaderOverrides map[string]string `json:"subscription_usage_header_overrides,omitempty"`
 	APIUsageHeaderOverrides          map[string]string `json:"api_usage_header_overrides,omitempty"`
 }
@@ -90,6 +96,9 @@ func MergeSupplier(b SupplierBuiltin, o SupplierOverlay) Supplier {
 	if o.Models != nil {
 		s.Models = slices.Clone(*o.Models)
 	}
+	if o.ModelMappings != nil {
+		s.ModelMappings = cloneModelMappings(*o.ModelMappings)
+	}
 	if len(o.SubscriptionUsageHeaderOverrides) > 0 {
 		s.SubscriptionUsageHeaderOverrides = maps.Clone(o.SubscriptionUsageHeaderOverrides)
 	}
@@ -115,6 +124,12 @@ func DiffSupplier(b SupplierBuiltin, desired SupplierConfigurable) (SupplierOver
 		}
 		o.Models = &models
 	}
+	// Builtin has no mappings; any non-empty list is an overlay. Empty desired
+	// matches builtin (no overlay field).
+	if len(desired.ModelMappings) > 0 {
+		mappings := cloneModelMappings(desired.ModelMappings)
+		o.ModelMappings = &mappings
+	}
 	if !sameStringMap(desired.SubscriptionUsageHeaderOverrides, nil) {
 		// empty desired map means clear override (no overlay field)
 		if len(desired.SubscriptionUsageHeaderOverrides) > 0 {
@@ -126,7 +141,7 @@ func DiffSupplier(b SupplierBuiltin, desired SupplierConfigurable) (SupplierOver
 			o.APIUsageHeaderOverrides = maps.Clone(desired.APIUsageHeaderOverrides)
 		}
 	}
-	changed := o.Name != nil || o.Models != nil || len(o.SubscriptionUsageHeaderOverrides) > 0 || len(o.APIUsageHeaderOverrides) > 0
+	changed := o.Name != nil || o.Models != nil || o.ModelMappings != nil || len(o.SubscriptionUsageHeaderOverrides) > 0 || len(o.APIUsageHeaderOverrides) > 0
 	return o, changed
 }
 
@@ -182,6 +197,11 @@ func ValidateSupplierOverlay(o SupplierOverlay) error {
 			}
 		}
 	}
+	if o.ModelMappings != nil {
+		if err := validateModelMappings(*o.ModelMappings); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -227,6 +247,28 @@ func (m *AIProviderManager) Supplier(id string) (Supplier, bool) {
 	return Supplier{}, false
 }
 
+// SupplierIDForAccount resolves the model-supplier catalog id for an account
+// that will actually execute a request (member after group selection).
+func SupplierIDForAccount(config AIProviderConfig, adapter string) string {
+	if id := strings.TrimSpace(config.Supplier); id != "" {
+		return id
+	}
+	return SupplierForAdapter(adapter)
+}
+
+// ApplyModelMappings rewrites request model names using the supplier catalog
+// entry for supplierID. Missing suppliers or empty rules leave body unchanged.
+func (m *AIProviderManager) ApplyModelMappings(supplierID string, body []byte, headers http.Header) []byte {
+	if m == nil || supplierID == "" || len(body) == 0 && headers == nil {
+		return body
+	}
+	s, ok := m.Supplier(supplierID)
+	if !ok || len(s.ModelMappings) == 0 {
+		return body
+	}
+	return RewriteRequestModel(body, headers, s.ModelMappings)
+}
+
 func cloneCatalog(c Catalog) Catalog {
 	c.Suppliers = slices.Clone(c.Suppliers)
 	for i := range c.Suppliers {
@@ -237,6 +279,7 @@ func cloneCatalog(c Catalog) Catalog {
 
 func cloneSupplier(s Supplier) Supplier {
 	s.Models = slices.Clone(s.Models)
+	s.ModelMappings = cloneModelMappings(s.ModelMappings)
 	s.SupportedClients = slices.Clone(s.SupportedClients)
 	s.SubscriptionUsageHeaderOverrides = maps.Clone(s.SubscriptionUsageHeaderOverrides)
 	s.APIUsageHeaderOverrides = maps.Clone(s.APIUsageHeaderOverrides)
@@ -335,6 +378,12 @@ func (m *AIProviderManager) UpdateSupplier(id string, desired SupplierConfigurab
 			return Supplier{}, errors.New("model names must be non-empty without surrounding whitespace")
 		}
 	}
+	if desired.ModelMappings == nil {
+		desired.ModelMappings = []ModelMapping{}
+	}
+	if err := validateModelMappings(desired.ModelMappings); err != nil {
+		return Supplier{}, err
+	}
 	if !validQuotaHeaders(desired.SubscriptionUsageHeaderOverrides) || !validQuotaHeaders(desired.APIUsageHeaderOverrides) {
 		return Supplier{}, errors.New("usage header overrides contain invalid or authentication headers")
 	}
@@ -431,6 +480,7 @@ func MigrateLegacyCatalogOverlays(raw json.RawMessage) (map[string]json.RawMessa
 			OpenAIURL                            string            `json:"openai_url"`
 			CodexURL                             string            `json:"codex_url"`
 			Models                               []string          `json:"models"`
+			ModelMappings                        []ModelMapping    `json:"model_mappings"`
 			SubscriptionUsageHeaderOverrides     map[string]string `json:"subscription_usage_header_overrides"`
 			APIUsageHeaderOverrides              map[string]string `json:"api_usage_header_overrides"`
 		} `json:"suppliers"`
@@ -448,6 +498,7 @@ func MigrateLegacyCatalogOverlays(raw json.RawMessage) (map[string]json.RawMessa
 		desired := SupplierConfigurable{
 			Name:                             item.Name,
 			Models:                           item.Models,
+			ModelMappings:                    item.ModelMappings,
 			SubscriptionUsageHeaderOverrides: item.SubscriptionUsageHeaderOverrides,
 			APIUsageHeaderOverrides:          item.APIUsageHeaderOverrides,
 		}

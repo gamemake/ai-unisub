@@ -145,5 +145,9 @@ type AIProvider interface {
 	// Groups return nil because they do not own quota.
 	// It always returns a non-nil result, with missing status on a cache miss.
 	GetCachedQuota() *Quota
+	// FetchModels queries the upstream model catalog for this provider.
+	// Groups and unsupported combinations return ErrModelsUnsupported.
+	// Results are not cached; callers decide whether to persist them (e.g. supplier catalog).
+	FetchModels(context.Context) ([]string, error)
 	ResetUsage(context.Context) error
 }

@@ -51,4 +51,7 @@ func (p *GrokAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 func (p *GrokAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	return p.quota(ctx, "grok")
 }
+func (p *GrokAIProvider) FetchModels(ctx context.Context) ([]string, error) {
+	return p.fetchModels(ctx, "grok")
+}
 func (p *GrokAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

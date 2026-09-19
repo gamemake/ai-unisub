@@ -118,6 +118,7 @@ func TestAIProviderQuotaAPI(t *testing.T) {
 			if len(stored.Quota.Subscription) != 2 || !reflect.DeepEqual(stored.Quota.Subscription, result.Subscription) {
 				t.Fatalf("refreshed quota was not persisted in state: %+v", stored)
 			}
+			assertAdminCallRecorded(t, s, ids["demo"], true)
 		}
 	}
 }

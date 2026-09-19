@@ -69,6 +69,9 @@ func (g *groupProvider) FetchQuota(context.Context) (*Quota, error) {
 func (g *groupProvider) GetCachedQuota() *Quota {
 	return nil
 }
+func (g *groupProvider) FetchModels(context.Context) ([]string, error) {
+	return nil, ErrModelsUnsupported
+}
 func (g *groupProvider) ResetUsage(context.Context) error {
 	return errors.New("reset usage per member")
 }

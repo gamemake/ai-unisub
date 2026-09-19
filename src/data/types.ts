@@ -6,12 +6,18 @@ export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
 export interface GroupMember { id: number; weight: number }
 // Only fixed, non-authentication header overrides; request defaults live in Go.
 // claude_url / openai_url / supported_clients are code-owned; models/name are configurable.
+export interface ModelMapping {
+  from: string
+  to: string
+}
 export interface Supplier {
   id: string
   name: string
   claude_url: string
   openai_url: string
   models: string[]
+  /** Client model → upstream model; `from` allows one `*` wildcard. */
+  model_mappings?: ModelMapping[]
   supported_clients: ClientType[]
   subscription_usage_header_overrides?: Record<string, string>
   api_usage_header_overrides?: Record<string, string>

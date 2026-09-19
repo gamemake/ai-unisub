@@ -1,6 +1,8 @@
 package unisub
 
 import (
+	"ai-unisub/internal/aiprovider"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -52,5 +54,65 @@ func TestGatewayPreservesClientModelNames(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestGatewayAppliesSupplierModelMappings(t *testing.T) {
+	s := testApp(t)
+	cookie := loginTestApp(t, s)
+	var gotBody []byte
+	var gotHeader string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		gotHeader = r.Header.Get("X-Grok-Model-Override")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer upstream.Close()
+
+	sup, ok := s.AIProviders().Supplier("deepseek")
+	if !ok {
+		t.Fatal("missing deepseek")
+	}
+	raw, _ := json.Marshal(map[string]any{
+		"name":    sup.Name,
+		"models":  sup.Models,
+		"model_mappings": []map[string]string{
+			{"from": "client-*", "to": "up-*"},
+			{"from": "legacy", "to": "modern"},
+		},
+	})
+	out := appRequest(s, "PUT", "/api/ai-catalog/deepseek", string(raw), cookie)
+	if out.Code != 200 {
+		t.Fatalf("save mappings: %d %s", out.Code, out.Body.String())
+	}
+	var saved aiprovider.Supplier
+	if err := json.Unmarshal(out.Body.Bytes(), &saved); err != nil || len(saved.ModelMappings) != 2 {
+		t.Fatalf("saved=%+v err=%v", saved, err)
+	}
+
+	provider := addRoutingProvider(t, s, cookie, "mapped", "api", map[string]any{
+		"supplier": "deepseek", "api_key": "test-key", "api_endpoint": upstream.URL,
+	})
+	key := routingKey(t, s, cookie, provider)
+	body := `{"model":"client-sonnet","metadata":{"model":"keep"},"input":"hi"}`
+	r := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+key)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("User-Agent", "grok-cli/1.0")
+	r.Header.Set("X-Grok-Model-Override", "client-fast")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("gateway: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(string(gotBody), `"model":"up-sonnet"`) {
+		t.Fatalf("body not mapped: %s", gotBody)
+	}
+	if !strings.Contains(string(gotBody), `"model":"keep"`) {
+		t.Fatalf("nested model changed: %s", gotBody)
+	}
+	if gotHeader != "up-fast" {
+		t.Fatalf("header=%q", gotHeader)
 	}
 }

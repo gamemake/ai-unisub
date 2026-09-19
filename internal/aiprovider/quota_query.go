@@ -200,14 +200,17 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 			}
 			resp, err := client.Do(req)
 			if err != nil {
+				reportAPICall(ctx, httpExchangeTrace(req, nil, nil, true))
 				if ctx.Err() != nil {
 					return nil, ctx.Err()
 				}
 				return nil, ErrQuotaUpstream
 			}
 			status := resp.StatusCode
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+			resp.Body.Close()
+			reportAPICall(ctx, httpExchangeTrace(req, resp, body, false))
 			if status == 401 && service != "" && attempt == 0 {
-				resp.Body.Close()
 				token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, &client)
 				if err != nil {
 					return nil, ErrQuotaAuthentication
@@ -215,7 +218,6 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 				continue
 			}
 			if status != http.StatusOK {
-				resp.Body.Close()
 				switch status {
 				case 401, 403:
 					return nil, ErrQuotaAuthentication
@@ -225,9 +227,7 @@ func (p *oauthAIProvider) quota(ctx context.Context, fallback string) (*Quota, e
 					return nil, ErrQuotaUpstream
 				}
 			}
-			body, err := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-			resp.Body.Close()
-			if err != nil || len(body) > 1<<20 {
+			if readErr != nil || len(body) > 1<<20 {
 				return nil, ErrQuotaInvalidResponse
 			}
 			if service == oauth.OAuthServiceGrok {

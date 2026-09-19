@@ -88,9 +88,6 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			return
 		}
 		originalBody = append([]byte(nil), body...)
-		outbound.Body = io.NopCloser(bytes.NewReader(body))
-		outbound.ContentLength = int64(len(body))
-		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
 	}
 	outbound.URL, outbound.Host, outbound.RequestURI = target, target.Host, ""
 	for _, value := range outbound.Header.Values("Connection") {
@@ -101,6 +98,24 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	for _, name := range []string{"Connection", "Keep-Alive", "Proxy-Authorization", "Proxy-Authenticate", "Te", "Trailer", "Transfer-Encoding", "Upgrade", "Cookie"} {
 		outbound.Header.Del(name)
 	}
+	// Preserve client headers for call-log "original"; mapping mutates a clone used outbound.
+	clientModelHeaders := outbound.Header.Clone()
+	prepareMappedBody := func(sel aiprovider.Selection) []byte {
+		headers := clientModelHeaders.Clone()
+		supplierID := aiprovider.SupplierIDForAccount(sel.Provider.Config(), sel.Adapter)
+		body := ctx.AIProviders().ApplyModelMappings(supplierID, originalBody, headers)
+		// Copy mapped model override back onto the outbound request.
+		if v := headers.Get("X-Grok-Model-Override"); v != "" {
+			outbound.Header.Set("X-Grok-Model-Override", v)
+		} else {
+			outbound.Header.Del("X-Grok-Model-Override")
+		}
+		outbound.Body = io.NopCloser(bytes.NewReader(body))
+		outbound.ContentLength = int64(len(body))
+		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+		return body
+	}
+	_ = prepareMappedBody(selected)
 	started := time.Now().UTC()
 	recorded := false
 	recorder := func(trace *aiprovider.AIProviderCallTrace) {
@@ -189,10 +204,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			break
 		}
 		outbound.URL, outbound.Host = target, target.Host
-		body := originalBody
-		outbound.Body = io.NopCloser(bytes.NewReader(body))
-		outbound.ContentLength = int64(len(body))
-		outbound.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+		_ = prepareMappedBody(selected)
 	}
 	if err != nil && !output.written {
 		status := http.StatusServiceUnavailable

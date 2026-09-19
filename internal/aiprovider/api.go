@@ -44,4 +44,7 @@ func (p *APIProvider) Handle(r *http.Request, rec APICallRecorder) {
 func (p *APIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	return p.quota(ctx, "")
 }
+func (p *APIProvider) FetchModels(ctx context.Context) ([]string, error) {
+	return p.fetchModels(ctx, "")
+}
 func (p *APIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

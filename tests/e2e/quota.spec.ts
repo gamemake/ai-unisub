@@ -19,7 +19,7 @@ test('provider quota supports cache reads and refresh without group quota', asyn
   const groupResponse = await page.request.post('/api/ai-providers', { data: { name: 'Usage Group', provider: 'group', config: { members: [{ id: demo.id, weight: 3 }, { id: real.id, weight: 3 }] } } })
   expect(groupResponse.status()).toBe(201)
   await page.reload()
-  await page.getByRole('button', { name: '账号', exact: true }).click()
+  await page.getByRole('button', { name: '账号管理', exact: true }).click()
   const demoRow = page.getByRole('row', { name: '查看 Usage Demo 详情', exact: true })
   await expect(page.getByRole('columnheader', { name: '额度' })).toBeVisible()
   await expect(page.getByRole('button', { name: '查看 Usage Demo 额度' })).toHaveCount(0)

@@ -6,6 +6,7 @@ import (
 	framework "ai-unisub/internal/service"
 	"errors"
 	"net/http"
+	"time"
 )
 
 func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
@@ -27,7 +28,8 @@ func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.R
 		common.WriteError(w, http.StatusNotImplemented, "Group providers do not support quota queries")
 		return
 	}
-	result, err := provider.FetchQuota(r.Context())
+	started := time.Now().UTC()
+	result, err := provider.FetchQuota(adminCallContext(ctx, r, id, started))
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, aiprovider.ErrQuotaNotImplemented) || errors.Is(err, aiprovider.ErrQuotaUnsupported) {

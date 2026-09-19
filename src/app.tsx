@@ -20,7 +20,7 @@ import { cn } from './lib/utils'
 const navigation = [
   { id: 'personal', label: '个人总览', icon: Home }, { id: 'keys', label: 'API Key', icon: KeyRound },
   { id: 'logs', label: '调用记录', icon: Activity }, { id: 'security', label: '安全设置', icon: Shield },
-  { id: 'overview', label: '系统总览', icon: LayoutDashboard, admin: true }, { id: 'ai-providers', label: '账号', icon: Layers3, admin: true },
+  { id: 'overview', label: '系统总览', icon: LayoutDashboard, admin: true }, { id: 'ai-providers', label: '账号管理', icon: Layers3, admin: true },
   { id: 'ai-catalog', label: '模型供应商', icon: SlidersHorizontal, admin: true },
   { id: 'proxies', label: '代理管理', icon: Network, admin: true }, { id: 'users', label: '用户管理', icon: UsersIcon, admin: true },
 ]

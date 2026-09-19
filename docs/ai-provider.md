@@ -22,11 +22,11 @@
 
 ### 模型供应商
 
-内置模型供应商为 **Anthropic、OpenAI、Grok、Deepseek、智谱、Kimi**，记录不允许删除。运行时视图为 `{id, name, claude_url, openai_url, models, supported_clients}`。API 类型 AIProvider 使用所选供应商的默认服务地址；已有接口配置中的 `api_endpoint` 仍可指定独立上游地址。
+内置模型供应商为 **Anthropic、OpenAI、xAI、Deepseek、智谱、Kimi**，记录不允许删除。运行时视图为 `{id, name, claude_url, openai_url, models, model_mappings, supported_clients}`。API 类型 AIProvider 使用所选供应商的默认服务地址；已有接口配置中的 `api_endpoint` 仍可指定独立上游地址。
 
 **不可配置（代码）**：`claude_url`、`openai_url`。由二者推导 `supported_clients`：有 Claude URL → Anthropic（Claude Code）；有 OpenAI URL → OpenAI（Codex）与 Grok。与供应商 id 无关。PUT 不得修改 URL。
 
-**可配置**：`name`、`models`（及可选 usage header overrides）。代码内有缺省；相对缺省的差异写入 `PersistedConfig`（`type=supplier`, `name=<supplier id>`）。diff / merge 在 `aiprovider` 完成，database 只存不透明 JSON。全部字段恢复缺省后删除对应配置行。不提供整表批量 PUT。
+**可配置**：`name`、`models`、`model_mappings`（及可选 usage header overrides）。代码内有缺省（映射缺省为空）；相对缺省的差异写入 `PersistedConfig`（`type=supplier`, `name=<supplier id>`）。diff / merge 在 `aiprovider` 完成，database 只存不透明 JSON。全部字段恢复缺省后删除对应配置行。不提供整表批量 PUT。
 
 | 供应商 | Claude URL | OpenAI URL | 支持客户端 |
 | --- | --- | --- | --- |
@@ -37,11 +37,16 @@
 | 智谱 | https://open.bigmodel.cn/api/anthropic/v1 | https://open.bigmodel.cn/api/paas/v4 | Anthropic, OpenAI, Grok |
 | Kimi | https://api.moonshot.cn/anthropic/v1 | https://api.moonshot.cn/v1 | Anthropic, OpenAI, Grok |
 
-模型供应商页面（`/#ai-catalog`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑显示名与模型列表，各可配置字段支持「恢复默认」，URL 与客户端只读。
+模型供应商页面（`/#ai-catalog`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑模型列表与模型映射（支持「恢复默认」；模型列表可从同供应商账号刷新），URL 与客户端只读。
 
-### 模型映射（尚未实现）
+### 模型映射
 
-**模型映射功能尚未实现。** 当前不提供映射配置、内置映射规则、数据库覆盖或映射编辑界面。请求正文中的 `model` 和 Grok 的 `X-Grok-Model-Override` 均原样转发，切换组成员时也不改写模型名。客户端需要直接指定目标上游支持的模型名称；供应商选择不进行模型名转换或跨协议转换。旧数据库中的映射字段不再读取或生效。
+每个供应商可配置有序的 `model_mappings: [{from, to}, …]`。网关在 **Select 出实际执行账号之后**、发往上游之前，按该账号所属供应商（`config.supplier`，订阅账号由适配器推导）的规则，按**第一条命中**改写：
+
+- 请求 JSON 顶层 `model` 字段（不改写 `metadata.model` 等嵌套字段）
+- Grok 的 `X-Grok-Model-Override` 请求头
+
+`from` 支持至多一个 `*` 通配符（如 `claude-*`、`*-preview`）；`to` 为上游模型名，界面从该供应商当前「支持模型」列表中选择。无映射或未命中时原样转发。组故障切换到其他成员时，按**新成员**供应商重新映射。默认无内置映射。
 
 ### AIProvider 类型
 
@@ -119,7 +124,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 ## 当前实现与边界
 
 - 已实现订阅、API、组三种类型；沿用 `provider` 字段指定适配器，新增 `api` 和 `group` 值，旧 `claude/codex/grok/dummy` 保持兼容。组只引用已有非组成员，修改任一关联配置都校验客户端允许集合，仍被组引用的成员不能删除。
-- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；可配置字段（name/models）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型映射尚未实现，所有模型名原样转发，不做跨协议转换。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
+- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；可配置字段（name/models/model_mappings）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型列表可在供应商编辑页手工维护，也可选定同供应商的 AIProvider 后调用 `POST /api/ai-providers/{id}/fetch-models` 从上游刷新（写入仍走供应商 PUT）。模型映射按供应商规则改写顶层 `model` 与 Grok 覆盖头；未命中则原样转发。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
 - SessionID 已适配上表的原生请求头。绑定在单实例内存中按用户、组、客户端和会话隔离，键使用 SHA-256，空闲 TTL 30 分钟、容量 10000；配置更新会失效绑定，多实例共享缓存不在当前实现范围内。
 - 组成员先按客户端、协议、启用和健康状态过滤，再取最高权重；同权重优先粘性，否则均匀随机。底层成员共享原有 Account 并发队列，调用记录归属实际执行的成员。
 - 网络／5xx 连续失败 3 次后回避，30 秒指数退避至 5 分钟；429 优先遵守 `Retry-After`；认证恢复后仍为 401 或明确 `insufficient_quota` 时暂停，更新配置后解除暂停。OAuth 401 最多通过 OAuthManager 刷新并重试一次，API Key 不执行 OAuth 刷新。普通 403、参数及模型错误不禁用整个账号；模型级隔离、厂商细分额度重置时间属于后续适配扩展。
@@ -130,7 +135,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 
 | 类型 | 职责 |
 | --- | --- |
-| AIProvider | Config、UpdateConfig、Handle、FetchQuota、GetCachedQuota、ResetUsage；已接入部分真实查询与内存缓存，Dummy Fetch 返回随机演示数据 |
+| AIProvider | Config、UpdateConfig、Handle、FetchQuota、GetCachedQuota、FetchModels、ResetUsage；已接入部分真实查询与内存缓存，Dummy Fetch 返回随机演示数据；FetchModels 按实例凭据查询上游模型列表 |
 | AIProviderConfig | 单个实例的公共配置 |
 | AIProviderFactory | 根据 ID 与 JSON 创建具体实例 |
 | AIProviderManager | 注册工厂、创建／恢复／更新／删除实例 |

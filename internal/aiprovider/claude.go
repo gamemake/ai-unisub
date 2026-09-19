@@ -50,4 +50,7 @@ func (p *ClaudeAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 func (p *ClaudeAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	return p.quota(ctx, "anthropic")
 }
+func (p *ClaudeAIProvider) FetchModels(ctx context.Context) ([]string, error) {
+	return p.fetchModels(ctx, "anthropic")
+}
 func (p *ClaudeAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

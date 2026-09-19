@@ -13,7 +13,7 @@ test('admin and member workflows, gateway, logs, and responsive navigation', asy
   await page.getByLabel('密码', { exact: true }).fill('e2e-admin-password')
   await page.getByRole('button', { name: '登录控制台' }).click()
   await expect(page.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '账号', exact: true }).click()
+  await page.getByRole('button', { name: '账号管理', exact: true }).click()
   await page.getByRole('button', { name: '添加账号', exact: true }).click()
   await page.getByRole('button', { name: '添加订阅账号', exact: true }).click()
   let dialog = page.getByRole('dialog')

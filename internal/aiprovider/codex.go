@@ -50,4 +50,7 @@ func (p *CodexAIProvider) Handle(r *http.Request, rec APICallRecorder) {
 func (p *CodexAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	return p.quota(ctx, "openai")
 }
+func (p *CodexAIProvider) FetchModels(ctx context.Context) ([]string, error) {
+	return p.fetchModels(ctx, "openai")
+}
 func (p *CodexAIProvider) ResetUsage(ctx context.Context) error { return p.reset(ctx) }

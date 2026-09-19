@@ -79,8 +79,11 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 | PUT | `/api/ai-providers/{id}` | `name/provider/config` | 管理员 |
 | DELETE | `/api/ai-providers/{id}` | 无 | 管理员 |
 | POST | `/api/ai-providers/{id}/refresh-quota` | 无；主动查询并更新缓存 | 管理员 |
+| POST | `/api/ai-providers/{id}/fetch-models` | 无；向上游查询模型列表 | 管理员 |
 
-`GET /api/ai-providers` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。启动时从 `accounts.state` 恢复上次成功快照。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/ai-providers/{id}/refresh-quota`，查询成功后由 `aiprovider` 提交含额度的 state，应用层用 `SaveAccount` 写入 `accounts.state`，再返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。
+`GET /api/ai-providers` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。启动时从 `accounts.state` 恢复上次成功快照。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/ai-providers/{id}/refresh-quota`，查询成功后由 `aiprovider` 提交含额度的 state，应用层用 `SaveAccount` 写入 `accounts.state`，再返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。每次实际上游 HTTP 交换（含 Grok 的周／月两次 billing）写入一条调用记录，归属该账号；原始与出站 request headers 均保存脱敏后的出站请求头。
+
+`POST /api/ai-providers/{id}/fetch-models` 按账号凭据向上游 `GET {base}/models` 查询模型 id 列表，成功返回 `{"models":["..."]}`（去重、排序）。结果不缓存、不写入供应商目录；调用方（如模型供应商编辑页）自行决定是否保存。`base` 优先 `api_endpoint`，否则取供应商目录 OpenAI URL（无则 Claude URL），再否则内置缺省。Group、Codex OAuth 订阅、以及上游明确不支持列表的组合返回 501；缺少凭据或 URL 返回 400；鉴权失败 502 族错误（401/403 映射为网关错误文案）；接口不支持 GET（405）。每次实际上游 HTTP 交换同样写入调用记录，header 规则与 refresh-quota 相同。
 
 创建必须提供 provider 和有效 config；当前类型为 `codex`、`claude`、`grok`、`dummy`。更新不能改变 provider 类型。config 可以是 JSON 对象，兼容编码为字符串的 JSON 对象。
 
@@ -96,11 +99,11 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 | GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商生效视图；不存在返回 404 |
 | PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商的可配置字段；无整表批量 PUT（`PUT /api/ai-catalog` 返回 405） |
 
-供应商项字段：`{id, name, claude_url, openai_url, models, supported_clients}`，以及可选的 usage header overrides。六大内置 id（anthropic、openai、grok、deepseek、zhipu、kimi）不能删除。
+供应商项字段：`{id, name, claude_url, openai_url, models, model_mappings, supported_clients}`，以及可选的 usage header overrides。六大内置 id（anthropic、openai、grok、deepseek、zhipu、kimi）不能删除。
 
-- `claude_url` / `openai_url` / `supported_clients` 为代码维护：由内置 URL 推导客户端（Grok 供应商的 OpenAI 兼容 URL 对应 `Grok` 客户端）。PUT body 携带 URL 字段返回 400。
-- `name` / `models` 可配置；代码有缺省。PUT body 提交**期望生效值**；`aiprovider` 相对缺省做 diff，仅将差异写入 `PersistedConfig`（`type=supplier`, `name=<id>`）；全部恢复缺省则删除该行。database 不做 diff。
-- 模型映射功能尚未实现；`models` 仅供展示与 CC Switch 建议，请求中的 model 仍原样转发。
+- `claude_url` / `openai_url` / `supported_clients` 为代码维护：由内置 URL 推导客户端（xAI 供应商的 OpenAI 兼容 URL 对应 `Grok` 客户端）。PUT body 携带 URL 字段返回 400。
+- `name` / `models` / `model_mappings` 可配置；代码有缺省（映射缺省为空列表）。PUT body 提交**期望生效值**；`aiprovider` 相对缺省做 diff，仅将差异写入 `PersistedConfig`（`type=supplier`, `name=<id>`）；全部恢复缺省则删除该行。database 不做 diff。省略 `models` 或 `model_mappings` 时保留当前生效值。
+- `model_mappings` 为 `[{from, to}, …]` 有序列表；`from` 至多一个 `*`，`to` 为上游模型名（界面从供应商 `models` 列表选择）。网关转发时改写顶层 `model` 与 `X-Grok-Model-Override`。`models` 仍供展示与 CC Switch 建议。
 - 旧 `module_configs["aiprovider"]` 整包在启动时只读迁移为 per-supplier overlay；新写入不再使用整包 catalog。
 
 当前响应边界：

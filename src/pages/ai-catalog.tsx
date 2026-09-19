@@ -1,16 +1,28 @@
 import { DetailTableRow } from '@/components/detail-table-row'
+import { AppSelect } from '@/components/app-select'
 import { useEffect, useMemo, useState } from 'react'
-import { actions, useAction, useAICatalog } from '@/data/store'
-import type { ClientType, Supplier } from '@/data/types'
-import { ErrorMessage, Field, PageHeader, QueryState, Table } from '@/components/shared'
+import { actions, useAction, useAICatalog, useAIProviders } from '@/data/store'
+import type { Account, ClientType, ModelMapping, Supplier } from '@/data/types'
+import { ErrorMessage, PageHeader, QueryState, Table } from '@/components/shared'
 import { TableCell } from '@/components/ui/table'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { RotateCcw } from 'lucide-react'
+import { SelectItem } from '@/components/ui/select'
+import { Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
+import { clientTypeLabel } from '@/lib/utils'
+
+const platformSuppliers: Record<string, string> = { claude: 'anthropic', codex: 'openai', grok: 'grok' }
+
+function accountSupplier(account: Account) {
+  return account.config.supplier || platformSuppliers[account.provider] || ''
+}
+
+function providerKind(account: Account) {
+  return account.config.kind || (account.provider === 'group' ? 'group' : account.auth_type === 'api_key' ? 'api' : 'subscription')
+}
 
 function supplierFromHash() { return location.hash.startsWith('#ai-catalog/') ? location.hash.slice('#ai-catalog/'.length) : '' }
 
@@ -18,12 +30,22 @@ function sameModels(a: string[] = [], b: string[] = []) {
   return a.length === b.length && a.every((value, i) => value === b[i])
 }
 
+function sameMappings(a: ModelMapping[] = [], b: ModelMapping[] = []) {
+  return a.length === b.length && a.every((row, i) => row.from === b[i]?.from && row.to === b[i]?.to)
+}
+
 function parseModels(text: string) {
   return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
 }
 
+function normalizeMappings(rows: ModelMapping[]) {
+  return rows
+    .map(row => ({ from: row.from.trim(), to: row.to.trim() }))
+    .filter(row => row.from || row.to)
+}
+
 function clientLabel(clients: ClientType[] = []) {
-  return clients.length ? clients.join(' · ') : '—'
+  return clients.length ? clients.map(clientTypeLabel).join(' · ') : '—'
 }
 
 export function AICatalogPage() {
@@ -32,28 +54,31 @@ export function AICatalogPage() {
   useEffect(() => { const update = () => { setSupplierID(supplierFromHash()); window.scrollTo(0, 0) }; addEventListener('hashchange', update); return () => removeEventListener('hashchange', update) }, [])
   const supplier = query.data?.catalog.suppliers.find(s => s.id === supplierID)
   const builtin = query.data?.builtin_suppliers.find(s => s.id === supplierID)
-  return <div><PageHeader title="模型供应商" description="查看内置服务地址，编辑显示名与支持模型列表；URL 与支持客户端由代码固定。" />
+  return <div><PageHeader title="模型供应商" description="查看内置服务地址，编辑支持模型与模型映射；URL 与支持客户端由代码固定。" />
     <QueryState query={query}>{query.data && <>
-      <Card><Table headers={['供应商', '支持客户端', '默认 URL', '模型']}>{query.data.catalog.suppliers.map(s =>
+      <Card><Table className="table-fixed" headers={['供应商', '支持客户端', '默认 URL', '模型']}>{query.data.catalog.suppliers.map(s =>
         <DetailTableRow key={s.id} aria-label={`查看 ${s.name} 详情`} onOpen={() => { location.hash = `ai-catalog/${s.id}` }}>
-          <TableCell className="font-medium text-primary">{s.name}</TableCell>
-          <TableCell className="text-sm">{clientLabel(s.supported_clients)}</TableCell>
-          <TableCell className="max-w-96 break-all font-mono text-xs">
+          <TableCell className="w-[16%] font-medium text-primary">{s.name}</TableCell>
+          <TableCell className="w-[18%] whitespace-normal text-sm">{clientLabel(s.supported_clients)}</TableCell>
+          <TableCell className="w-[40%] max-w-0 whitespace-normal break-all font-mono text-xs">
             <div>Claude：{s.claude_url || '未提供'}</div>
             <div className="mt-1">OpenAI：{s.openai_url || '未提供'}</div>
           </TableCell>
-          <TableCell className="max-w-72 text-xs text-muted-foreground">{s.models?.length ? `${s.models.slice(0, 2).join('、')}${s.models.length > 2 ? ` 等 ${s.models.length} 个` : ''}` : '—'}</TableCell>
+          <TableCell className="w-[26%] max-w-0 whitespace-normal break-all text-xs text-muted-foreground">
+            <div>{s.models?.length ? `${s.models.slice(0, 2).join('、')}${s.models.length > 2 ? ` 等 ${s.models.length} 个` : ''}` : '—'}</div>
+            {!!s.model_mappings?.length && <div className="mt-1 text-muted-foreground/80">映射 {s.model_mappings.length} 条</div>}
+          </TableCell>
         </DetailTableRow>
       )}</Table></Card>
       <Dialog open={!!supplierID} onOpenChange={open => { if (!open) location.hash = 'ai-catalog' }}>
-        <DialogContent className="gap-6 p-6 sm:max-w-2xl">
-          <DialogHeader className="pr-8">
-            <DialogTitle className="text-lg font-semibold leading-snug">{supplier ? `${supplier.name} 详情` : '模型供应商详情'}</DialogTitle>
-            <DialogDescription className="leading-relaxed">服务地址与支持客户端只读。显示名和模型列表可改，各字段可恢复为代码缺省。</DialogDescription>
+        <DialogContent className="flex h-[min(40rem,calc(100dvh-2rem))] min-w-0 flex-col gap-4 overflow-hidden p-6 sm:max-w-2xl">
+          <DialogHeader className="shrink-0 pr-8">
+            <DialogTitle className="text-lg font-semibold leading-snug">{supplier ? `模型供应商 ${supplier.name}` : '模型供应商'}</DialogTitle>
+            <DialogDescription className="sr-only">编辑支持模型与模型映射；服务地址只读。</DialogDescription>
           </DialogHeader>
           {supplier && builtin ? (
             <SupplierEditor key={supplier.id} supplier={supplier} builtin={builtin} onClose={() => { location.hash = 'ai-catalog' }} />
-          ) : <p role="alert">未找到该供应商，请关闭窗口后重新选择。</p>}
+          ) : <p role="alert" className="min-h-0 flex-1">未找到该供应商，请关闭窗口后重新选择。</p>}
         </DialogContent>
       </Dialog>
     </>}</QueryState>
@@ -68,47 +93,229 @@ function FieldReset({ label, disabled, onReset }: { label: string; disabled: boo
   )
 }
 
+type EditorTab = 'models' | 'mappings'
+
+function validateSupplierForm(models: string[], mappings: ModelMapping[]) {
+  for (const model of models) {
+    if (!model || model !== model.trim()) {
+      return '模型名不能为空或含首尾空格'
+    }
+  }
+  const seen = new Set<string>()
+  for (const model of models) {
+    if (seen.has(model)) return `支持模型存在重复项：${model}`
+    seen.add(model)
+  }
+  for (let i = 0; i < mappings.length; i++) {
+    const from = mappings[i].from.trim()
+    const to = mappings[i].to.trim()
+    if (!from && !to) continue
+    if (!from || !to) return `第 ${i + 1} 条映射需同时填写客户端模型与上游模型`
+    if ((from.match(/\*/g) || []).length > 1) return `第 ${i + 1} 条映射的客户端模型至多一个 * 通配符`
+    if (!models.includes(to)) return `第 ${i + 1} 条映射的上游模型「${to}」不在支持模型列表中`
+  }
+  return ''
+}
+
 function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; builtin: Supplier; onClose: () => void }) {
-  const [name, setName] = useState(supplier.name)
+  const providers = useAIProviders()
+  const [tab, setTab] = useState<EditorTab>('models')
   const [modelsText, setModelsText] = useState((supplier.models || []).join('\n'))
+  const [mappings, setMappings] = useState<ModelMapping[]>(() => (supplier.model_mappings || []).map(row => ({ ...row })))
+  const [refreshProviderID, setRefreshProviderID] = useState('')
+  const [formError, setFormError] = useState('')
   const save = useAction(actions.saveSupplier, ['ai-catalog'])
+  const fetchModels = useAction(actions.fetchModels)
   const models = useMemo(() => parseModels(modelsText), [modelsText])
-  const nameDirty = name !== builtin.name
+  const normalizedMappings = useMemo(() => normalizeMappings(mappings), [mappings])
   const modelsDirty = !sameModels(models, builtin.models || [])
-  const dirty = name !== supplier.name || !sameModels(models, supplier.models || [])
+  const mappingsDirty = !sameMappings(normalizedMappings, builtin.model_mappings || [])
+  const matchingProviders = useMemo(
+    () => (providers.data?.items || []).filter(account => providerKind(account) !== 'group' && accountSupplier(account) === supplier.id),
+    [providers.data?.items, supplier.id],
+  )
 
   function submit(e: React.FormEvent) {
     e.preventDefault()
-    save.mutate({ id: supplier.id, name: name.trim(), models }, { onSuccess: onClose })
+    const cleaned = normalizeMappings(mappings)
+    const error = validateSupplierForm(models, cleaned)
+    if (error) {
+      setFormError(error)
+      return
+    }
+    setFormError('')
+    save.mutate({ id: supplier.id, name: supplier.name, models, model_mappings: cleaned }, { onSuccess: onClose })
+  }
+
+  function refreshFromProvider() {
+    const id = Number(refreshProviderID)
+    if (!id) return
+    fetchModels.mutate(id, {
+      onSuccess: result => {
+        setModelsText((result.models || []).join('\n'))
+        setFormError('')
+      },
+    })
+  }
+
+  function updateMapping(index: number, patch: Partial<ModelMapping>) {
+    setFormError('')
+    setMappings(rows => rows.map((row, i) => i === index ? { ...row, ...patch } : row))
   }
 
   return (
-    <form aria-label="供应商配置" className="space-y-4" onSubmit={submit}>
-      <div className="flex flex-wrap gap-2">
-        {(supplier.supported_clients || []).map(client => <Badge key={client} variant="secondary">{client}</Badge>)}
-        {!supplier.supported_clients?.length && <span className="text-sm text-muted-foreground">无支持客户端</span>}
-      </div>
-      <Field label={`${supplier.name} Claude URL`}><Input readOnly value={supplier.claude_url} placeholder="未提供该协议的内置地址" /></Field>
-      <Field label={`${supplier.name} OpenAI URL`}><Input readOnly value={supplier.openai_url} placeholder="未提供该协议的内置地址" /></Field>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">显示名</span>
-          <FieldReset label="显示名" disabled={!nameDirty} onReset={() => setName(builtin.name)} />
+    <form aria-label="供应商配置" className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden" noValidate onSubmit={submit}>
+      <div className="grid shrink-0 gap-3 sm:grid-cols-2">
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm text-muted-foreground">Claude</div>
+          <div className="break-all font-mono text-xs" aria-label="Claude URL">{supplier.claude_url || '未提供'}</div>
         </div>
-        <Input required maxLength={64} value={name} onChange={e => setName(e.target.value)} />
-      </div>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-sm font-medium">支持模型</span>
-          <FieldReset label="支持模型" disabled={!modelsDirty} onReset={() => setModelsText((builtin.models || []).join('\n'))} />
+        <div className="min-w-0 space-y-1">
+          <div className="text-sm text-muted-foreground">OpenAI</div>
+          <div className="break-all font-mono text-xs" aria-label="OpenAI URL">{supplier.openai_url || '未提供'}</div>
         </div>
-        <Textarea rows={6} value={modelsText} onChange={e => setModelsText(e.target.value)} placeholder="每行一个模型名" className="font-mono text-xs" />
-        <p className="text-xs text-muted-foreground">仅用于展示与 CC Switch 建议；网关仍原样转发请求中的 model。</p>
       </div>
-      <ErrorMessage error={save.error} />
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="outline" onClick={onClose}>取消</Button>
-        <Button type="submit" disabled={save.isPending || !dirty}>{save.isPending ? '处理中…' : '保存'}</Button>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+        <div className="flex shrink-0 items-end gap-2 border-b">
+          <div role="tablist" aria-label="供应商配置分区" className="flex min-w-0 flex-1 gap-1">
+            {([
+              ['models', '支持模型'],
+              ['mappings', '模型映射'],
+            ] as const).map(([id, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                id={`supplier-tab-${id}`}
+                aria-selected={tab === id}
+                aria-controls={`supplier-panel-${id}`}
+                className={`-mb-px border-b-2 px-3 py-2 text-sm transition-colors ${tab === id ? 'border-primary font-medium text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                onClick={() => setTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {tab === 'models' ? (
+            <FieldReset label="支持模型" disabled={!modelsDirty} onReset={() => { setModelsText((builtin.models || []).join('\n')); setFormError('') }} />
+          ) : (
+            <FieldReset label="模型映射" disabled={!mappingsDirty} onReset={() => { setMappings((builtin.model_mappings || []).map(row => ({ ...row }))); setFormError('') }} />
+          )}
+        </div>
+
+        {tab === 'models' && (
+          <div role="tabpanel" id="supplier-panel-models" aria-labelledby="supplier-tab-models" className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <Textarea
+              rows={8}
+              value={modelsText}
+              onChange={e => { setModelsText(e.target.value); setFormError('') }}
+              placeholder="每行一个模型名"
+              className="min-h-0 flex-1 resize-none font-mono text-xs"
+            />
+            <div className="flex shrink-0 flex-col gap-2">
+              <span className="text-sm font-medium">从账号刷新</span>
+              <div className="flex items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <AppSelect
+                    aria-label="选择用于刷新模型列表的账号"
+                    value={refreshProviderID}
+                    onValueChange={setRefreshProviderID}
+                    disabled={!matchingProviders.length || fetchModels.isPending}
+                  >
+                    <SelectItem value="">{matchingProviders.length ? '选择同供应商账号' : '暂无可用账号'}</SelectItem>
+                    {matchingProviders.map(account => (
+                      <SelectItem key={account.id} value={String(account.id)}>
+                        {account.name}{account.enabled ? '' : '（已停用）'}
+                      </SelectItem>
+                    ))}
+                  </AppSelect>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-10 shrink-0"
+                  aria-label={fetchModels.isPending ? '刷新中' : '刷新模型'}
+                  disabled={!refreshProviderID || fetchModels.isPending}
+                  onClick={refreshFromProvider}
+                >
+                  <RefreshCw className={fetchModels.isPending ? 'animate-spin' : ''} />
+                </Button>
+              </div>
+              <ErrorMessage error={fetchModels.error} />
+              <p className="text-xs text-muted-foreground">每行一个模型名。可手工编辑，或用同供应商账号向上游拉取后写入编辑框；保存后才会生效。仅用于展示、CC Switch 建议与模型映射选项。</p>
+            </div>
+          </div>
+        )}
+
+        {tab === 'mappings' && (
+          <div role="tabpanel" id="supplier-panel-mappings" aria-labelledby="supplier-tab-mappings" className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+              {mappings.length === 0 && (
+                <p className="text-sm text-muted-foreground">未配置映射时，请求中的 model 原样转发。</p>
+              )}
+              {mappings.map((row, index) => {
+                const toOptions = models.includes(row.to) || !row.to.trim() ? models : [row.to, ...models]
+                return (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      aria-label={`映射 ${index + 1} 客户端模型`}
+                      className="min-w-0 flex-1 font-mono text-xs"
+                      placeholder="客户端模型，如 claude-*"
+                      value={row.from}
+                      onChange={e => updateMapping(index, { from: e.target.value })}
+                    />
+                    <span className="shrink-0 text-muted-foreground">→</span>
+                    <div className="min-w-0 flex-1">
+                      <AppSelect
+                        aria-label={`映射 ${index + 1} 上游模型`}
+                        className="font-mono text-xs"
+                        value={row.to}
+                        onValueChange={value => updateMapping(index, { to: value })}
+                        disabled={!toOptions.length && !row.to}
+                      >
+                        <SelectItem value="">{toOptions.length ? '选择上游模型' : '请先填写支持模型'}</SelectItem>
+                        {toOptions.map(model => (
+                          <SelectItem key={model} value={model}>{model}</SelectItem>
+                        ))}
+                      </AppSelect>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-10 shrink-0"
+                      aria-label={`删除映射 ${index + 1}`}
+                      onClick={() => { setFormError(''); setMappings(rows => rows.filter((_, i) => i !== index)) }}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex shrink-0 items-center gap-3">
+              <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={() => { setFormError(''); setMappings(rows => [...rows, { from: '', to: '' }]) }}>
+                <Plus />添加映射
+              </Button>
+              <p className="min-w-0 flex-1 text-right text-xs text-muted-foreground">自上而下首条命中；from 支持一个 *，to 选自支持模型。</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="flex shrink-0 flex-col gap-2">
+        {(formError || save.error) && (
+          <div className="space-y-2">
+            {formError ? <p role="alert" className="text-sm text-destructive">{formError}</p> : null}
+            <ErrorMessage error={save.error} />
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="submit" disabled={save.isPending}>{save.isPending ? '处理中…' : '保存'}</Button>
+        </div>
       </div>
     </form>
   )

@@ -23,11 +23,12 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
 }
 export const actions = {
   fetchQuota: (providerID: number) => request<Quota>(`/api/ai-providers/${id(providerID)}/refresh-quota`, json('POST')),
+  fetchModels: (providerID: number) => request<{ models: string[] }>(`/api/ai-providers/${id(providerID)}/fetch-models`, json('POST')),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: number; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
   deleteAIProvider: (key: number) => request('/api/ai-providers/' + id(key), json('DELETE')),
-  saveSupplier: (input: { id: string; name: string; models: string[] }) => request<Supplier>('/api/ai-catalog/' + id(input.id), json('PUT', input)),
+  saveSupplier: (input: { id: string; name: string; models: string[]; model_mappings: { from: string; to: string }[] }) => request<Supplier>('/api/ai-catalog/' + id(input.id), json('PUT', input)),
   createKey: (input: { name: string; account_id: number; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),
   deleteKey: (key: number) => request('/api/keys/' + id(key), json('DELETE')),
   createUser: (input: { name: string; password: string; role: string }) => request<User>('/api/users', json('POST', input)),

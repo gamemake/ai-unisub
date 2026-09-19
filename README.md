@@ -4,7 +4,7 @@ Go + SQLite AI 网关，统一管理 OpenAI/Codex、Anthropic/Claude、Grok 的�
 
 网页统一使用 shadcn/ui 的 `base-nova` 源码组件，交互基础为 `@base-ui/react`，不混用 Radix。下拉选择使用 Select，日期使用 Calendar + Popover，移动导航使用 Sheet；表单、表格、状态和确认弹窗也集中在 `src/components/ui/`。组件来源和维护约定见 [组件说明](src/components/ui/README.md)。
 
-模型映射功能尚未实现；客户端请求中的模型名称原样转发。
+模型映射按实际处理请求的账号所属供应商规则改写客户端 `model`（及 Grok 覆盖头）；未配置或未命中则原样转发。
 
 ## 开发环境
 

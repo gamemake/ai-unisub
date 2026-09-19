@@ -18,7 +18,7 @@ func TestPersonalAPIPermissions(t *testing.T) {
 		t.Fatal(login.Body.String())
 	}
 	member := login.Result().Cookies()[0]
-	for _, path := range []string{"/api/users", "/api/users/admin/password", "/api/ai-providers", "/api/ai-providers/id", "/api/ai-providers/id/refresh-quota", "/api/providers", "/api/providers/id", "/api/ai-catalog", "/api/ai-catalog/kimi", "/api/proxy-groups", "/api/proxy-groups/errors", "/api/proxy-groups/test", "/api/usage/users", "/api/usage/subscriptions", "/api/oauth/dummy/start", "/api/oauth/dummy/status/id", "/api/oauth/dummy/poll/id", "/api/oauth/dummy/complete/id", "/api/oauth/results/id"} {
+	for _, path := range []string{"/api/users", "/api/users/admin/password", "/api/ai-providers", "/api/ai-providers/id", "/api/ai-providers/id/refresh-quota", "/api/ai-providers/id/fetch-models", "/api/providers", "/api/providers/id", "/api/ai-catalog", "/api/ai-catalog/kimi", "/api/proxy-groups", "/api/proxy-groups/errors", "/api/proxy-groups/test", "/api/usage/users", "/api/usage/subscriptions", "/api/oauth/dummy/start", "/api/oauth/dummy/status/id", "/api/oauth/dummy/poll/id", "/api/oauth/dummy/complete/id", "/api/oauth/results/id"} {
 		for _, method := range []string{"GET", "POST", "PUT", "DELETE"} {
 			t.Run(method+path, func(t *testing.T) {
 				if out := appRequest(s, method, path, "{}", member); out.Code != http.StatusForbidden {

@@ -85,6 +85,13 @@ func (p *DummyAIProvider) FetchQuota(ctx context.Context) (*Quota, error) {
 	if err := p.quotaCache.save(); err != nil {
 		return nil, err
 	}
+	reportAPICall(ctx, &AIProviderCallTrace{
+		URL:                    "dummy://quota",
+		OutboundRequestHeaders: http.Header{"Accept": {"application/json"}},
+		ResponseStatus:         http.StatusOK,
+		ResponseHeaders:        http.Header{"Content-Type": {"application/json"}},
+		ResponseBody:           []byte(`{"dummy":"quota"}`),
+	})
 	return result, nil
 }
 func (p *DummyAIProvider) setStateStore(store func(AIProviderState) error) {
@@ -92,5 +99,19 @@ func (p *DummyAIProvider) setStateStore(store func(AIProviderState) error) {
 }
 func (p *DummyAIProvider) GetCachedQuota() *Quota {
 	return p.quotaCache.get()
+}
+func (p *DummyAIProvider) FetchModels(ctx context.Context) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	models := []string{"dummy-fast", "dummy-long-context", "dummy-model", "dummy-reasoning"}
+	reportAPICall(ctx, &AIProviderCallTrace{
+		URL:                    "dummy://models",
+		OutboundRequestHeaders: http.Header{"Accept": {"application/json"}},
+		ResponseStatus:         http.StatusOK,
+		ResponseHeaders:        http.Header{"Content-Type": {"application/json"}},
+		ResponseBody:           []byte(`{"models":["dummy-fast","dummy-long-context","dummy-model","dummy-reasoning"]}`),
+	})
+	return models, nil
 }
 func (p *DummyAIProvider) ResetUsage(context.Context) error { return nil }

@@ -42,6 +42,9 @@ func (p *dummyAIProvider) FetchQuota(context.Context) (*aiprovider.Quota, error)
 func (p *dummyAIProvider) GetCachedQuota() *aiprovider.Quota {
 	return &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
 }
+func (p *dummyAIProvider) FetchModels(context.Context) ([]string, error) {
+	return []string{"dummy-model"}, nil
+}
 func (p *dummyAIProvider) ResetUsage(context.Context) error { return nil }
 
 func TestDummyUserAIProviderAndAPIKeyFlow(t *testing.T) {

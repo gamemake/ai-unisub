@@ -8,7 +8,7 @@ import { actions, useProviderOptions, useAction, useKeys } from '@/data/store'
 import type { APIKey, ClientType, ProviderOption } from '@/data/types'
 import { Badge, Confirm, Empty, ErrorMessage, Field, Modal, PageHeader, QueryState, Submit, Table } from '@/components/shared'
 import { Button, buttonVariants } from '@/components/ui/button'
-import { cn, date } from '@/lib/utils'
+import { clientTypeLabel, cn, date } from '@/lib/utils'
 import { Field as UIField, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -145,7 +145,7 @@ export function KeyDetails({ value, provider, clientTypes, onClose }: { value: A
           <>
             <Field label="客户端">
               <AppSelect value={selected} onValueChange={v => setClient(v as ClientType)}>
-                {clients.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
+                {clients.map(c => <SelectItem key={c} value={c}>{clientTypeLabel(c)}</SelectItem>)}
               </AppSelect>
             </Field>
             <CopyField label="Base URL" value={endpoint} mono />

@@ -30,8 +30,9 @@ api_endpoint 可覆盖基址；否则当前代码使用：
 2. 创建带总超时的 Context，默认 5 分钟，沿用客户端取消信号。
 3. 克隆请求，设置上游 URL、Host 并清空 RequestURI；Body 上限 64 MiB。
 4. 移除 Connection 指定的头、hop-by-hop 头和 Cookie；上游认证由 AIProvider 设置。
-5. 将响应 Writer 放入 Context，通过 Account.Handle 取得执行槽位并调用 AIProvider。
-6. AIProvider 流式输出状态、响应头和字节；Recorder 将调用记录交给应用层持久化。
+5. 按**实际执行账号**所属模型供应商的 `model_mappings` 改写顶层 `model` 与 `X-Grok-Model-Override`（组切换成员时按新成员重新映射）。
+6. 将响应 Writer 放入 Context，通过 Account.Handle 取得执行槽位并调用 AIProvider。
+7. AIProvider 流式输出状态、响应头和字节；Recorder 将调用记录交给应用层持久化。
 
 网关不把已经开始发送的响应替换成另一个 JSON 错误。完整响应继续发送给客户端，记录中的响应体最多保留前 1 MiB。下游 Key 和上游 token 不应出现在展示用请求头中。
 
@@ -77,6 +78,8 @@ AIProviderManager 持有每账号唯一的 Account，所有该账号调用共用
 ## 调用记录与代理
 
 应用层把 AIProviderCallTrace 转为数据库记录，包含账号、请求 ID、来源 IP、URL、时间、状态、模型、token 用量和截取的请求／响应。记录中的 `http_error_code` 使用标准 HTTP 状态：有上游／本地 HTTP 响应时写入该状态码（含 2xx）；网络或传输失败且没有 HTTP 响应时为 0，不把写给客户端的 502 回填进记录。展示头对 Authorization、X-Api-Key、Cookie、Set-Cookie、Proxy-Authorization 脱敏；持久化 APIKey 字段用于归属关联，管理 API 返回前清空。
+
+除 `/v1/` 网关转发外，管理端 `POST /api/ai-providers/{id}/refresh-quota` 与 `POST /api/ai-providers/{id}/fetch-models` 触发的上游 usage／models 查询也会写入调用记录，归属被查询的账号；URL 为上游地址。这类记录的原始与出站 request headers 均保存脱敏后的出站请求头（不单独保留浏览器管理请求头）。
 
 排队中止且未调用 AIProvider 的请求不会产生一次已发送上游调用的记录。当前记录没有完整的队列深度、等待耗时和限流计数指标，不将这些字段写成现有监控能力。
 

@@ -32,7 +32,7 @@ func SupplierBuiltins() []SupplierBuiltin {
 			Models:    []string{"gpt-5", "gpt-5-mini", "gpt-4.1", "o3", "o4-mini"},
 		},
 		{
-			ID: "grok", Name: "Grok",
+			ID: "grok", Name: "xAI",
 			OpenAIURL: "https://api.x.ai/v1",
 			Models:    []string{"grok-4", "grok-3", "grok-3-mini"},
 		},
