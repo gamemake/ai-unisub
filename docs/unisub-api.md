@@ -83,7 +83,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 `GET /api/ai-providers` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。启动时从 `accounts.state` 恢复上次成功快照。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/ai-providers/{id}/refresh-quota`，查询成功后由 `aiprovider` 提交含额度的 state，应用层用 `SaveAccount` 写入 `accounts.state`，再返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。每次实际上游 HTTP 交换（含 Grok 的周／月两次 billing）写入一条调用记录，归属该账号；原始与出站 request headers 均保存脱敏后的出站请求头。
 
-`POST /api/ai-providers/{id}/fetch-models` 按账号凭据向上游 `GET {base}/models` 查询模型 id 列表，成功返回 `{"models":["..."]}`（去重、排序）。结果不缓存、不写入供应商目录；调用方（如模型供应商编辑页）自行决定是否保存。`base` 优先 `api_endpoint`，否则取供应商目录 OpenAI URL（无则 Claude URL），再否则内置缺省。Group、Codex OAuth 订阅、以及上游明确不支持列表的组合返回 501；缺少凭据或 URL 返回 400；鉴权失败 502 族错误（401/403 映射为网关错误文案）；接口不支持 GET（405）。每次实际上游 HTTP 交换同样写入调用记录，header 规则与 refresh-quota 相同。
+`POST /api/ai-providers/{id}/fetch-models` 查询模型 id 列表，成功返回 `{"models":["..."]}`（去重、排序）。结果不缓存、不写入供应商目录；调用方（如模型供应商编辑页）自行决定是否保存。一般账号按凭据向上游 `GET {base}/models` 查询：`base` 优先 `api_endpoint`，否则取供应商目录 OpenAI URL（无则 Claude URL），再否则内置缺省。**OpenAI（Codex）OAuth 订阅**不调用 `api.openai.com/v1/models`（该令牌无效），改为从公开的 Codex 目录 `https://github.com/openai/codex/raw/refs/heads/main/codex-rs/models-manager/models.json` 读取 `models[].slug`；请求**走该 AIProvider 的 `proxy_group_id`**（与其它上游查询相同），无需 OAuth 令牌。Group 以及上游明确不支持列表的组合返回 501；缺少凭据或 URL（或已配置代理组但代理不可用）返回 400／上游错误；鉴权失败 502 族错误（401/403 映射为网关错误文案）；接口不支持 GET（405）。每次实际上游 HTTP 交换同样写入调用记录，header 规则与 refresh-quota 相同。
 
 创建必须提供 provider 和有效 config；当前类型为 `codex`、`claude`、`grok`、`dummy`。更新不能改变 provider 类型。config 可以是 JSON 对象，兼容编码为字符串的 JSON 对象。
 

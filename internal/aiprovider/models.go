@@ -29,6 +29,11 @@ var (
 	ErrModelsUpstream = errors.New("model listing upstream unavailable")
 )
 
+// Codex OAuth tokens cannot call api.openai.com/v1/models. OpenAI subscription
+// accounts load the public Codex models catalog instead. Uses the AIProvider
+// proxy group when configured. github.com/.../raw/... redirects to raw.githubusercontent.com.
+const codexModelsJSONURL = "https://github.com/openai/codex/raw/refs/heads/main/codex-rs/models-manager/models.json"
+
 // ModelList is the public result of FetchModels.
 type ModelList struct {
 	Models []string `json:"models"`
@@ -52,6 +57,10 @@ func (p *oauthAIProvider) fetchModels(ctx context.Context, fallback string) ([]s
 	if config.Supplier == "" {
 		config.Supplier = fallback
 	}
+	// OpenAI subscription: public Codex catalog (no OAuth token); still uses proxy_group_id.
+	if config.AuthType == AuthTypeOAuth && config.Supplier == "openai" {
+		return p.fetchCodexModelsCatalog(ctx, config, baseClient, resolver)
+	}
 	endpointURL, service, err := modelsEndpoint(config, source)
 	if err != nil {
 		return nil, err
@@ -59,25 +68,13 @@ func (p *oauthAIProvider) fetchModels(ctx context.Context, fallback string) ([]s
 	if service == "" && config.APIKey == "" || service != "" && (config.CredentialID == "" || p.manager == nil) {
 		return nil, ErrModelsNotConfigured
 	}
-	if config.ProxyGroupID != 0 {
-		if resolver == nil {
-			return nil, ErrModelsNotConfigured
-		}
-		var selected *http.Client
-		if !p.withProxy(ctx, resolver, config.ProxyGroupID, config.Supplier, func(c *http.Client) { selected = c }) || selected == nil {
-			return nil, ErrModelsUpstream
-		}
-		baseClient = selected
+	client, err := p.modelsHTTPClient(ctx, config, baseClient, resolver, false)
+	if err != nil {
+		return nil, err
 	}
-	if baseClient == nil {
-		baseClient = upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
-	}
-	client := *baseClient
-	client.Timeout = 25 * time.Second
-	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	token := config.APIKey
 	if service != "" {
-		token, err = p.manager.GetValidAccessToken(ctx, service, config.CredentialID, &client)
+		token, err = p.manager.GetValidAccessToken(ctx, service, config.CredentialID, client)
 		if err != nil {
 			return nil, ErrModelsAuthentication
 		}
@@ -101,39 +98,19 @@ func (p *oauthAIProvider) fetchModels(ctx context.Context, fallback string) ([]s
 		} else {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		resp, err := client.Do(req)
+		body, status, err := doModelsGET(ctx, client, req)
 		if err != nil {
-			reportAPICall(ctx, httpExchangeTrace(req, nil, nil, true))
-			if ctx.Err() != nil {
-				return nil, ctx.Err()
-			}
-			return nil, ErrModelsUpstream
+			return nil, err
 		}
-		status := resp.StatusCode
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
-		resp.Body.Close()
-		reportAPICall(ctx, httpExchangeTrace(req, resp, body, false))
 		if status == http.StatusUnauthorized && service != "" && attempt == 0 {
-			token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, &client)
+			token, err = p.manager.RecoverAccessToken(ctx, service, config.CredentialID, token, client)
 			if err != nil {
 				return nil, ErrModelsAuthentication
 			}
 			continue
 		}
-		if status != http.StatusOK {
-			switch status {
-			case http.StatusUnauthorized, http.StatusForbidden:
-				return nil, ErrModelsAuthentication
-			case http.StatusTooManyRequests:
-				return nil, ErrModelsRateLimited
-			case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
-				return nil, ErrModelsUnsupported
-			default:
-				return nil, ErrModelsUpstream
-			}
-		}
-		if readErr != nil || len(body) > 1<<20 {
-			return nil, ErrModelsInvalidResponse
+		if err := modelsStatusError(status); err != nil {
+			return nil, err
 		}
 		models, err := parseModelsResponse(body)
 		if err != nil {
@@ -142,6 +119,88 @@ func (p *oauthAIProvider) fetchModels(ctx context.Context, fallback string) ([]s
 		return models, nil
 	}
 	return nil, ErrModelsAuthentication
+}
+
+// fetchCodexModelsCatalog loads model slugs from the public Codex models.json.
+// Requests go through the account proxy group when proxy_group_id is set.
+func (p *oauthAIProvider) fetchCodexModelsCatalog(ctx context.Context, config AIProviderConfig, baseClient *http.Client, resolver ProxyResolver) ([]string, error) {
+	// Follow GitHub raw redirects (github.com/.../raw → raw.githubusercontent.com).
+	client, err := p.modelsHTTPClient(ctx, config, baseClient, resolver, true)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, codexModelsJSONURL, nil)
+	if err != nil {
+		return nil, ErrModelsNotConfigured
+	}
+	req.Header.Set("Accept", "application/json")
+	body, status, err := doModelsGET(ctx, client, req)
+	if err != nil {
+		return nil, err
+	}
+	if err := modelsStatusError(status); err != nil {
+		return nil, err
+	}
+	return parseCodexModelsJSON(body)
+}
+
+func (p *oauthAIProvider) modelsHTTPClient(ctx context.Context, config AIProviderConfig, baseClient *http.Client, resolver ProxyResolver, followRedirects bool) (*http.Client, error) {
+	if config.ProxyGroupID != 0 {
+		if resolver == nil {
+			return nil, ErrModelsNotConfigured
+		}
+		var selected *http.Client
+		if !p.withProxy(ctx, resolver, config.ProxyGroupID, config.Supplier, func(c *http.Client) { selected = c }) || selected == nil {
+			return nil, ErrModelsUpstream
+		}
+		baseClient = selected
+	}
+	if baseClient == nil {
+		baseClient = upstreamClient(http.DefaultTransport.(*http.Transport).Clone())
+	}
+	client := *baseClient
+	client.Timeout = 25 * time.Second
+	if followRedirects {
+		client.CheckRedirect = nil
+	} else {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	}
+	return &client, nil
+}
+
+func doModelsGET(ctx context.Context, client *http.Client, req *http.Request) (body []byte, status int, err error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		reportAPICall(ctx, httpExchangeTrace(req, nil, nil, true))
+		if ctx.Err() != nil {
+			return nil, 0, ctx.Err()
+		}
+		return nil, 0, ErrModelsUpstream
+	}
+	status = resp.StatusCode
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, (1<<20)+1))
+	resp.Body.Close()
+	reportAPICall(ctx, httpExchangeTrace(req, resp, body, false))
+	if status == http.StatusOK && (readErr != nil || len(body) > 1<<20) {
+		return nil, status, ErrModelsInvalidResponse
+	}
+	return body, status, nil
+}
+
+func modelsStatusError(status int) error {
+	if status == http.StatusOK {
+		return nil
+	}
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrModelsAuthentication
+	case http.StatusTooManyRequests:
+		return ErrModelsRateLimited
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return ErrModelsUnsupported
+	default:
+		return ErrModelsUpstream
+	}
 }
 
 func modelsEndpoint(c AIProviderConfig, source func(string) Supplier) (endpoint, service string, err error) {
@@ -180,7 +239,7 @@ func modelsEndpoint(c AIProviderConfig, source func(string) Supplier) (endpoint,
 		case "anthropic":
 			service = oauth.OAuthServiceClaude
 		case "openai":
-			// ChatGPT Codex OAuth tokens are not valid against api.openai.com/v1/models.
+			// Handled by fetchCodexModelsCatalog; keep as safety if modelsEndpoint is called alone.
 			return "", "", ErrModelsUnsupported
 		case "grok":
 			service = oauth.OAuthServiceGrok
@@ -218,6 +277,26 @@ func parseModelsResponse(body []byte) ([]string, error) {
 		return normalizeModelIDs(payload.Models), nil
 	}
 	return nil, ErrModelsInvalidResponse
+}
+
+// parseCodexModelsJSON reads Codex models-manager models.json (models[].slug).
+func parseCodexModelsJSON(body []byte) ([]string, error) {
+	var payload struct {
+		Models []struct {
+			Slug string `json:"slug"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, ErrModelsInvalidResponse
+	}
+	if len(payload.Models) == 0 {
+		return nil, ErrModelsInvalidResponse
+	}
+	ids := make([]string, 0, len(payload.Models))
+	for _, item := range payload.Models {
+		ids = append(ids, item.Slug)
+	}
+	return normalizeModelIDs(ids), nil
 }
 
 func normalizeModelIDs(ids []string) []string {

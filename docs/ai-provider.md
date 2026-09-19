@@ -148,7 +148,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 ## 当前实现与边界
 
 - 已实现订阅、API、组三种类型；沿用 `provider` 字段指定适配器，新增 `api` 和 `group` 值，旧 `claude/codex/grok/dummy` 保持兼容。组只引用已有非组成员，修改任一关联配置都校验客户端允许集合，仍被组引用的成员不能删除。
-- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；可配置字段（name/models/model_mappings）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型列表可在供应商编辑页手工维护，也可选定同供应商的 AIProvider 后调用 `POST /api/ai-providers/{id}/fetch-models` 从上游刷新（写入仍走供应商 PUT）。模型映射按供应商规则改写顶层 `model` 与 Grok 覆盖头；未命中则原样转发。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
+- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；可配置字段（name/models/model_mappings）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型列表可在供应商编辑页手工维护，也可选定同供应商的 AIProvider 后调用 `POST /api/ai-providers/{id}/fetch-models` 从上游刷新（写入仍走供应商 PUT）。OpenAI 订阅账号的刷新读取 Codex 公开 `models.json`（`models[].slug`），并使用该账号的 `proxy_group_id`；其它账号仍走上游 `GET {base}/models`。模型映射按供应商规则改写顶层 `model` 与 Grok 覆盖头；未命中则原样转发。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
 - SessionID 已适配上表的原生请求头。绑定在单实例内存中按用户、组、客户端和会话隔离，键使用 SHA-256，空闲 TTL 30 分钟、容量 10000；配置更新会失效绑定，多实例共享缓存不在当前实现范围内。
 - 组成员先按客户端、协议、启用和健康状态过滤，再取最高权重；同权重优先粘性，否则均匀随机。底层成员共享原有 Account 并发队列，调用记录归属实际执行的成员。
 - 网络／5xx 连续失败 3 次后回避，30 秒指数退避至 5 分钟；429 优先遵守 `Retry-After`；认证恢复后仍为 401 或明确 `insufficient_quota` 时暂停，更新配置后解除暂停。OAuth 401 最多通过 OAuthManager 刷新并重试一次，API Key 不执行 OAuth 刷新。普通 403、参数及模型错误不禁用整个账号；模型级隔离、厂商细分额度重置时间属于后续适配扩展。
@@ -159,7 +159,7 @@ AIProvider 组管理成员级健康状态，ProxyGroup 继续管理网络代理�
 
 | 类型 | 职责 |
 | --- | --- |
-| AIProvider | Config、UpdateConfig、Handle、FetchQuota、GetCachedQuota、FetchModels、ResetUsage；已接入部分真实查询与内存缓存，Dummy Fetch 返回随机演示数据；FetchModels 按实例凭据查询上游模型列表 |
+| AIProvider | Config、UpdateConfig、Handle、FetchQuota、GetCachedQuota、FetchModels、ResetUsage；已接入部分真实查询与内存缓存，Dummy Fetch 返回随机演示数据；FetchModels 按实例凭据查询上游模型列表（OpenAI 订阅改为拉取 Codex 公开 `models.json`，并使用账号 `proxy_group_id`） |
 | AIProviderConfig | 单个实例的公共配置 |
 | AIProviderFactory | 根据 ID 与 JSON 创建具体实例 |
 | AIProviderManager | 注册工厂、创建／恢复／更新／删除实例 |
