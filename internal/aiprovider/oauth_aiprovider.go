@@ -248,6 +248,9 @@ func (p *oauthAIProvider) handle(service, credentialID string, req *http.Request
 		w.WriteHeader(response.StatusCode)
 		capture := streamCapture{trace: trace, sse: strings.Contains(response.Header.Get("Content-Type"), "text/event-stream")}
 		_, err = io.Copy(flushWriter{w}, io.TeeReader(response.Body, &capture))
+		if capture.completed || errors.Is(err, errStreamCompleted) {
+			err = nil
+		}
 		trace.ResponseBody = capture.Bytes()
 	} else {
 		trace.ResponseBody, err = io.ReadAll(response.Body)

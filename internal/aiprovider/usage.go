@@ -3,7 +3,10 @@ package aiprovider
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 )
+
+var errStreamCompleted = errors.New("stream completed")
 
 type wireUsage struct {
 	Input         int `json:"input_tokens"`
@@ -68,10 +71,11 @@ func parseUsage(trace *AIProviderCallTrace) {
 // A single event line is bounded as well, so malformed streams cannot grow RAM.
 type streamCapture struct {
 	limitedCapture
-	trace    *AIProviderCallTrace
-	sse      bool
-	pending  []byte
-	dropping bool
+	trace     *AIProviderCallTrace
+	sse       bool
+	pending   []byte
+	dropping  bool
+	completed bool
 }
 
 func (s *streamCapture) Write(p []byte) (int, error) {
@@ -94,7 +98,12 @@ func (s *streamCapture) Write(p []byte) (int, error) {
 		}
 		if !s.dropping {
 			if data, ok := bytes.CutPrefix(s.pending, []byte("data:")); ok {
-				parseUsageJSON(s.trace, bytes.TrimSpace(data))
+				data = bytes.TrimSpace(data)
+				parseUsageJSON(s.trace, data)
+				if responseCompleted(data) {
+					s.completed = true
+					return n, errStreamCompleted
+				}
 			}
 		}
 		s.pending = s.pending[:0]
@@ -102,4 +111,19 @@ func (s *streamCapture) Write(p []byte) (int, error) {
 		p = rest
 	}
 	return n, nil
+}
+
+func responseCompleted(data []byte) bool {
+	var event struct {
+		Type     string `json:"type"`
+		Response struct {
+			Status string          `json:"status"`
+			Error  json.RawMessage `json:"error"`
+		} `json:"response"`
+	}
+	if json.Unmarshal(data, &event) != nil || event.Type != "response.completed" || event.Response.Status != "completed" {
+		return false
+	}
+	errorData := bytes.TrimSpace(event.Response.Error)
+	return len(errorData) == 0 || bytes.Equal(errorData, []byte("null"))
 }

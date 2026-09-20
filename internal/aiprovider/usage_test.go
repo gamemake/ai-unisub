@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -19,5 +20,14 @@ func TestStreamUsageAfterTraceLimitAndAcrossChunks(t *testing.T) {
 	}
 	if trace.InputTokens != 100 || trace.OutputTokens != 20 || trace.CacheReadTokens != 50 || trace.Model != "m" {
 		t.Fatalf("missing final stream usage: %+v", trace)
+	}
+}
+
+func TestStreamCaptureStopsAfterCompletedResponse(t *testing.T) {
+	const stream = "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"error\":null}}\n\n"
+	capture := &streamCapture{trace: &AIProviderCallTrace{}, sse: true}
+	n, err := capture.Write([]byte(stream))
+	if n != len(stream) || !errors.Is(err, errStreamCompleted) || !capture.completed {
+		t.Fatalf("capture result n=%d err=%v completed=%v", n, err, capture.completed)
 	}
 }

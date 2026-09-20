@@ -15,6 +15,8 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 	for _, platform := range []string{"codex", "claude", "grok"} {
 		t.Run(platform, func(t *testing.T) {
 			supplier := map[string]string{"codex": "openai", "claude": "anthropic", "grok": "grok"}[platform]
+			userAgent := map[string]string{"codex": "codex-tui/1.0", "claude": "claude-cli/2.1.220", "grok": "grok-cli/1.0"}[platform]
+			sessionHeader := map[string]string{"codex": "Session-Id", "claude": "X-Claude-Code-Session-Id", "grok": "X-Grok-Session-Id"}[platform]
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.RequestURI() != "/custom/v1/messages?test=1" || r.Method != "POST" {
 					t.Errorf("upstream request: %s %s", r.Method, r.URL)
@@ -59,10 +61,18 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if key.Key == "" {
 				t.Fatalf("create key: %s", keyResponse.Body.String())
 			}
+			missing := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
+			missing.Header.Set("Authorization", "Bearer "+key.Key)
+			missing.Header.Set("User-Agent", userAgent)
+			missingResult := httptest.NewRecorder()
+			s.Handler().ServeHTTP(missingResult, missing)
+			if missingResult.Code != http.StatusBadRequest || !strings.Contains(missingResult.Body.String(), "session ID is required") {
+				t.Fatalf("missing session ID: %d %s", missingResult.Code, missingResult.Body.String())
+			}
 			req := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
-			// A generic header without a recognized client must not create a session.
-			req.Header.Set("Session-Id", "conversation-test")
+			req.Header.Set("User-Agent", userAgent)
+			req.Header.Set(sessionHeader, "conversation-test")
 			req.AddCookie(cookie)
 			result := httptest.NewRecorder()
 			s.Handler().ServeHTTP(result, req)
@@ -70,7 +80,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 				t.Fatalf("forward: %d %s", result.Code, result.Body.String())
 			}
 			traces, count, err := s.Database().QueryCallTraces(recentCallFilter(), 1, 10)
-			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "" {
+			if err != nil || count != 1 || traces[0].InputTokens != 12 || traces[0].OutputTokens != 3 || traces[0].SessionID != "conversation-test" {
 				t.Fatalf("trace: %#v count=%d err=%v", traces, count, err)
 			}
 			if traces[0].HTTPErrorCode != 201 {
@@ -124,6 +134,7 @@ func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 	req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
 	req.Header.Set("X-Api-Key", key.Key)
 	req.Header.Set("User-Agent", "claude-cli/2.0")
+	req.Header.Set("X-Claude-Code-Session-Id", "auth-token-session")
 	result := httptest.NewRecorder()
 	s.Handler().ServeHTTP(result, req)
 	if result.Code != 200 {
@@ -134,6 +145,7 @@ func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 	req = httptest.NewRequest("POST", "/v1/messages", strings.NewReader(`{"model":"dummy-model"}`))
 	req.Header.Set("Authorization", "Bearer "+key.Key)
 	req.Header.Set("User-Agent", "claude-cli/2.0")
+	req.Header.Set("X-Claude-Code-Session-Id", "auth-token-session")
 	result = httptest.NewRecorder()
 	s.Handler().ServeHTTP(result, req)
 	if result.Code != 200 {
@@ -145,6 +157,7 @@ func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer leftover-official-token")
 	req.Header.Set("X-Api-Key", key.Key)
 	req.Header.Set("User-Agent", "claude-cli/2.0")
+	req.Header.Set("X-Claude-Code-Session-Id", "auth-token-session")
 	result = httptest.NewRecorder()
 	s.Handler().ServeHTTP(result, req)
 	if result.Code != 200 {
@@ -184,6 +197,8 @@ func TestGatewayStreamsBeforeUpstreamCompletes(t *testing.T) {
 	defer func() { close(finish); gateway.Close() }()
 	req, _ := http.NewRequest("POST", gateway.URL+"/v1/responses", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer "+key.Key)
+	req.Header.Set("User-Agent", "grok-cli/1.0")
+	req.Header.Set("X-Grok-Session-Id", "stream-session")
 	client := &http.Client{Timeout: 3e9}
 	response, err := client.Do(req)
 	if err != nil {

@@ -44,6 +44,8 @@ func TestGatewayPreservesClientModelNames(t *testing.T) {
 				r.Header.Set("Authorization", "Bearer "+key)
 				r.Header.Set("Content-Type", "application/json")
 				r.Header.Set("User-Agent", tc.agent)
+				sessionHeader := map[string]string{"claude": "X-Claude-Code-Session-Id", "codex": "Session-Id", "grok": "X-Grok-Session-Id"}[tc.client]
+				r.Header.Set(sessionHeader, tc.client+"-session")
 				if tc.client == "grok" {
 					r.Header.Set("X-Grok-Model-Override", tc.model)
 				}
@@ -75,8 +77,8 @@ func TestGatewayAppliesSupplierModelMappings(t *testing.T) {
 		t.Fatal("missing deepseek")
 	}
 	raw, _ := json.Marshal(map[string]any{
-		"name":    sup.Name,
-		"models":  sup.Models,
+		"name":   sup.Name,
+		"models": sup.Models,
 		"model_mappings": []map[string]string{
 			{"from": "client-*", "to": "up-*"},
 			{"from": "legacy", "to": "modern"},
@@ -100,6 +102,7 @@ func TestGatewayAppliesSupplierModelMappings(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+key)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("User-Agent", "grok-cli/1.0")
+	r.Header.Set("X-Grok-Session-Id", "mapping-session")
 	r.Header.Set("X-Grok-Model-Override", "client-fast")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)

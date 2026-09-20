@@ -82,6 +82,7 @@ func TestGatewayGroupNativeAffinityAndRestrictions(t *testing.T) {
 	r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{}`))
 	r.Header.Set("Authorization", "Bearer "+key)
 	r.Header.Set("User-Agent", "claude-cli/2.1.220")
+	r.Header.Set("X-Claude-Code-Session-Id", "restriction-session")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 403 {
@@ -126,6 +127,8 @@ func TestGatewaySafeFailoverAndNoReplayAfterUpstreamExecution(t *testing.T) {
 			key := routingKey(t, s, cookie, g)
 			r := httptest.NewRequest("POST", "/v1/responses", strings.NewReader(`{"model":"test"}`))
 			r.Header.Set("Authorization", "Bearer "+key)
+			r.Header.Set("User-Agent", "codex-tui/1.0")
+			r.Header.Set("Session-Id", "failover-session")
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, r)
 			if unsafe {

@@ -106,7 +106,7 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
 
 目标是让相同 SessionID 的请求尽可能使用同一个 AIProvider，而不是固定使用同一个网络代理。
 
-- **来源**：仅根据 User-Agent 识别的客户端读取下表的原生会话头，不读取 `X-Unisub-Session-ID`。头名大小写不敏感；按列出的优先级选取第一个存在的头，存在但为空、多值或非法时返回 400，不静默退回低优先级头。客户端或原生会话头未匹配时 SessionID 留空，按普通权重规则选择，不从 IP、请求正文、请求 ID 或设备标识猜测 SessionID。
+- **来源**：仅根据 User-Agent 识别的客户端读取下表的原生会话头，不读取 `X-Unisub-Session-ID`。头名大小写不敏感；按列出的优先级选取第一个存在的头，存在但为空、多值或非法时返回 400，不静默退回低优先级头。网关请求未匹配客户端或未采集到 SessionID 时返回 400，不从 IP、请求正文、请求 ID 或设备标识猜测 SessionID。
 
   | 客户端 | 客户端类型 | 原生 SessionID 请求头（由高到低） |
   | --- | --- | --- |
@@ -116,7 +116,7 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
 
   Claude Code 的会话头见 [官方更新日志](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)；不发送该头的旧客户端需要注入统一覆盖头。Codex 兼容旧版下划线 `session_id` 和短横线版本，并在 `User-Agent` 不含产品版本时使用官方 `originator` 头识别客户端；部署在反向代理后需确保这些头不会被丢弃。`X-Session-Id` 是兼容读取项，不代表网关已支持 Realtime WebSocket。Grok 的 session、conversation、request 字段见 [官方采样客户端](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-sampler/src/client.rs)：优先使用 session ID，只有缺失时才以 conversation ID 建立粘性；`X-Grok-Req-Id`、`X-Grok-Agent-Id` 和缓存 lineage 均不作为 SessionID。
 
-  原生头只在对应客户端类型下解析，未知客户端的 SessionID 留空；不根据某个厂商头的存在反推客户端类型。原生会话头保留，避免破坏客户端与原厂的会话语义。
+  原生头只在对应客户端类型下解析，未知客户端的 SessionID 不接受网关请求；不根据某个厂商头的存在反推客户端类型。原生会话头保留，避免破坏客户端与原厂的会话语义。
 - **作用域**：绑定键建议为 `(已认证用户或租户 ID, 组 ID, 客户端类型, SessionID)`，避免不同用户和组之间互相影响。限制 SessionID 长度（建议不超过 128 字节），拒绝多值和控制字符；非法值返回请求参数错误。
 - **生命周期**：维护 `绑定键 → AIProvider ID` 的有界缓存，建议空闲 TTL 为 30 分钟，并设置容量上限和 LRU 淘汰。单实例可使用内存，多实例应共享绑定状态或保证会话路由到同一实例。
 - **优先级**：粘性不越过客户端限制、健康状态和权重。只有原绑定仍处于当前最高可用权重档时才复用；高权重成员恢复后，新请求可以离开低权重绑定。
