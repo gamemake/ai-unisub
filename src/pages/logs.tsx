@@ -12,7 +12,7 @@ import { AppSelect } from '@/components/app-select'
 import { SelectItem } from '@/components/ui/select'
 import { TimeRangeFilter, type TimeFilter } from '@/components/time-range-filter'
 import { Input } from '@/components/ui/input'
-import type { Call } from '@/data/types'
+import type { Call, User } from '@/data/types'
 import { date, number } from '@/lib/utils'
 
 const codeOptions = [
@@ -45,17 +45,18 @@ const codeOptions = [
   [504, '网关超时'],
 ] as const
 
-export function Logs() {
+export function Logs({ me }: { me: User }) {
   const [page, setPage] = useState(1), [search, setSearch] = useState(''), [q, setQ] = useState(''), [selected, setSelected] = useState<Call | null>(null)
   const [account, setAccount] = useState(''), [code, setCode] = useState(''), [time, setTime] = useState<TimeFilter>({ range: '1d' })
   const accounts = useProviderOptions()
   const query = useCalls({ page: String(page), page_size: '20', q, account_id: account, code, ...time })
   const pages = Math.max(1, Math.ceil((query.data?.total || 0) / 20))
-  return <><PageHeader title="调用记录" description="查看请求状态、Token 用量和完整调用详情。" />
+  const adminSearch = me.role === 'admin'
+  return <><PageHeader title="调用记录" description={adminSearch ? '查看请求状态、Token 用量和完整调用详情；管理员可搜索用户名，输入 none 搜索系统的网络请求。' : '查看请求状态、Token 用量和完整调用详情。'} />
     <div className="mb-6 space-y-2">
       <TimeRangeFilter onChange={value => { setTime(value); setPage(1) }} />
       <form className="flex flex-wrap items-center gap-3" onSubmit={event => { event.preventDefault(); setPage(1); setQ(search.trim()) }}>
-        <Input aria-label="搜索调用记录" className="min-w-60 flex-1" value={search} onChange={event => setSearch(event.target.value)} placeholder="精确搜索 IP、模型、Session ID、Request ID" />
+        <Input aria-label="搜索调用记录" className="min-w-60 flex-1" value={search} onChange={event => setSearch(event.target.value)} placeholder={adminSearch ? '精确搜索 IP、模型、Session ID、Request ID 或用户名；none 表示系统网络请求' : '精确搜索 IP、模型、Session ID、Request ID'} />
         <AppSelect aria-label="账号" className="w-48" value={account} onValueChange={value => { setAccount(value); setPage(1) }}>
           <SelectItem value="">全部账号</SelectItem>
           {accounts.data?.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name} · {item.provider}</SelectItem>)}

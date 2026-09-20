@@ -60,7 +60,7 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC()
-	for _, trace := range []database.PersistedCallTrace{{APIKey: "secret-a", AccountID: accountA.ID, SessionID: "shared", StartedAt: now, FinishedAt: now}, {APIKey: "secret-b", AccountID: accountB.ID, SessionID: "shared", HTTPErrorCode: 500, StartedAt: now, FinishedAt: now}} {
+	for _, trace := range []database.PersistedCallTrace{{APIKey: "secret-a", AccountID: accountA.ID, SessionID: "shared", StartedAt: now, FinishedAt: now}, {APIKey: "secret-b", AccountID: accountB.ID, SessionID: "shared", HTTPErrorCode: 500, StartedAt: now, FinishedAt: now}, {APIKey: "unknown", AccountID: accountA.ID, SessionID: "unattributed", StartedAt: now, FinishedAt: now}} {
 		if err := s.Database().RecordCallTrace(&trace); err != nil {
 			t.Fatal(err)
 		}
@@ -71,7 +71,7 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 		query  string
 		cookie *http.Cookie
 		count  int
-	}{{"q=alice-filter", admin, 1}, {"q=alice-filter", member, 0}, {"q=shared&account_id=" + pathID(accountA.ID) + "&code=0&range=1d", admin, 1}, {"q=shared", member, 1}, {"q=bob-filter&search_usernames=true", member, 0}, {"account_id=" + pathID(accountB.ID), member, 0}, {"code=500", admin, 1}, {"code=429", admin, 0}, {"code=500", member, 0}} {
+	}{{"q=alice-filter", admin, 1}, {"q=alice-filter", member, 0}, {"q=none", admin, 1}, {"q=none", member, 0}, {"q=shared&account_id=" + pathID(accountA.ID) + "&code=0&range=1d", admin, 1}, {"q=shared", member, 1}, {"q=bob-filter&search_usernames=true", member, 0}, {"account_id=" + pathID(accountB.ID), member, 0}, {"code=500", admin, 1}, {"code=429", admin, 0}, {"code=500", member, 0}} {
 		out := appRequest(s, "GET", "/api/calls?"+tt.query, "", tt.cookie)
 		var result struct {
 			Items []database.PersistedCallTraceSummary `json:"items"`
@@ -81,7 +81,8 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 			t.Fatalf("query=%s status=%d body=%s", tt.query, out.Code, out.Body.String())
 		}
 		for _, item := range result.Items {
-			if item.APIKey != "" || item.SessionID != "shared" {
+			validSession := item.SessionID == "shared" || (tt.query == "q=none" && item.SessionID == "unattributed")
+			if item.APIKey != "" || !validSession {
 				t.Fatal("incorrect summary", item)
 			}
 		}

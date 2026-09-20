@@ -1221,12 +1221,18 @@ func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r 
 			return
 		}
 	}
-	userName := ""
-	if !isAdmin(r) || r.URL.Query().Get("mine") == "1" {
-		userName = u.Name
+	admin := isAdmin(r)
+	var userID *int
+	if !admin || r.URL.Query().Get("mine") == "1" {
+		userID = &u.ID
 	}
 	accountID, _ := strconv.Atoi(r.URL.Query().Get("account_id"))
-	filter := database.CallTraceFilter{UserName: userName, AccountID: accountID, Search: strings.TrimSpace(r.URL.Query().Get("q")), SearchUsernames: isAdmin(r)}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	filter := database.CallTraceFilter{UserID: userID, AccountID: accountID, Search: search, SearchUsernames: admin}
+	if admin && strings.EqualFold(search, "none") {
+		filter.UserID = new(int)
+		filter.Search = ""
+	}
 	if raw := r.URL.Query().Get("code"); raw != "" {
 		code, err := strconv.Atoi(raw)
 		if err != nil || (code != 0 && (code < 100 || code > 599)) {

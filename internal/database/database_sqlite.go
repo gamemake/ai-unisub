@@ -667,7 +667,7 @@ func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize 
 	if err := validateTimeRange(filter.TimeRange); err != nil {
 		return nil, 0, err
 	}
-	return s.queryCallTraces(filter.UserName, "", nil, page, pageSize, &filter.TimeRange, filter, values...)
+	return s.queryCallTraces("", nil, page, pageSize, &filter.TimeRange, filter, values...)
 }
 
 func (s *SQLiteDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error) {
@@ -805,7 +805,7 @@ func buildUsageUnionQuery(tables []string, timeRange TimeRange, accountID int) (
 	}
 	return strings.Join(parts, " UNION ALL "), args
 }
-func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, filter CallTraceFilter, values ...string) ([]PersistedCallTraceSummary, int, error) {
+func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *int, page, pageSize int, timeRange *TimeRange, filter CallTraceFilter, values ...string) ([]PersistedCallTraceSummary, int, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, 0, err
 	}
@@ -852,7 +852,7 @@ func (s *SQLiteDatabase) queryCallTraces(userName, aiProviderName string, httpEr
 		}
 	}
 
-	unionQuery, args := buildTraceUnionQuery(tables, userName, aiProviderName, httpErrorCode, startTime, endTime, values, filter)
+	unionQuery, args := buildTraceUnionQuery(tables, aiProviderName, httpErrorCode, startTime, endTime, values, filter)
 	var total int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM ("+unionQuery+")", args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -1178,7 +1178,7 @@ func (s *SQLiteDatabase) queryTraceTable(table, userName, aiProviderName string,
 	return result, rows.Err()
 }
 
-func buildTraceUnionQuery(tables []string, userName, aiProviderName string, code *int, startTime, endTime *time.Time, values []string, filters ...CallTraceFilter) (string, []any) {
+func buildTraceUnionQuery(tables []string, aiProviderName string, code *int, startTime, endTime *time.Time, values []string, filters ...CallTraceFilter) (string, []any) {
 	filter := CallTraceFilter{}
 	if len(filters) > 0 {
 		filter = filters[0]
@@ -1211,8 +1211,12 @@ func buildTraceUnionQuery(tables []string, userName, aiProviderName string, code
 		if aiProviderName != "" {
 			appendFilter("account_id IN (SELECT id FROM accounts WHERE name = ? OR provider = ?)", aiProviderName, aiProviderName)
 		}
-		if userName != "" {
-			appendFilter("EXISTS (SELECT 1 FROM api_keys k JOIN users u ON u.id = k.user_id WHERE (k.key_value = apikey OR k.id = apikey) AND u.name = ?)", userName)
+		if filter.UserID != nil {
+			if *filter.UserID == 0 {
+				appendFilter("NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.key_value = apikey OR k.id = apikey)")
+			} else {
+				appendFilter("EXISTS (SELECT 1 FROM api_keys k WHERE (k.key_value = apikey OR k.id = apikey) AND k.user_id = ?)", *filter.UserID)
+			}
 		}
 		if len(values) > 0 {
 			placeholders := make([]string, len(values))

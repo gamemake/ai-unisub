@@ -213,7 +213,7 @@ type PersistedCallTraceSummary struct {
 
 // CallTraceFilter combines exact search and structured filters for call traces.
 type CallTraceFilter struct {
-	UserName        string    // Optional exact user-name filter.
+	UserID          *int      // Optional exact user ID filter; nil means no user filter, zero means unattributed calls.
 	AccountID       int       // Optional exact account ID filter; zero means no filter.
 	Code            *int      // Optional HTTP error-code filter.
 	Search          string    // Optional exact text filter.
