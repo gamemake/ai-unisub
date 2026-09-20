@@ -61,6 +61,7 @@ const (
 	MessagePageSizeRange                 = "page_size must be between 10 and 100"
 	MessageCouldNotQueryCallRecords      = "could not query call records"
 	MessageInvalidJSONBody               = "invalid JSON body"
+	MessageSessionIDRequired             = "session ID is required"
 	MessageUnsupportedOAuthService       = "unsupported OAuth service"
 	MessageInvalidOAuthSession           = "invalid OAuth session"
 	MessageInvalidOAuthCredential        = "invalid OAuth credential"

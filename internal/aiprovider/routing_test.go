@@ -15,6 +15,8 @@ func TestNativeSessionHeaders(t *testing.T) {
 		{"claude-cli/2.1.220 (external, cli)", "x-claude-code-session-id", "claude-session", "claude-session"},
 		{"codex_cli_rs/0.120.0 (Windows)", "session_id", "codex-session", "codex-session"},
 		{"codex-tui/0.146.0", "session-id", "codex-session", "codex-session"},
+		{"codex_vscode/1.0.0 (Windows)", "session-id", "codex-session", "codex-session"},
+		{"codex_chatgpt_desktop/1.0.0 (macOS)", "session-id", "codex-session", "codex-session"},
 		{"codex/1.0", "x-session-id", "codex-session", "codex-session"},
 		{"grok-shell/1.0.5 (linux; x86_64)", "x-grok-session-id", "grok-session", "grok-session"},
 		{"xai-grok-workspace/1.0", "x-grok-conv-id", "grok-conversation", "grok-conversation"},
@@ -60,6 +62,17 @@ func TestNativeSessionHeaders(t *testing.T) {
 	h.Set("User-Agent", "claude-cli/1.0 codex/1.0")
 	if DetectClient(h) != "" {
 		t.Fatal("ambiguous client accepted")
+	}
+	h = http.Header{}
+	h.Set("User-Agent", "custom-codex-client/1.0")
+	h.Set("Originator", "codex_cli_rs")
+	h.Set("session-id", "codex-session")
+	if got, _ := SessionID(h); got != "codex-session" {
+		t.Fatal(got)
+	}
+	h.Set("Originator", "Codex Desktop")
+	if got, _ := SessionID(h); got != "codex-session" {
+		t.Fatal(got)
 	}
 }
 

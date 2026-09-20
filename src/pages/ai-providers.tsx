@@ -9,6 +9,7 @@ import { SelectItem } from '@/components/ui/select'
 import { useEffect, useState } from 'react'
 import { ExternalLink, Info, Pencil, Search, Trash2 } from 'lucide-react'
 import { actions, useAIProviders, useAction, useProxies, useAICatalog } from '@/data/store'
+import { APIError } from '@/data/client'
 import type { Account, OAuthStart, AIProviderConfig, ClientType, GroupMember } from '@/data/types'
 import { Badge, Confirm, Empty, ErrorMessage, Field, Modal, PageHeader, QueryState, Submit, Table } from '@/components/shared'
 import { Button } from '@/components/ui/button'
@@ -199,7 +200,14 @@ function OAuthForm({ aiProvider, proxyGroupID, onClose, onComplete }: { aiProvid
         if (!active) return
         if (result.result_id) { const data = await actions.oauthResult(result.result_id); if (active) onComplete(data.result) }
         else timer = setTimeout(() => poll(s), Math.max(5, result.interval_seconds || 5) * 1000)
-      } catch (e) { if (active) setError(e as Error) }
+      } catch (e) {
+        // The callback consumes the OAuth session just before publishing its
+        // one-time result. A status request in that small window is still
+        // pending, not a failed authorization.
+        if (e instanceof APIError && e.status === 400 && e.message === 'oauth session not found') {
+          timer = setTimeout(() => poll(s), 1000)
+        } else if (active) setError(e as Error)
+      }
     }
     actions.oauthStart({ aiProvider, proxy_group_id: proxyGroupID }).then(s => { if (!active) return; setSession(s); timer = setTimeout(() => poll(s), 5000) }).catch(e => { if (active) setError(e) })
     return () => { active = false; clearTimeout(timer) }

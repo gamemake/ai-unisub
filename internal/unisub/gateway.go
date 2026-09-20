@@ -33,8 +33,13 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		common.WriteError(w, 401, common.MessageUnauthorized)
 		return
 	}
-	if _, err := aiprovider.SessionID(r.Header); err != nil {
+	sessionID, err := aiprovider.SessionID(r.Header)
+	if err != nil {
 		common.WriteError(w, 400, err.Error())
+		return
+	}
+	if sessionID == "" {
+		common.WriteError(w, http.StatusBadRequest, common.MessageSessionIDRequired)
 		return
 	}
 	userID := 0
@@ -159,7 +164,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 			outboundURL = outbound.URL.String()
 		}
 		saved := &database.PersistedCallTrace{ID: 0, APIKey: apiKey, AccountID: selected.ID, AIProviderType: selected.Adapter, RequestID: requestID, SourceIP: sourceIP, URL: r.URL.RequestURI(), OutboundURL: outboundURL, HTTPErrorCode: persistedCallHTTPCode(trace), HTTPErrorInfo: "", OriginalRequestHeaders: redactedHeaders(r.Header), OutboundRequestHeaders: redactedHeaders(trace.OutboundRequestHeaders), RequestBody: trace.RequestBody, ResponseHeaders: redactedHeaders(trace.ResponseHeaders), ResponseBody: trace.ResponseBody, Model: trace.Model, InputTokens: trace.InputTokens, OutputTokens: trace.OutputTokens, CacheCreationTokens: trace.CacheCreationTokens, CacheReadTokens: trace.CacheReadTokens, StartedAt: started, FinishedAt: time.Now().UTC()}
-		saved.SessionID = callSessionID(r.Header)
+		saved.SessionID = sessionID
 		if trace.HTTPErrorInfo != "" {
 			saved.HTTPErrorInfo = common.MessageUpstreamRequestFailed
 		}

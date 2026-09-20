@@ -26,14 +26,14 @@ export function QueryState({ query, children }: { query: { isPending: boolean; e
 export function PageHeader({ title, description, action }: { title: string; description: string; action?: ReactNode }) {
   return <div className="mb-7 flex flex-wrap items-center justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">{title}</h1><p className="mt-2 text-sm text-muted-foreground">{description}</p></div>{action}</div>
 }
-export function Modal({ title, description, children, onClose, wide }: { title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean }) {
+export function Modal({ title, description, children, onClose, wide, scrollBody }: { title: string; description?: string; children: ReactNode; onClose: () => void; wide?: boolean; scrollBody?: boolean }) {
   const descriptionId = useId()
-  return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className={`max-h-[calc(100dvh-2rem)] min-w-0 gap-6 overflow-x-hidden overflow-y-auto p-6 ${wide ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`} aria-describedby={description ? descriptionId : undefined}>
-    <DialogHeader className="pr-8">
+  return <Dialog open onOpenChange={open => { if (!open) onClose() }}><DialogContent className={`max-h-[calc(100dvh-2rem)] min-w-0 gap-6 p-6 ${scrollBody ? 'flex flex-col overflow-hidden' : 'overflow-x-hidden overflow-y-auto'} ${wide ? 'sm:max-w-4xl' : 'sm:max-w-xl'}`} aria-describedby={description ? descriptionId : undefined}>
+    <DialogHeader className="shrink-0 pr-8">
       <DialogTitle className="text-lg font-semibold leading-snug">{title}</DialogTitle>
       {description && <DialogDescription id={descriptionId} className="leading-relaxed">{description}</DialogDescription>}
     </DialogHeader>
-    <div className="min-w-0">{children}</div>
+    <div className={`min-w-0 ${scrollBody ? 'min-h-0 flex-1 overflow-x-hidden overflow-y-auto' : ''}`}>{children}</div>
   </DialogContent></Dialog>
 }
 export function Empty({ children = '暂无数据' }: { children?: ReactNode }) { return <UIEmpty><EmptyDescription>{children}</EmptyDescription></UIEmpty> }

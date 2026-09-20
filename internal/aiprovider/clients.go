@@ -23,14 +23,14 @@ var clientPatterns = []struct {
 	pattern *regexp.Regexp
 }{
 	{ClientAnthropic, regexp.MustCompile(`(?i)(?:^|[\s(])claude-cli/[0-9]`)},
-	{ClientOpenAI, regexp.MustCompile(`(?i)(?:^|[\s(])codex(?:_cli_rs|_cli|[- ]cli|-tui)?/[0-9]`)},
+	{ClientOpenAI, regexp.MustCompile(`(?i)(?:^|[\s(])codex(?:_cli_rs|_cli|[- ]cli|-tui|_vscode|_chatgpt_desktop|_atlas)?/[0-9]`)},
 	{ClientGrok, regexp.MustCompile(`(?i)(?:^|[\s(])(?:grok(?:-cli|-shell)?|xai-grok-workspace)/[0-9]`)},
 }
 
 // Unknown and ambiguous clients remain empty, not Any (Any is a policy).
 func DetectClient(h http.Header) ClientType {
 	if len(h.Values("User-Agent")) != 1 {
-		return ""
+		return detectOriginator(h)
 	}
 	var found ClientType
 	for _, p := range clientPatterns {
@@ -41,7 +41,26 @@ func DetectClient(h http.Header) ClientType {
 			found = p.kind
 		}
 	}
-	return found
+	if found != "" {
+		return found
+	}
+	return detectOriginator(h)
+}
+
+func detectOriginator(h http.Header) ClientType {
+	if len(h.Values("originator")) != 1 {
+		return ""
+	}
+	originator := strings.ToLower(strings.TrimSpace(h.Get("originator")))
+	if strings.HasPrefix(originator, "codex ") {
+		return ClientOpenAI
+	}
+	switch originator {
+	case "codex_cli_rs", "codex-tui", "codex_vscode", "codex_atlas", "codex_chatgpt_desktop":
+		return ClientOpenAI
+	default:
+		return ""
+	}
 }
 func SupplierForAdapter(adapter string) string {
 	switch adapter {

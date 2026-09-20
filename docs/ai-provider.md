@@ -111,10 +111,10 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
   | 客户端 | 客户端类型 | 原生 SessionID 请求头（由高到低） |
   | --- | --- | --- |
   | Claude Code / Claude CLI | Anthropic | `X-Claude-Code-Session-Id` |
-  | Codex CLI / Codex TUI | OpenAI | `Session-Id` → `Session_id` → `X-Session-Id` |
+  | Codex CLI / Codex TUI / Codex VS Code / Codex desktop | OpenAI | `Session-Id` → `Session_id` → `X-Session-Id` |
   | Grok CLI / Grok Shell / xai-grok-workspace | Grok | `X-Grok-Session-Id` → `X-Grok-Conv-Id` |
 
-  Claude Code 的会话头见 [官方更新日志](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)；不发送该头的旧客户端需要注入统一覆盖头。Codex 兼容旧版下划线 `session_id` 和短横线版本，部署在反向代理后时需确保旧版下划线头不会被丢弃；`X-Session-Id` 是兼容读取项，不代表网关已支持 Realtime WebSocket。Grok 的 session、conversation、request 字段见 [官方采样客户端](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-sampler/src/client.rs)：优先使用 session ID，只有缺失时才以 conversation ID 建立粘性；`X-Grok-Req-Id`、`X-Grok-Agent-Id` 和缓存 lineage 均不作为 SessionID。
+  Claude Code 的会话头见 [官方更新日志](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md)；不发送该头的旧客户端需要注入统一覆盖头。Codex 兼容旧版下划线 `session_id` 和短横线版本，并在 `User-Agent` 不含产品版本时使用官方 `originator` 头识别客户端；部署在反向代理后需确保这些头不会被丢弃。`X-Session-Id` 是兼容读取项，不代表网关已支持 Realtime WebSocket。Grok 的 session、conversation、request 字段见 [官方采样客户端](https://github.com/xai-org/grok-build/blob/main/crates/codegen/xai-grok-sampler/src/client.rs)：优先使用 session ID，只有缺失时才以 conversation ID 建立粘性；`X-Grok-Req-Id`、`X-Grok-Agent-Id` 和缓存 lineage 均不作为 SessionID。
 
   原生头只在对应客户端类型下解析，未知客户端的 SessionID 留空；不根据某个厂商头的存在反推客户端类型。原生会话头保留，避免破坏客户端与原厂的会话语义。
 - **作用域**：绑定键建议为 `(已认证用户或租户 ID, 组 ID, 客户端类型, SessionID)`，避免不同用户和组之间互相影响。限制 SessionID 长度（建议不超过 128 字节），拒绝多值和控制字符；非法值返回请求参数错误。

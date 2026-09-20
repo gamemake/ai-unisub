@@ -389,7 +389,7 @@ export function CallDetails({ call, onClose }: { call: Call; onClose: () => void
   const { mutate, ...detail } = useAction(actions.callDetail)
   useEffect(() => { mutate(call) }, [call, mutate])
   return (
-    <Modal wide title="调用详情" onClose={onClose}>
+    <Modal wide title="调用详情" onClose={onClose} scrollBody>
       <ErrorMessage error={detail.error} />
       {detail.isPending && <p role="status">正在加载详情…</p>}
       {detail.data && <CallDetailContent detail={detail.data} />}

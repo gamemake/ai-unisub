@@ -9,7 +9,7 @@ import (
 )
 
 func TestCallSessionID(t *testing.T) {
-	for _, name := range []string{"Session-Id", "X-Session-Id", "session_id"} {
+	for _, name := range []string{"Session-Id", "X-Session-Id", "session-id", "session_id"} {
 		h := http.Header{}
 		h.Set("User-Agent", "codex-tui/1.0")
 		h.Set(name, "header-session")
