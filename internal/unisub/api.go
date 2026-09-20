@@ -1034,9 +1034,58 @@ func (m *APIModule) keys(ctx framework.ModuleContext, w http.ResponseWriter, r *
 	case len(parts) == 2 && r.Method == http.MethodDelete:
 		id, _ := strconv.Atoi(parts[1])
 		m.deleteKey(ctx, w, u.ID, id)
+	case len(parts) == 4 && parts[2] == "config" && r.Method == http.MethodGet:
+		id, _ := strconv.Atoi(parts[1])
+		m.getKeyConfig(ctx, w, u.ID, id, parts[3])
+	case len(parts) == 4 && parts[2] == "config" && r.Method == http.MethodPut:
+		id, _ := strconv.Atoi(parts[1])
+		m.updateKeyConfig(ctx, w, r, u.ID, id, parts[3])
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (m *APIModule) getKeyConfig(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int, clientName string) {
+	key, ok := ownedAPIKey(ctx, w, userID, id)
+	if !ok {
+		return
+	}
+	client, err := parseCCSwitchClient(clientName)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, parseAPIKeyConfig(key.Config).CCSwitch[client])
+}
+
+func (m *APIModule) updateKeyConfig(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, userID, id int, clientName string) {
+	key, ok := ownedAPIKey(ctx, w, userID, id)
+	if !ok {
+		return
+	}
+	client, err := parseCCSwitchClient(clientName)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var input CCSwitchClientConfig
+	if !decodeJSON(w, r, &input) {
+		return
+	}
+	config := parseAPIKeyConfig(key.Config)
+	config.CCSwitch[client] = input
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, "invalid API key config")
+		return
+	}
+	key.Config = encoded
+	key.UpdatedAt = time.Now().UTC()
+	if err := ctx.Database().SaveAPIKey(key); err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotSaveAPIKey)
+		return
+	}
+	writeJSON(w, http.StatusOK, input)
 }
 
 func (m *APIModule) listKeys(ctx framework.ModuleContext, w http.ResponseWriter, userID int) {

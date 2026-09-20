@@ -3,6 +3,9 @@ export type * from './quota'
 
 export interface User { id: number; name: string; role: 'admin' | 'user'; enabled?: boolean; labels?: string[]; server_version?: string; created_at?: string; updated_at?: string }
 export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
+export type CCSwitchClient = 'claude_code' | 'claude_desktop' | 'codex' | 'grok_build'
+export interface CCSwitchModelConfig { model: string; supports_1m: boolean }
+export interface CCSwitchClientConfig { supplier_name: string; remark: string; models?: Record<string, CCSwitchModelConfig>; default_model?: string }
 export interface GroupMember { id: number; weight: number }
 // Only fixed, non-authentication header overrides; request defaults live in Go.
 // claude_url / openai_url / supported_clients are code-owned; models/name are configurable.

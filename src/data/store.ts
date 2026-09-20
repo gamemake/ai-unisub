@@ -1,7 +1,7 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalogResponse, APIKey, Call, CallDetail, List, OAuthStart, ProviderOption, Proxy, ProxyGroup, Supplier, Usage, Quota, User } from './types'
+import type { Account, AICatalogResponse, APIKey, CCSwitchClientConfig, Call, CallDetail, List, OAuthStart, ProviderOption, Proxy, ProxyGroup, Supplier, Usage, Quota, User } from './types'
 const id = (value: string | number) => encodeURIComponent(String(value))
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
@@ -14,6 +14,8 @@ export function useFetchQuota() {
 export const useAICatalog = () => useQuery({ queryKey: ['ai-catalog'], queryFn: ({ signal }) => request<AICatalogResponse>('/api/ai-catalog', { signal }) })
 export const useProviderOptions = () => useQuery({ queryKey: ['provider-options'], queryFn: ({ signal }) => request<List<ProviderOption>>('/api/keys/providers', { signal }) })
 export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }) => request<List<APIKey>>('/api/keys', { signal }) })
+export const useKeyConfig = (keyID?: number, client?: string) => useQuery({ queryKey: ['key-config', keyID, client], enabled: !!keyID && !!client, queryFn: ({ signal }) => request<CCSwitchClientConfig>(`/api/keys/${id(keyID!)}/config/${id(client!)}`, { signal }) })
+export const useProviderModels = (providerID?: number) => useQuery({ queryKey: ['provider-models', providerID], enabled: !!providerID, queryFn: ({ signal }) => request<{ models: { id: string }[] }>(`/api/ai-providers/${id(providerID!)}/models`, { signal }) })
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: ({ signal }) => request<List<User>>('/api/users', { signal }) })
 export const useProxies = (enabled = true) => useQuery({ queryKey: ['proxies'], enabled, queryFn: ({ signal }) => request<ProxyGroup[] | null>('/api/proxy-groups', { signal }) })
 export const useCalls = (params: Record<string, string> = {}) => useQuery({ queryKey: ['calls', params], staleTime: 0, refetchInterval: 15_000, queryFn: ({ signal }) => request<List<Call>>('/api/calls?' + new URLSearchParams(params), { signal }) })
@@ -32,6 +34,7 @@ export const actions = {
   saveSupplier: (input: { id: string; name: string; models: string[]; model_mappings: { from: string; to: string }[]; subscription_plan_weights?: Record<string, number> }) => request<Supplier>('/api/ai-catalog/' + id(input.id), json('PUT', input)),
   createKey: (input: { name: string; account_id: number; valid_seconds: number }) => request<APIKey>('/api/keys', json('POST', input)),
   deleteKey: (key: number) => request('/api/keys/' + id(key), json('DELETE')),
+  saveKeyConfig: (input: { id: number; client: string; config: CCSwitchClientConfig }) => request<CCSwitchClientConfig>(`/api/keys/${id(input.id)}/config/${id(input.client)}`, json('PUT', input.config)),
   createUser: (input: { name: string; password: string; role: string }) => request<User>('/api/users', json('POST', input)),
   updateUser: (input: { id: number; role?: string; enabled?: boolean }) => request<User>('/api/users/' + id(input.id), json('PUT', input)),
   resetPassword: (input: { id: number; password: string }) => request('/api/users/' + id(input.id) + '/password', json('POST', input)),

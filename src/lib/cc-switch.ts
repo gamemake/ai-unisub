@@ -1,4 +1,4 @@
-import type { ClientType } from '@/data/types'
+import type { CCSwitchClient, CCSwitchClientConfig, ClientType } from '@/data/types'
 
 // Infer UniSub's public root from the dashboard page the user actually opened.
 // Hash, query and index.html are not part of the gateway; a directory prefix is
@@ -27,6 +27,28 @@ export function ccSwitchApp(client: ClientType) {
 export function ccSwitchEndpoint(base: string, client: ClientType) {
   const root = base.replace(/\/+$/, '')
   return client === 'Anthropic' ? root : root + '/v1'
+}
+
+export const ccSwitchClientLabel: Record<CCSwitchClient, string> = { claude_code: 'Claude Code', claude_desktop: 'Claude Desktop', codex: 'Codex', grok_build: 'Grok Build' }
+export function clientsForTypes(types: ClientType[]): CCSwitchClient[] {
+  const out: CCSwitchClient[] = []
+  for (const type of types) {
+    if (type === 'Anthropic') out.push('claude_code', 'claude_desktop')
+    if (type === 'OpenAI') out.push('codex')
+    if (type === 'Grok') out.push('grok_build')
+  }
+  return [...new Set(out)]
+}
+export function protocolForClient(client: CCSwitchClient): ClientType { return client === 'claude_code' || client === 'claude_desktop' ? 'Anthropic' : client === 'codex' ? 'OpenAI' : 'Grok' }
+export function ccSwitchImportForClient(input: { pageURL: string; client: CCSwitchClient; name: string; apiKey: string; config: CCSwitchClientConfig }) {
+  const base = publicBaseURL(input.pageURL); if (!base) return null
+  const protocol = protocolForClient(input.client)
+  const endpoint = ccSwitchEndpoint(base, protocol)
+  const model = input.client === 'grok_build' || input.client === 'codex' ? input.config.default_model : input.config.models?.sonnet?.model
+  if (input.client !== 'claude_desktop' && !model?.trim()) return null
+  const params = new URLSearchParams({ resource: 'provider', app: input.client === 'claude_code' ? 'claude' : input.client === 'claude_desktop' ? 'claude-desktop' : input.client === 'codex' ? 'codex' : 'grokbuild', name: input.config.supplier_name || input.name, endpoint, homepage: base, apiKey: input.apiKey, enabled: 'true' })
+  if (model?.trim()) params.set('model', model.trim())
+  return { endpoint, href: 'ccswitch://v1/import?' + params }
 }
 
 export function ccSwitchImport(input: {

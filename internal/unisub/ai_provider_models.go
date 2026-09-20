@@ -46,8 +46,8 @@ func (m *APIModule) fetchAIProviderModels(ctx framework.ModuleContext, w http.Re
 }
 
 func (m *APIModule) listAIProviderModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
-	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+	if _, ok := currentUser(r); !ok {
+		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return
 	}
 	if r.Method != http.MethodGet {
