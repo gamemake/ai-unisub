@@ -85,6 +85,9 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 			if item.APIKey != "" || !validSession {
 				t.Fatal("incorrect summary", item)
 			}
+			if tt.query == "q=alice-filter" && item.Username != "alice-filter" {
+				t.Fatalf("expected username in call summary, got %q", item.Username)
+			}
 		}
 	}
 	for _, q := range []string{"code=invalid", "code=-1", "code=99", "code=600", "code=500suffix", "code=5.0", "range=invalid", "range=custom&from=2026-09-15&to=2026-09-01", "range=custom"} {

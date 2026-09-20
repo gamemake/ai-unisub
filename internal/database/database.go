@@ -198,6 +198,7 @@ type PersistedCallTraceSummary struct {
 	RequestID           string    `json:"request_id"`
 	SessionID           string    `json:"session_id"`
 	SourceIP            string    `json:"source_ip"`
+	Username            string    `json:"username"`
 	URL                 string    `json:"url"`
 	OutboundURL         string    `json:"outbound_url"`
 	HTTPErrorCode       int       `json:"http_error_code"`

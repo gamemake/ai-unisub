@@ -61,7 +61,7 @@ export interface APIKey { id: number; name: string; account_id: number; key: str
 export interface ProxyHealth { status: string; requests: number; failures: number; consecutive_failures: number; cooldown_until?: string; probe_requests: number; probe_failures: number }
 export interface Proxy { id?: string; url: string; enabled: boolean; status?: string; last_available?: string; network?: ProxyHealth; applications?: Record<string, ProxyHealth>; error_records?: { start_at: string; count: number }[] }
 export interface ProxyGroup { id: number; name: string; remark: string; max_retries: number; proxies: Proxy[]; created_at?: string; updated_at?: string }
-export interface Call { id: number; session_id: string; source_ip: string; request_id: string; account_id: number; provider_type: string; url: string; outbound_url?: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; cache_creation_tokens?: number; cache_read_tokens?: number; started_at: string; finished_at: string }
+export interface Call { id: number; session_id: string; source_ip: string; username?: string; request_id: string; account_id: number; provider_type: string; url: string; outbound_url?: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; cache_creation_tokens?: number; cache_read_tokens?: number; started_at: string; finished_at: string }
 /** Full call trace from GET /api/calls/:day/:id. Header maps follow Go http.Header JSON (name → string[]). Bodies are base64. */
 export type CallHeaders = Record<string, string[] | string>
 export interface CallDetail extends Call {

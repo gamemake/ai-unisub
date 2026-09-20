@@ -859,7 +859,7 @@ func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *i
 	}
 
 	offset := (page - 1) * pageSize
-	query := "SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM (" + unionQuery + ") ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?"
+	query := "SELECT t.id, t.apikey, t.provider_type, t.account_id, t.request_id, t.session_id, t.source_ip, t.url, t.outbound_url, t.http_error_code, t.http_error_info, t.model, t.input_tokens, t.output_tokens, t.cache_creation_tokens, t.cache_read_tokens, t.started_at, t.finished_at, COALESCE((SELECT u.name FROM api_keys k JOIN users u ON u.id = k.user_id WHERE (k.key_value = t.apikey OR k.id = t.apikey) LIMIT 1), '') FROM (" + unionQuery + ") AS t ORDER BY t.started_at DESC, t.id DESC LIMIT ? OFFSET ?"
 	queryArgs := append(slices.Clone(args), pageSize, offset)
 	rows, err = s.db.Query(query, queryArgs...)
 	if err != nil {
@@ -869,7 +869,7 @@ func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *i
 	result := make([]PersistedCallTraceSummary, 0, pageSize)
 	for rows.Next() {
 		var trace PersistedCallTraceSummary
-		if err := rows.Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt); err != nil {
+		if err := rows.Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt, &trace.Username); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, trace)
