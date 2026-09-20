@@ -14,6 +14,7 @@ import (
 func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 	for _, platform := range []string{"codex", "claude", "grok"} {
 		t.Run(platform, func(t *testing.T) {
+			supplier := map[string]string{"codex": "openai", "claude": "anthropic", "grok": "grok"}[platform]
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.RequestURI() != "/custom/v1/messages?test=1" || r.Method != "POST" {
 					t.Errorf("upstream request: %s %s", r.Method, r.URL)
@@ -40,7 +41,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			defer upstream.Close()
 			s := testApp(t)
 			cookie := loginTestApp(t, s)
-			body := fmt.Sprintf(`{"name":"test","provider":%q,"config":{"auth_type":"api_key","api_key":"upstream-secret","api_endpoint":%q}}`, platform, upstream.URL+"/custom/v1")
+			body := fmt.Sprintf(`{"name":"test","provider":%q,"config":{"auth_type":"api_key","api_key":"upstream-secret","supplier":%q,"api_endpoint":%q}}`, platform, supplier, upstream.URL+"/custom/v1")
 			out := appRequest(s, "POST", "/api/ai-providers", body, cookie)
 			if out.Code != 201 {
 				t.Fatalf("create: %d %s", out.Code, out.Body.String())

@@ -109,6 +109,50 @@ func TestFetchModelsAPIProvider(t *testing.T) {
 	}
 }
 
+func TestFetchModelsOpenAIAPIProviderFallsBackToSubscriptionCatalog(t *testing.T) {
+	t.Parallel()
+	var requests []string
+	p := &oauthAIProvider{
+		config: AIProviderConfig{
+			ID: 1, Kind: "api", Supplier: "openai", AuthType: AuthTypeAPIKey,
+			APIKey: "secret", APIEndpoint: "https://api.openai.com/v1",
+		},
+		client: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			requests = append(requests, r.URL.String())
+			if r.URL.String() == "https://api.openai.com/v1/models" {
+				return &http.Response{
+					StatusCode: http.StatusBadGateway,
+					Body:       io.NopCloser(strings.NewReader("gateway unavailable")),
+					Header:     make(http.Header),
+					Request:    r,
+				}, nil
+			}
+			if r.URL.String() != codexModelsJSONURL {
+				t.Fatalf("unexpected request %s", r.URL)
+			}
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Fatalf("fallback must not send API key: %q", got)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"models":[{"slug":"gpt-fallback"}]}`)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})},
+	}
+	models, err := p.FetchModels(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(models, ",") != "gpt-fallback" {
+		t.Fatalf("models=%v", models)
+	}
+	if strings.Join(requests, ",") != "https://api.openai.com/v1/models,"+codexModelsJSONURL {
+		t.Fatalf("requests=%v", requests)
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

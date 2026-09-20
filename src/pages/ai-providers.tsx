@@ -56,6 +56,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
   const catalog = useAICatalog(), providers = useAIProviders()
   const kind = account ? providerKind(account) : initialKind
   const [supplier, setSupplier] = useState(account?.config.supplier || (account ? platformSuppliers[account.provider] : '') || '')
+  const [apiEndpoint, setAPIEndpoint] = useState(account?.config.api_endpoint || '')
   const [client, setClient] = useState<ClientType>(account ? allowedClient(account) : 'Any')
   const [members, setMembers] = useState<GroupMember[]>(account?.config.members || [])
   const [name, setName] = useState(account?.name || ''), [aiProvider, setAIProvider] = useState(account?.provider || (kind === 'subscription' ? 'codex' : kind)), auth = kind === 'api' ? 'api_key' : 'oauth'
@@ -86,7 +87,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
       if (auth === 'api_key' && !supplier) throw new Error('请选择模型供应商，服务地址在模型供应商中配置')
       const config: AIProviderConfig = { ...account?.config, kind: isGroup ? 'group' : auth === 'api_key' ? 'api' : 'subscription', auth_type: auth, enabled, max_concurrent_connections: concurrency, queue_timeout_seconds: timeout, client_type: selectedClient }
       if (proxy) config.proxy_group_id = Number(proxy); else delete config.proxy_group_id
-      delete config.api_endpoint; delete config.official_only
+      delete config.official_only
       delete config.client_types; delete config.proxy; delete config.members; delete config.supplier
       delete config.subscription_plan
       if (isGroup) {
@@ -97,6 +98,8 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
         save.mutate({ id: account?.id, name, provider: aiProvider, config }, { onSuccess: onClose }); return
       }
       if (auth === 'api_key' && supplier) config.supplier = supplier
+      if (auth === 'api_key' && apiEndpoint.trim()) config.api_endpoint = apiEndpoint.trim()
+      else delete config.api_endpoint
       if (kind === 'subscription') {
         if (!subscriptionPlan || !planOptions.some(p => p.id === subscriptionPlan)) throw new Error('请选择订阅套餐')
         config.subscription_plan = subscriptionPlan
@@ -108,7 +111,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
       save.mutate({ id: account?.id, name, provider: aiProvider, config }, { onSuccess: onClose })
     } catch (e) { setValidation(e instanceof SyntaxError ? new Error('凭据不是有效的 JSON') : e as Error) }
   }
-  return <Modal wide title={`${account ? '编辑' : '添加'}${kinds.find(([value]) => value === kind)?.[1]}账号`} description={kind === 'group' ? '组合已有账号；权重高者优先，同权重优先复用会话，否则随机选择。' : kind === 'api' ? '使用 API Key 连接模型服务，服务地址统一在模型供应商中配置。' : '绑定 Anthropic、OpenAI 或 Grok 订阅账户，由账户决定模型供应商。'} onClose={onClose}><form onSubmit={submit} className="space-y-5">
+  return <Modal wide title={`${account ? '编辑' : '添加'}${kinds.find(([value]) => value === kind)?.[1]}账号`} description={kind === 'group' ? '组合已有账号；权重高者优先，同权重优先复用会话，否则随机选择。' : kind === 'api' ? '使用 API Key 连接模型服务；未填写覆盖地址时使用模型供应商的默认 URL。' : '绑定 Anthropic、OpenAI 或 Grok 订阅账户，由账户决定模型供应商。'} onClose={onClose}><form onSubmit={submit} className="space-y-5">
     {isGroup ? <>
       <div className="grid items-start gap-6 sm:grid-cols-2">
         <div className="space-y-4">
@@ -153,6 +156,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
               <label className="flex min-h-10 items-center gap-2"><input type="checkbox" disabled={!nativeClient} checked={selectedClient !== 'Any'} onChange={e => setClient(e.target.checked ? nativeClient : 'Any')} />仅允许原厂客户端</label>
             </> : <>
               <Field label="模型供应商"><AppSelect required value={supplier} onValueChange={setSupplier}><SelectItem value="">请选择模型供应商</SelectItem>{catalog.data?.catalog.suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</AppSelect></Field>
+              <Field label="覆盖 URL" hint="可选；留空使用模型供应商默认 URL"><Input type="url" value={apiEndpoint} onChange={e => setAPIEndpoint(e.target.value)} placeholder="https://api.example.com/v1" /></Field>
               <Field label="上游 API Key" hint={account?.auth_type === 'api_key' ? '留空保留原密钥' : undefined}><Input type="text" required={account?.auth_type !== 'api_key'} autoComplete="off" value={apiKey} onChange={e => setAPIKey(e.target.value)} placeholder={account?.auth_type === 'api_key' ? '••••••••（已保存）' : 'sk-…'} /></Field>
               <Field label="允许的客户端" hint="单选；Any 包括未知客户端。"><AppSelect value={client} onValueChange={value => setClient(value as ClientType)}>{(['Any', 'Anthropic', 'OpenAI', 'Grok'] as ClientType[]).map(value => <SelectItem key={value} value={value}>{clientTypeLabel(value)}</SelectItem>)}</AppSelect></Field>
             </>}

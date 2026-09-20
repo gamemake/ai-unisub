@@ -57,6 +57,19 @@ func (p *oauthAIProvider) fetchModels(ctx context.Context, fallback string) ([]s
 	if config.Supplier == "" {
 		config.Supplier = fallback
 	}
+	models, err := p.fetchModelsDirect(ctx, config, baseClient, resolver, source)
+	if err == nil || config.AuthType != AuthTypeAPIKey || config.Supplier != "openai" || ctx.Err() != nil {
+		return models, err
+	}
+	// Some OpenAI-compatible API endpoints do not expose a usable /models
+	// endpoint. Reuse the subscription catalog as a read-only fallback.
+	if models, fallbackErr := p.fetchCodexModelsCatalog(ctx, config, baseClient, resolver); fallbackErr == nil {
+		return models, nil
+	}
+	return nil, err
+}
+
+func (p *oauthAIProvider) fetchModelsDirect(ctx context.Context, config AIProviderConfig, baseClient *http.Client, resolver ProxyResolver, source func(string) Supplier) ([]string, error) {
 	// OpenAI subscription: public Codex catalog (no OAuth token); still uses proxy_group_id.
 	if config.AuthType == AuthTypeOAuth && config.Supplier == "openai" {
 		return p.fetchCodexModelsCatalog(ctx, config, baseClient, resolver)
