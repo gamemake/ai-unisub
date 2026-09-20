@@ -664,6 +664,11 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 		m.fetchAIProviderModels(ctx, w, r, id)
 		return
 	}
+	if len(parts) == 3 && parts[2] == "models" {
+		id, _ := strconv.Atoi(parts[1])
+		m.listAIProviderModels(ctx, w, r, id)
+		return
+	}
 	if r.Method != http.MethodGet {
 		m.mutations.Lock()
 		defer m.mutations.Unlock()

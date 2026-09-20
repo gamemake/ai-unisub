@@ -62,7 +62,7 @@ func TestAIProviderFetchModelsAPI(t *testing.T) {
 		{"GET", "demo", 405, nil},
 		{"POST", "demo", 200, []string{"dummy-fast", "dummy-long-context", "dummy-model", "dummy-reasoning"}},
 		{"POST", "api", 200, []string{"alpha", "beta"}},
-		{"POST", "group", 501, nil},
+		{"POST", "group", 200, []string{}},
 		{"POST", "unknown", 404, nil},
 		{"DELETE", "demo", 405, nil},
 	} {
@@ -81,8 +81,12 @@ func TestAIProviderFetchModelsAPI(t *testing.T) {
 		if err := json.Unmarshal(out.Body.Bytes(), &result); err != nil {
 			t.Fatal(err)
 		}
-		if strings.Join(result.Models, ",") != strings.Join(tc.want, ",") {
-			t.Fatalf("%s models=%v want %v", tc.name, result.Models, tc.want)
+		got := make([]string, 0, len(result.Models))
+		for _, model := range result.Models {
+			got = append(got, model.ID)
+		}
+		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
+			t.Fatalf("%s models=%v want %v", tc.name, got, tc.want)
 		}
 		if tc.name == "api" || tc.name == "demo" {
 			assertAdminCallRecorded(t, s, ids[tc.name], tc.name == "demo")

@@ -19,17 +19,12 @@ func (m *APIModule) fetchAIProviderModels(ctx framework.ModuleContext, w http.Re
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	provider, ok := ctx.AIProviders().Get(id)
-	if !ok {
+	if _, ok := ctx.AIProviders().Get(id); !ok {
 		common.WriteError(w, http.StatusNotFound, common.MessageAIProviderNotFound)
 		return
 	}
-	if provider.Config().Kind == "group" {
-		common.WriteError(w, http.StatusNotImplemented, "Group providers do not support model listing")
-		return
-	}
 	started := time.Now().UTC()
-	models, err := provider.FetchModels(adminCallContext(ctx, r, id, started))
+	models, err := ctx.AIProviders().FetchModels(adminCallContext(ctx, r, id, started), id)
 	if err != nil {
 		status := http.StatusBadGateway
 		if errors.Is(err, aiprovider.ErrModelsUnsupported) {
@@ -45,9 +40,26 @@ func (m *APIModule) fetchAIProviderModels(ctx framework.ModuleContext, w http.Re
 		return
 	}
 	if models == nil {
-		models = []string{}
+		models = []aiprovider.ModelInfo{}
 	}
 	writeJSON(w, http.StatusOK, aiprovider.ModelList{Models: models})
+}
+
+func (m *APIModule) listAIProviderModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+	if !isAdmin(r) {
+		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		return
+	}
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+		return
+	}
+	if _, ok := ctx.AIProviders().Get(id); !ok {
+		common.WriteError(w, http.StatusNotFound, common.MessageAIProviderNotFound)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, aiprovider.ModelList{Models: ctx.AIProviders().ModelsForProvider(id)})
 }
 
 func modelsError(err error) string {

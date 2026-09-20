@@ -34,9 +34,15 @@ var (
 // proxy group when configured. github.com/.../raw/... redirects to raw.githubusercontent.com.
 const codexModelsJSONURL = "https://github.com/openai/codex/raw/refs/heads/main/codex-rs/models-manager/models.json"
 
-// ModelList is the public result of FetchModels.
+// ModelInfo describes a model exposed by an AI provider. Keep this as an
+// object so model metadata can be added without changing the response shape.
+type ModelInfo struct {
+	ID string `json:"id"`
+}
+
+// ModelList is the public result of fetching models for an account.
 type ModelList struct {
-	Models []string `json:"models"`
+	Models []ModelInfo `json:"models"`
 }
 
 // FetchModels queries the upstream model catalog for this provider instance.

@@ -170,7 +170,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
     if (!id) return
     fetchModels.mutate(id, {
       onSuccess: result => {
-        setModelsText((result.models || []).join('\n'))
+        setModelsText((result.models || []).map(model => model.id).join('\n'))
         setFormError('')
       },
     })

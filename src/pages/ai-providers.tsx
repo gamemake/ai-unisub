@@ -7,7 +7,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { AppSelect } from '@/components/app-select'
 import { SelectItem } from '@/components/ui/select'
 import { useEffect, useState } from 'react'
-import { ExternalLink, Pencil, Search, Trash2 } from 'lucide-react'
+import { ExternalLink, Info, Pencil, Search, Trash2 } from 'lucide-react'
 import { actions, useAIProviders, useAction, useProxies, useAICatalog } from '@/data/store'
 import type { Account, OAuthStart, AIProviderConfig, ClientType, GroupMember } from '@/data/types'
 import { Badge, Confirm, Empty, ErrorMessage, Field, Modal, PageHeader, QueryState, Submit, Table } from '@/components/shared'
@@ -37,7 +37,7 @@ function supplierCell(a: Account) {
   return plan ? <>{name}<div className="mt-1 text-xs text-muted-foreground">{plan}</div></> : <>{name}</>
 }
 export function AIProviders() {
-  const query = useAIProviders(), [search, setSearch] = useState(''), [platform, setPlatform] = useState(''), [editing, setEditing] = useState<Account | ProviderKind | null>(null), [removing, setRemoving] = useState<Account | null>(null)
+  const query = useAIProviders(), [search, setSearch] = useState(''), [platform, setPlatform] = useState(''), [editing, setEditing] = useState<Account | ProviderKind | null>(null), [removing, setRemoving] = useState<Account | null>(null), [modelsAccount, setModelsAccount] = useState<Account | null>(null)
   const remove = useAction(actions.deleteAIProvider, ['ai-providers', 'provider-options', 'keys', 'usage'])
   const rows = query.data?.items.filter(a => {
     if (platform && providerKind(a) !== platform) return false
@@ -47,10 +47,21 @@ export function AIProviders() {
   }) || []
   return <><PageHeader title="账号管理" description="统一管理订阅账户、API 服务与调度组，配置客户端访问和成员权重。" action={<div className="flex flex-wrap gap-2"><Button variant="outline" nativeButton={false} role="link" render={<a href="#ai-catalog" />}>模型供应商</Button><AddAIProviderButton onSelect={setEditing} /></div>} />
     <Card><div className="flex flex-wrap gap-3 p-5"><div className="relative min-w-48 flex-1"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input aria-label="搜索账号" className="pl-9" placeholder="搜索名称、供应商或套餐" value={search} onChange={e => setSearch(e.target.value)} /></div><AppSelect aria-label="筛选类型" className="w-44" value={platform} onValueChange={setPlatform}><SelectItem value="">全部类型</SelectItem>{kinds.map(([v, n]) => <SelectItem key={v} value={v}>{n}</SelectItem>)}</AppSelect></div>
-    <QueryState query={query}>{rows.length ? <Table headers={['名称', '类型', '供应商 / 成员', '允许的客户端', '并发', '状态', '额度', '操作']}>{rows.map(a => <DetailTableRow key={a.id} aria-label={`查看 ${a.name} 详情`} onOpen={() => setEditing(a)}><TableCell className="font-medium">{a.name}</TableCell><TableCell>{kinds.find(k => k[0] === providerKind(a))?.[1]}</TableCell><TableCell>{providerKind(a) === 'group' ? <><span>{a.config.members?.length || 0} 个成员</span><div className="mt-1 max-w-64 truncate text-xs text-muted-foreground" title={a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、')}>{a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、') || '尚未配置成员'}</div></> : supplierCell(a)}</TableCell><TableCell>{allowedClient(a) === 'Any' ? '不限客户端' : clientTypeLabel(allowedClient(a))}{providerKind(a) === 'subscription' && allowedClient(a) !== 'Any' && <div className="mt-1 text-xs text-muted-foreground">仅原厂客户端</div>}</TableCell><TableCell>{providerKind(a) === 'group' ? '按成员限制' : a.config.max_concurrent_connections || 1}</TableCell><TableCell><Badge enabled={a.enabled} /></TableCell><TableCell>{providerKind(a) !== 'group' && <ProviderQuota account={a} />}</TableCell><TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`编辑 ${a.name}`} onClick={() => setEditing(a)}><Pencil /></Button><Button variant="ghost" size="icon" aria-label={`删除 ${a.name}`} onClick={() => { remove.reset(); setRemoving(a) }}><Trash2 /></Button></div></TableCell></DetailTableRow>)}</Table> : <Empty>{query.data?.items.length ? '没有匹配的账号' : '添加订阅账户或 API 服务，再通过组统一调度多个账号。'}</Empty>}</QueryState></Card>
+    <QueryState query={query}>{rows.length ? <Table headers={['名称', '类型', '供应商 / 成员', '允许的客户端', '并发', '状态', '额度', '操作']}>{rows.map(a => <DetailTableRow key={a.id} aria-label={`查看 ${a.name} 详情`} onOpen={() => setEditing(a)}><TableCell className="font-medium">{a.name}</TableCell><TableCell>{kinds.find(k => k[0] === providerKind(a))?.[1]}</TableCell><TableCell>{providerKind(a) === 'group' ? <><span>{a.config.members?.length || 0} 个成员</span><div className="mt-1 max-w-64 truncate text-xs text-muted-foreground" title={a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、')}>{a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、') || '尚未配置成员'}</div></> : supplierCell(a)}</TableCell><TableCell>{allowedClient(a) === 'Any' ? '不限客户端' : clientTypeLabel(allowedClient(a))}{providerKind(a) === 'subscription' && allowedClient(a) !== 'Any' && <div className="mt-1 text-xs text-muted-foreground">仅原厂客户端</div>}</TableCell><TableCell>{providerKind(a) === 'group' ? '按成员限制' : a.config.max_concurrent_connections || 1}</TableCell><TableCell><Badge enabled={a.enabled} /></TableCell><TableCell>{providerKind(a) !== 'group' && <ProviderQuota account={a} />}</TableCell><TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`查看 ${a.name} 模型列表`} onClick={() => setModelsAccount(a)}><Info /></Button><Button variant="ghost" size="icon" aria-label={`编辑 ${a.name}`} onClick={() => setEditing(a)}><Pencil /></Button><Button variant="ghost" size="icon" aria-label={`删除 ${a.name}`} onClick={() => { remove.reset(); setRemoving(a) }}><Trash2 /></Button></div></TableCell></DetailTableRow>)}</Table> : <Empty>{query.data?.items.length ? '没有匹配的账号' : '添加订阅账户或 API 服务，再通过组统一调度多个账号。'}</Empty>}</QueryState></Card>
     {editing && (typeof editing === 'string' ? <AIProviderForm initialKind={editing} onClose={() => setEditing(null)} /> : <AIProviderForm account={editing} onClose={() => setEditing(null)} />)}
     {removing && <Confirm title={`删除账号「${removing.name}」？`} pending={remove.isPending} error={remove.error} onClose={() => setRemoving(null)} onConfirm={() => remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })} />}
+    {modelsAccount && <ProviderModels account={modelsAccount} onClose={() => setModelsAccount(null)} />}
   </>
+}
+
+function ProviderModels({ account, onClose }: { account: Account; onClose: () => void }) {
+  const models = useAction(actions.listProviderModels)
+  useEffect(() => { models.mutate(account.id) }, [account.id])
+  return <Modal title={`${account.name} 模型列表`} description="列表来自当前账号或组成员的实时模型能力；组账号显示所有成员的交集。" onClose={onClose}>
+    {models.isPending && <p role="status" className="text-sm text-muted-foreground">正在获取模型列表…</p>}
+    <ErrorMessage error={models.error} />
+    {models.data && (models.data.models.length ? <div className="max-h-96 overflow-y-auto rounded-lg border p-3"><ul className="grid gap-2 sm:grid-cols-2">{models.data.models.map(model => <li key={model.id} className="break-all rounded-md bg-muted/50 px-3 py-2 font-mono text-sm">{model.id}</li>)}</ul></div> : <Empty>当前没有共同支持的模型。</Empty>)}
+  </Modal>
 }
 export function AIProviderForm({ account, initialKind, onClose }: ({ account: Account; initialKind?: never } | { account?: undefined; initialKind: ProviderKind }) & { onClose: () => void }) {
   const catalog = useAICatalog(), providers = useAIProviders()

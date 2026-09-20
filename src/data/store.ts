@@ -23,7 +23,8 @@ export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, inva
 }
 export const actions = {
   fetchQuota: (providerID: number) => request<Quota>(`/api/ai-providers/${id(providerID)}/refresh-quota`, json('POST')),
-  fetchModels: (providerID: number) => request<{ models: string[] }>(`/api/ai-providers/${id(providerID)}/fetch-models`, json('POST')),
+  fetchModels: (providerID: number) => request<{ models: { id: string }[] }>(`/api/ai-providers/${id(providerID)}/fetch-models`, json('POST')),
+  listProviderModels: (providerID: number) => request<{ models: { id: string }[] }>(`/api/ai-providers/${id(providerID)}/models`),
   login: async (input: { username: string; password: string }) => { await request('/api/login', json('POST', input)); await clearSession(); await queryClient.invalidateQueries({ queryKey: ['me'] }) },
   logout: async () => { await request('/api/logout', json('POST')); await clearSession() },
   saveAIProvider: (input: { id?: number; name: string; provider: string; config: Account['config'] }) => request<Account>('/api/ai-providers' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
