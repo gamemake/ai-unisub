@@ -13,7 +13,8 @@ const codexPlans: SubscriptionPlanOption[] = [
 
 const claudePlans: SubscriptionPlanOption[] = [
   { id: 'claude_pro', label: 'Pro' },
-  { id: 'claude_max', label: 'Max' },
+  { id: 'claude_max_5x', label: 'Max 5x' },
+  { id: 'claude_max_20x', label: 'Max 20x' },
 ]
 
 const grokPlans: SubscriptionPlanOption[] = [

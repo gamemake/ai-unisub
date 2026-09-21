@@ -12,7 +12,8 @@ const (
 	PlanCodexPro5x     = "codex_pro_5x"
 	PlanCodexPro20x    = "codex_pro_20x"
 	PlanClaudePro      = "claude_pro"
-	PlanClaudeMax      = "claude_max"
+	PlanClaudeMax5x    = "claude_max_5x"
+	PlanClaudeMax20x   = "claude_max_20x"
 	PlanSuperGrok      = "super_grok"
 	PlanSuperGrokPlus  = "super_grok_plus"
 	PlanSuperGrokHeavy = "super_grok_heavy"
@@ -32,7 +33,8 @@ var (
 	}
 	claudePlans = []SubscriptionPlanInfo{
 		{ID: PlanClaudePro, Label: "Pro"},
-		{ID: PlanClaudeMax, Label: "Max"},
+		{ID: PlanClaudeMax5x, Label: "Max 5x"},
+		{ID: PlanClaudeMax20x, Label: "Max 20x"},
 	}
 	grokPlans = []SubscriptionPlanInfo{
 		{ID: PlanSuperGrok, Label: "SuperGrok"},
@@ -109,8 +111,9 @@ func BuiltinSubscriptionPlanWeights(supplierID string) map[string]int {
 		}
 	case "anthropic":
 		return map[string]int{
-			PlanClaudePro: 1,
-			PlanClaudeMax: 20,
+			PlanClaudePro:    1,
+			PlanClaudeMax5x:  5,
+			PlanClaudeMax20x: 20,
 		}
 	case "grok":
 		return map[string]int{
@@ -123,7 +126,7 @@ func BuiltinSubscriptionPlanWeights(supplierID string) map[string]int {
 	}
 }
 
-// UsageWeight returns the relative capacity weight for a plan using builtin defaults.
+// UsageWeight returns the relative usage weight for a plan using builtin defaults.
 // Prefer AIProviderManager.UsageWeight when catalog overlays may apply.
 func UsageWeight(supplierID, plan string) int {
 	return usageWeightFromMap(BuiltinSubscriptionPlanWeights(supplierID), supplierID, plan)

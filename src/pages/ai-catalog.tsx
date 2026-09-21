@@ -68,7 +68,7 @@ export function AICatalogPage() {
           <TableCell className="w-[26%] max-w-0 whitespace-normal break-all text-xs text-muted-foreground">
             <div>{s.models?.length ? `${s.models.slice(0, 2).join('、')}${s.models.length > 2 ? ` 等 ${s.models.length} 个` : ''}` : '—'}</div>
             {!!s.model_mappings?.length && <div className="mt-1 text-muted-foreground/80">映射 {s.model_mappings.length} 条</div>}
-            {!!Object.keys(s.subscription_plan_weights || {}).length && <div className="mt-1 text-muted-foreground/80">套餐权重 {Object.keys(s.subscription_plan_weights || {}).length} 项</div>}
+            {!!Object.keys(s.subscription_plan_weights || {}).length && <div className="mt-1 text-muted-foreground/80">套餐用量权重 {Object.keys(s.subscription_plan_weights || {}).length} 项</div>}
           </TableCell>
         </DetailTableRow>
       )}</Table></Card>
@@ -200,7 +200,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
             {([
               ['models', '支持模型'] as const,
               ['mappings', '模型映射'] as const,
-              ...(hasPlans ? [['weights', '套餐权重'] as const] : []),
+              ...(hasPlans ? [['weights', '套餐用量权重'] as const] : []),
             ]).map(([id, label]) => (
               <button
                 key={id}
@@ -221,7 +221,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
           ) : tab === 'mappings' ? (
             <FieldReset label="模型映射" disabled={!mappingsDirty} onReset={() => { setMappings((builtin.model_mappings || []).map(row => ({ ...row }))); setFormError('') }} />
           ) : (
-            <FieldReset label="套餐权重" disabled={!weightsDirty} onReset={() => {
+            <FieldReset label="套餐用量权重" disabled={!weightsDirty} onReset={() => {
               const next: Record<string, number> = {}
               for (const plan of planOptions) next[plan.id] = builtin.subscription_plan_weights?.[plan.id] ?? 1
               setWeights(next)
@@ -332,7 +332,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
 
         {tab === 'weights' && hasPlans && (
           <div role="tabpanel" id="supplier-panel-weights" aria-labelledby="supplier-tab-weights" className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-            <p className="text-xs text-muted-foreground">用量权重表示同优先级档内的相对容量，供将来负载均衡使用；不等于组员调度优先级。只使用配置值。</p>
+            <p className="text-xs text-muted-foreground">用量权重表示同优先级档内的相对用量，供将来负载均衡使用；不等于组员调度优先级。只使用配置值。</p>
             <div className="space-y-3">
               {planOptions.map(plan => (
                 <div key={plan.id} className="flex flex-wrap items-center gap-3">

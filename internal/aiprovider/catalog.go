@@ -28,7 +28,7 @@ type Supplier struct {
 	ModelMappings []ModelMapping `json:"model_mappings,omitempty"`
 	// SupportedClients is derived from non-empty URLs (code-owned).
 	SupportedClients []ClientType `json:"supported_clients"`
-	// SubscriptionPlanWeights is a flat plan_id → capacity weight map for
+	// SubscriptionPlanWeights is a flat plan_id → usage weight map for
 	// future same-tier load balancing. Code defaults; overlay may replace.
 	SubscriptionPlanWeights map[string]int `json:"subscription_plan_weights,omitempty"`
 	// Only non-authentication header overrides are persisted. Request defaults

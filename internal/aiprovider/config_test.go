@@ -47,12 +47,12 @@ func TestPrepareConfigSubscriptionPlan(t *testing.T) {
 		t.Fatalf("codex default plan: %q", c.SubscriptionPlan)
 	}
 
-	raw, err = prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"claude_max"}`))
+	raw, err = prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"claude_max_20x"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	c, err = decodeAIProviderConfig(1, raw)
-	if err != nil || c.SubscriptionPlan != PlanClaudeMax {
+	if err != nil || c.SubscriptionPlan != PlanClaudeMax20x {
 		t.Fatalf("claude plan: %+v %v", c, err)
 	}
 
@@ -77,8 +77,10 @@ func TestPrepareConfigSubscriptionPlan(t *testing.T) {
 	if _, err := prepareConfig(1, "codex", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"plus"}`)); err == nil {
 		t.Fatal("unprefixed plan must be rejected")
 	}
-	if _, err := prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"claude_free"}`)); err == nil {
-		t.Fatal("removed free plan must be rejected")
+	for _, plan := range []string{"claude_free", "claude_max"} {
+		if _, err := prepareConfig(1, "claude", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"`+plan+`"}`)); err == nil {
+			t.Fatalf("removed plan %q must be rejected", plan)
+		}
 	}
 	if _, err := prepareConfig(1, "codex", json.RawMessage(`{"kind":"subscription","credential_id":"c","subscription_plan":"codex_pro"}`)); err == nil {
 		t.Fatal("codex_pro baseline must be rejected")

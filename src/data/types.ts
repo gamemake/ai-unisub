@@ -22,7 +22,7 @@ export interface Supplier {
   /** Client model → upstream model; `from` allows one `*` wildcard. */
   model_mappings?: ModelMapping[]
   supported_clients: ClientType[]
-  /** Flat plan_id → capacity weight for same-tier load balancing. */
+  /** Flat plan_id → usage weight for same-tier load balancing. */
   subscription_plan_weights?: Record<string, number>
   subscription_usage_header_overrides?: Record<string, string>
   api_usage_header_overrides?: Record<string, string>
@@ -32,7 +32,7 @@ export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supp
 /** Highest subscription tier for kind=subscription; config-only, adapter-prefixed IDs. */
 export type SubscriptionPlan =
   | 'codex_plus' | 'codex_pro_5x' | 'codex_pro_20x'
-  | 'claude_pro' | 'claude_max'
+  | 'claude_pro' | 'claude_max_5x' | 'claude_max_20x'
   | 'super_grok' | 'super_grok_plus' | 'super_grok_heavy'
 
 export interface AIProviderConfig {
