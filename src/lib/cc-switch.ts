@@ -11,14 +11,14 @@ export function publicBaseURL(pageURL: string) {
   return url.origin + path
 }
 
-const clientApps: Record<Exclude<ClientType, 'Any'>, string> = {
-  Anthropic: 'claude',
-  OpenAI: 'codex',
-  Grok: 'grokbuild',
+const clientApps: Record<ClientType, string> = {
+  claude: 'claude',
+  codex: 'codex',
+  grok: 'grokbuild',
 }
 
 export function ccSwitchApp(client: ClientType) {
-  if (client === 'Any' || !clientApps[client]) return ''
+  if (!clientApps[client]) return ''
   return clientApps[client]
 }
 
@@ -26,20 +26,20 @@ export function ccSwitchApp(client: ClientType) {
 // and append /responses. CC Switch only switches the live client when enabled=true.
 export function ccSwitchEndpoint(base: string, client: ClientType) {
   const root = base.replace(/\/+$/, '')
-  return client === 'Anthropic' ? root : root + '/v1'
+  return client === 'claude' ? root : root + '/v1'
 }
 
 export const ccSwitchClientLabel: Record<CCSwitchClient, string> = { claude_code: 'Claude Code', claude_desktop: 'Claude Desktop', codex: 'Codex', grok_build: 'Grok Build' }
 export function clientsForTypes(types: ClientType[]): CCSwitchClient[] {
   const out: CCSwitchClient[] = []
   for (const type of types) {
-    if (type === 'Anthropic') out.push('claude_code', 'claude_desktop')
-    if (type === 'OpenAI') out.push('codex')
-    if (type === 'Grok') out.push('grok_build')
+    if (type === 'claude') out.push('claude_code', 'claude_desktop')
+    if (type === 'codex') out.push('codex')
+    if (type === 'grok') out.push('grok_build')
   }
   return [...new Set(out)]
 }
-export function protocolForClient(client: CCSwitchClient): ClientType { return client === 'claude_code' || client === 'claude_desktop' ? 'Anthropic' : client === 'codex' ? 'OpenAI' : 'Grok' }
+export function protocolForClient(client: CCSwitchClient): ClientType { return client === 'claude_code' || client === 'claude_desktop' ? 'claude' : client === 'codex' ? 'codex' : 'grok' }
 export function ccSwitchImportForClient(input: { pageURL: string; client: CCSwitchClient; name: string; apiKey: string; config: CCSwitchClientConfig }) {
   const base = publicBaseURL(input.pageURL); if (!base) return null
   const protocol = protocolForClient(input.client)

@@ -77,10 +77,10 @@ type SupplierOverlayStore interface {
 func SupportedClientsForBuiltin(b SupplierBuiltin) []ClientType {
 	var out []ClientType
 	if b.ClaudeURL != "" {
-		out = append(out, ClientAnthropic)
+		out = append(out, ClientClaude)
 	}
 	if b.OpenAIURL != "" {
-		out = append(out, ClientOpenAI, ClientGrok)
+		out = append(out, ClientCodex, ClientGrok)
 	}
 	return out
 }
@@ -496,7 +496,7 @@ func (m *AIProviderManager) DefaultURL(supplier string, client ClientType) strin
 
 // URLForClient uses the shared OpenAI-compatible endpoint for Grok.
 func (s Supplier) URLForClient(client ClientType) string {
-	if client == ClientAnthropic {
+	if client == ClientClaude {
 		return s.ClaudeURL
 	}
 	return s.OpenAIURL
@@ -581,9 +581,9 @@ func MigrateLegacyCatalogOverlays(raw json.RawMessage) (map[string]json.RawMessa
 // EndpointClient follows the wire protocol, including requests from generic SDKs.
 func EndpointClient(path string) ClientType {
 	if strings.HasSuffix(path, "/messages") || strings.HasSuffix(path, "/messages/count_tokens") {
-		return ClientAnthropic
+		return ClientClaude
 	}
-	return ClientOpenAI
+	return ClientCodex
 }
 
 // SupportedClientsForProvider returns protocol capability clients for one

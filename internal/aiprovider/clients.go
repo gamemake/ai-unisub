@@ -1,7 +1,6 @@
 package aiprovider
 
 import (
-	"cmp"
 	"errors"
 	"net/http"
 	"regexp"
@@ -11,10 +10,9 @@ import (
 type ClientType string
 
 const (
-	ClientAnthropic ClientType = "Anthropic"
-	ClientOpenAI    ClientType = "OpenAI"
-	ClientGrok      ClientType = "Grok"
-	ClientAny       ClientType = "Any"
+	ClientClaude ClientType = "claude"
+	ClientCodex  ClientType = "codex"
+	ClientGrok   ClientType = "grok"
 )
 
 var ErrClientDenied = errors.New("client type is not allowed")
@@ -22,12 +20,12 @@ var clientPatterns = []struct {
 	kind    ClientType
 	pattern *regexp.Regexp
 }{
-	{ClientAnthropic, regexp.MustCompile(`(?i)(?:^|[\s(])claude-cli/[0-9]`)},
-	{ClientOpenAI, regexp.MustCompile(`(?i)(?:^|[\s(])codex(?:_cli_rs|_cli|[- ]cli|-tui|_vscode|_chatgpt_desktop|_atlas)?/[0-9]`)},
+	{ClientClaude, regexp.MustCompile(`(?i)(?:^|[\s(])claude-cli/[0-9]`)},
+	{ClientCodex, regexp.MustCompile(`(?i)(?:^|[\s(])codex(?:_cli_rs|_cli|[- ]cli|-tui|_vscode|_chatgpt_desktop|_atlas)?/[0-9]`)},
 	{ClientGrok, regexp.MustCompile(`(?i)(?:^|[\s(])(?:grok(?:-cli|-shell)?|xai-grok-workspace)/[0-9]`)},
 }
 
-// Unknown and ambiguous clients remain empty, not Any (Any is a policy).
+// Unknown and ambiguous clients remain empty. An empty policy allows any client.
 func DetectClient(h http.Header) ClientType {
 	if len(h.Values("User-Agent")) != 1 {
 		return detectOriginator(h)
@@ -53,11 +51,11 @@ func detectOriginator(h http.Header) ClientType {
 	}
 	originator := strings.ToLower(strings.TrimSpace(h.Get("originator")))
 	if strings.HasPrefix(originator, "codex ") {
-		return ClientOpenAI
+		return ClientCodex
 	}
 	switch originator {
 	case "codex_cli_rs", "codex-tui", "codex_vscode", "codex_atlas", "codex_chatgpt_desktop":
-		return ClientOpenAI
+		return ClientCodex
 	default:
 		return ""
 	}
@@ -77,19 +75,19 @@ func effectiveClient(c AIProviderConfig) ClientType {
 	if c.OfficialOnly {
 		switch c.Supplier {
 		case "anthropic":
-			return ClientAnthropic
+			return ClientClaude
 		case "openai":
-			return ClientOpenAI
+			return ClientCodex
 		case "grok":
 			return ClientGrok
 		}
 		return ""
 	}
-	return cmp.Or(c.ClientType, ClientAny)
+	return c.ClientType
 }
 func AllowsClient(c AIProviderConfig, client ClientType) bool {
 	allowed := effectiveClient(c)
-	return allowed == ClientAny || allowed != "" && allowed == client
+	return allowed == "" || allowed == client
 }
 func validateRoutingConfig(c *AIProviderConfig) error {
 	if c.Kind == "" {
@@ -108,9 +106,8 @@ func validateRoutingConfig(c *AIProviderConfig) error {
 	if c.OfficialOnly && c.Kind != "subscription" {
 		return errors.New("official-only requires a subscription")
 	}
-	c.ClientType = cmp.Or(c.ClientType, ClientAny)
 	switch c.ClientType {
-	case ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok:
+	case "", ClientClaude, ClientCodex, ClientGrok:
 	default:
 		return errors.New("invalid client type")
 	}
@@ -125,9 +122,9 @@ func validateRoutingConfig(c *AIProviderConfig) error {
 func SessionID(h http.Header) (string, error) {
 	var names []string
 	switch DetectClient(h) {
-	case ClientAnthropic:
+	case ClientClaude:
 		names = append(names, "X-Claude-Code-Session-Id")
-	case ClientOpenAI:
+	case ClientCodex:
 		names = append(names, "Session-Id", "Session_id", "X-Session-Id")
 	case ClientGrok:
 		names = append(names, "X-Grok-Session-Id", "X-Grok-Conv-Id")

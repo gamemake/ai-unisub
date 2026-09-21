@@ -7,7 +7,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await page.getByRole('button', { name: '登录控制台' }).click()
   await expect(page.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
   for (const name of ['Routing A', 'Routing B']) {
-    const created = await page.request.post('/api/ai-providers', { data: { name, provider: 'dummy', config: { client_type: 'OpenAI' } } })
+    const created = await page.request.post('/api/ai-providers', { data: { name, provider: 'dummy', config: { client_type: 'codex' } } })
     expect(created.status()).toBe(201)
   }
   // API setup does not invalidate the already-mounted browser query cache.
@@ -21,7 +21,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(dialog.getByRole('heading', { name: '添加组账号', exact: true })).toBeVisible()
   await expect(dialog.getByRole('combobox', { name: '类型', exact: true })).toHaveCount(0)
   await expect(dialog.getByLabel('最大并发', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('Any')
+  await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('不限客户端')
   await expect(dialog.getByRole('table', { name: '组成员', exact: true })).toBeVisible()
   await expect(dialog.getByRole('columnheader')).toHaveText(['选择', '成员', '状态', '权重'])
   await dialog.getByRole('checkbox', { name: /^Routing A/ }).check()
@@ -40,7 +40,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page.getByRole('cell', { name: 'Routing Group', exact: true })).toBeVisible()
   const savedProviders = await (await page.request.get('/api/ai-providers')).json()
-  expect(savedProviders.items.find((p: { name: string }) => p.name === 'Routing Group').config.client_type).toBe('OpenAI')
+  expect(savedProviders.items.find((p: { name: string }) => p.name === 'Routing Group').config.client_type).toBe('codex')
   await page.getByRole('button', { name: '编辑 Routing Group', exact: true }).click()
   await expect(page.getByRole('spinbutton', { name: 'Routing A 权重', exact: true })).toHaveValue('5')
   await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('Codex')
@@ -58,7 +58,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page.getByRole('dialog')).toHaveCount(0)
   let dummyProviders = await (await page.request.get('/api/ai-providers')).json()
   const dummyConfig = dummyProviders.items.find((p: { name: string }) => p.name === 'Routing Dummy').config
-  expect(dummyConfig.client_type).toBe('Anthropic')
+  expect(dummyConfig.client_type).toBe('claude')
   expect(dummyConfig.official_only).toBeUndefined()
   await page.getByRole('button', { name: '编辑 Routing Dummy', exact: true }).click()
   await expect(dialog.getByRole('checkbox', { name: '仅允许原厂客户端' })).toBeChecked()
@@ -66,7 +66,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await dialog.getByRole('button', { name: '保存', exact: true }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   dummyProviders = await (await page.request.get('/api/ai-providers')).json()
-  expect(dummyProviders.items.find((p: { name: string }) => p.name === 'Routing Dummy').config.client_type).toBe('Any')
+  expect(dummyProviders.items.find((p: { name: string }) => p.name === 'Routing Dummy').config.client_type).toBeUndefined()
 
   await page.getByRole('button', { name: '添加账号', exact: true }).click()
   await page.getByRole('button', { name: '添加订阅账号', exact: true }).click()
@@ -150,6 +150,6 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page).toHaveURL(/#ai-catalog$/)
   const providers = await (await page.request.get('/api/ai-providers')).json()
   const group = providers.items.find((p: { name: string }) => p.name === 'Routing Group')
-  expect(group.config.client_type).toBe('OpenAI')
+  expect(group.config.client_type).toBe('codex')
   expect(group.config.client_types).toBeUndefined()
 })

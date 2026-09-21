@@ -45,7 +45,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 非管理员仅可见个人总览、API Key、调用记录、安全设置。直接访问管理页面地址不会渲染管理界面；后端独立拦截管理 API，包括兼容别名及 OAuth API。个人接口仅允许 `me`、`password`、`keys`、`calls`；Key 和调用记录仍按当前用户校验归属。登录、登出不受此限制。
 
-`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled,client_types}],total}`，不包含配置、URL、组成员或凭据；`client_types` 为绑定供应商协议能力（有 Claude URL → Anthropic；有 OpenAI URL → OpenAI 与 Grok；group 为成员能力交集），不与策略 `client_type` 求交；其他方法返回 405。
+`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled,client_types}],total}`，不包含配置、URL、组成员或凭据；`client_types` 为绑定供应商协议能力（有 Claude URL → `claude`；有 OpenAI URL → `codex` 与 `grok`；group 为成员能力交集），不与策略 `client_type` 求交；其他方法返回 405。
 
 ## 当前用户与密码
 
@@ -89,7 +89,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 配置中的内联 `credential` 保存到凭据存储后，账号配置只保存 `credential_id`；提供已有 ID 时验证凭据存在。API Key 认证账号在编辑时省略 `api_key` 可保留原密钥。配置字段与运行时语义见 [AIProvider](ai-provider.md)。
 
-`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（Any、Anthropic、OpenAI、Grok），缺省 Any；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须与所有成员的有效客户端类型完全相同，Any 组只能包含 Any 成员；修改成员客户端限制也会校验其所属组。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
+`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（`claude`、`codex`、`grok`），省略表示不限客户端；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须与所有成员的有效客户端类型完全相同，不限客户端的组只能包含不限客户端的成员；修改成员客户端限制也会校验其所属组。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
 
 ### 模型供应商
 
@@ -101,7 +101,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 供应商项字段：`{id, name, claude_url, openai_url, models, model_mappings, supported_clients}`，以及可选的 usage header overrides。六大内置 id（anthropic、openai、grok、deepseek、zhipu、kimi）不能删除。
 
-- `claude_url` / `openai_url` / `supported_clients` 为代码维护：由内置 URL 推导客户端（xAI 供应商的 OpenAI 兼容 URL 对应 `Grok` 客户端）。PUT body 携带 URL 字段返回 400。
+- `claude_url` / `openai_url` / `supported_clients` 为代码维护：由内置 URL 推导客户端（xAI 供应商的 OpenAI 兼容 URL 对应 `grok` 客户端）。PUT body 携带 URL 字段返回 400。
 - `name` / `models` / `model_mappings` 可配置；代码有缺省（映射缺省为空列表）。PUT body 提交**期望生效值**；`aiprovider` 相对缺省做 diff，仅将差异写入 `PersistedConfig`（`type=supplier`, `name=<id>`）；全部恢复缺省则删除该行。database 不做 diff。省略 `models` 或 `model_mappings` 时保留当前生效值。
 - `model_mappings` 为 `[{from, to}, …]` 有序列表；`from` 至多一个 `*`，`to` 为上游模型名（界面从供应商 `models` 列表选择）。网关转发时改写顶层 `model` 与 `X-Grok-Model-Override`。`models` 仍供展示与 CC Switch 建议。
 - 旧 `module_configs["aiprovider"]` 整包在启动时只读迁移为 per-supplier overlay；新写入不再使用整包 catalog。

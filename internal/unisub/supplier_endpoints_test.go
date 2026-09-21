@@ -25,7 +25,7 @@ func TestSupplierEndpointRouting(t *testing.T) {
 		}
 	}
 	for _, supplier := range aiprovider.SupplierConfigs() {
-		if s.AIProviders().DefaultURL(supplier.ID, aiprovider.ClientGrok) != s.AIProviders().DefaultURL(supplier.ID, aiprovider.ClientOpenAI) {
+		if s.AIProviders().DefaultURL(supplier.ID, aiprovider.ClientGrok) != s.AIProviders().DefaultURL(supplier.ID, aiprovider.ClientCodex) {
 			t.Fatal("Grok must share Codex URL")
 		}
 	}

@@ -37,7 +37,7 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, builtin := range aiprovider.SupplierConfigs() {
-			for _, client := range []aiprovider.ClientType{aiprovider.ClientAnthropic, aiprovider.ClientOpenAI, aiprovider.ClientGrok} {
+			for _, client := range []aiprovider.ClientType{aiprovider.ClientClaude, aiprovider.ClientCodex, aiprovider.ClientGrok} {
 				if got := s.AIProviders().DefaultURL(builtin.ID, client); got != builtin.URLForClient(client) {
 					t.Fatal(builtin.ID, client, got)
 				}

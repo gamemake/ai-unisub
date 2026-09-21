@@ -6,12 +6,11 @@ export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)) }
 export function date(value?: string) { return value ? new Date(value).toLocaleString('zh-CN') : '—' }
 export function number(value?: number) { return new Intl.NumberFormat('zh-CN').format(value || 0) }
 
-/** UI labels for client types; API values stay Anthropic / OpenAI / Grok. */
+/** UI labels for the API client type values. */
 const clientTypeLabels: Record<ClientType, string> = {
-  Any: 'Any',
-  Anthropic: 'Claude',
-  OpenAI: 'Codex',
-  Grok: 'Grok',
+  claude: 'Claude',
+  codex: 'Codex',
+  grok: 'Grok',
 }
 
 export function clientTypeLabel(client: ClientType | string) {

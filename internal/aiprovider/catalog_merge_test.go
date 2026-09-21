@@ -8,12 +8,12 @@ import (
 
 func TestSupportedClientsFromURLs(t *testing.T) {
 	cases := map[string][]ClientType{
-		"anthropic": {ClientAnthropic},
-		"openai":    {ClientOpenAI, ClientGrok},
-		"grok":      {ClientOpenAI, ClientGrok},
-		"deepseek":  {ClientAnthropic, ClientOpenAI, ClientGrok},
-		"zhipu":     {ClientAnthropic, ClientOpenAI, ClientGrok},
-		"kimi":      {ClientAnthropic, ClientOpenAI, ClientGrok},
+		"anthropic": {ClientClaude},
+		"openai":    {ClientCodex, ClientGrok},
+		"grok":      {ClientCodex, ClientGrok},
+		"deepseek":  {ClientClaude, ClientCodex, ClientGrok},
+		"zhipu":     {ClientClaude, ClientCodex, ClientGrok},
+		"kimi":      {ClientClaude, ClientCodex, ClientGrok},
 	}
 	for _, b := range SupplierBuiltins() {
 		got := SupportedClientsForBuiltin(b)
@@ -88,7 +88,7 @@ func TestSupportedClientsForProviderGroupIntersection(t *testing.T) {
 	// Use dummy and manually can't set supplier for dummy subscription...
 	// For group test: create two dummies won't have clients.
 
-	if got := intersectClients([]ClientType{ClientAnthropic, ClientOpenAI}, []ClientType{ClientOpenAI, ClientGrok}); !slices.Equal(got, []ClientType{ClientOpenAI}) {
+	if got := intersectClients([]ClientType{ClientClaude, ClientCodex}, []ClientType{ClientCodex, ClientGrok}); !slices.Equal(got, []ClientType{ClientCodex}) {
 		t.Fatal(got)
 	}
 	_ = create

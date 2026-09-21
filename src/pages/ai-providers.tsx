@@ -21,15 +21,18 @@ import { defaultSubscriptionPlan, subscriptionPlanLabel, subscriptionPlansForPro
 const platforms = [['codex', 'OpenAI / Codex'], ['claude', 'Anthropic / Claude'], ['grok', 'Grok'], ['api', 'API 服务'], ['group', '账号组'], ['dummy', 'Dummy']]
 const kinds = [['subscription', '订阅'], ['api', 'API'], ['group', '组']] as const
 const supplierNames: Record<string, string> = { anthropic: 'Anthropic', openai: 'OpenAI', grok: 'xAI', deepseek: 'Deepseek', zhipu: '智谱', kimi: 'Kimi' }
-const platformClients: Record<string, ClientType> = { claude: 'Anthropic', dummy: 'Anthropic', codex: 'OpenAI', grok: 'Grok' }
+type ClientSelection = ClientType | 'any'
+const clientOptions: ClientSelection[] = ['any', 'claude', 'codex', 'grok']
+const platformClients: Record<string, ClientType> = { claude: 'claude', dummy: 'claude', codex: 'codex', grok: 'grok' }
 const platformSuppliers: Record<string, string> = { claude: 'anthropic', codex: 'openai', grok: 'grok' }
 function providerKind(a: Account) { return a.config.kind || (a.provider === 'group' ? 'group' : a.auth_type === 'api_key' ? 'api' : 'subscription') }
-function allowedClient(a: Account): ClientType {
+function clientSelectionLabel(client: ClientSelection) { return client === 'any' ? '不限客户端' : clientTypeLabel(client) }
+function allowedClient(a: Account): ClientSelection {
   if (providerKind(a) === 'subscription' && a.config.official_only) {
     const client = platformClients[a.provider]
     if (client) return client
   }
-  return a.config.client_type || 'Any'
+  return a.config.client_type || 'any'
 }
 function supplierCell(a: Account) {
   if (providerKind(a) === 'group') return null
@@ -48,7 +51,7 @@ export function AIProviders() {
   }) || []
   return <><PageHeader title="账号管理" description="统一管理订阅账户、API 服务与调度组，配置客户端访问和成员权重。" action={<div className="flex flex-wrap gap-2"><Button variant="outline" nativeButton={false} role="link" render={<a href="#ai-catalog" />}>模型供应商</Button><AddAIProviderButton onSelect={setEditing} /></div>} />
     <Card><div className="flex flex-wrap gap-3 p-5"><div className="relative min-w-48 flex-1"><Search className="absolute left-3 top-3 size-4 text-muted-foreground" /><Input aria-label="搜索账号" className="pl-9" placeholder="搜索名称、供应商或套餐" value={search} onChange={e => setSearch(e.target.value)} /></div><AppSelect aria-label="筛选类型" className="w-44" value={platform} onValueChange={setPlatform}><SelectItem value="">全部类型</SelectItem>{kinds.map(([v, n]) => <SelectItem key={v} value={v}>{n}</SelectItem>)}</AppSelect></div>
-    <QueryState query={query}>{rows.length ? <Table headers={['名称', '类型', '供应商 / 成员', '允许的客户端', '并发', '状态', '额度', '操作']}>{rows.map(a => <DetailTableRow key={a.id} aria-label={`查看 ${a.name} 详情`} onOpen={() => setEditing(a)}><TableCell className="font-medium">{a.name}</TableCell><TableCell>{kinds.find(k => k[0] === providerKind(a))?.[1]}</TableCell><TableCell>{providerKind(a) === 'group' ? <><span>{a.config.members?.length || 0} 个成员</span><div className="mt-1 max-w-64 truncate text-xs text-muted-foreground" title={a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、')}>{a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、') || '尚未配置成员'}</div></> : supplierCell(a)}</TableCell><TableCell>{allowedClient(a) === 'Any' ? '不限客户端' : clientTypeLabel(allowedClient(a))}{providerKind(a) === 'subscription' && allowedClient(a) !== 'Any' && <div className="mt-1 text-xs text-muted-foreground">仅原厂客户端</div>}</TableCell><TableCell>{providerKind(a) === 'group' ? '按成员限制' : a.config.max_concurrent_connections || 1}</TableCell><TableCell><Badge enabled={a.enabled} /></TableCell><TableCell>{providerKind(a) !== 'group' && <ProviderQuota account={a} />}</TableCell><TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`查看 ${a.name} 模型列表`} onClick={() => setModelsAccount(a)}><Info /></Button><Button variant="ghost" size="icon" aria-label={`编辑 ${a.name}`} onClick={() => setEditing(a)}><Pencil /></Button><Button variant="ghost" size="icon" aria-label={`删除 ${a.name}`} onClick={() => { remove.reset(); setRemoving(a) }}><Trash2 /></Button></div></TableCell></DetailTableRow>)}</Table> : <Empty>{query.data?.items.length ? '没有匹配的账号' : '添加订阅账户或 API 服务，再通过组统一调度多个账号。'}</Empty>}</QueryState></Card>
+    <QueryState query={query}>{rows.length ? <Table headers={['名称', '类型', '供应商 / 成员', '允许的客户端', '并发', '状态', '额度', '操作']}>{rows.map(a => <DetailTableRow key={a.id} aria-label={`查看 ${a.name} 详情`} onOpen={() => setEditing(a)}><TableCell className="font-medium">{a.name}</TableCell><TableCell>{kinds.find(k => k[0] === providerKind(a))?.[1]}</TableCell><TableCell>{providerKind(a) === 'group' ? <><span>{a.config.members?.length || 0} 个成员</span><div className="mt-1 max-w-64 truncate text-xs text-muted-foreground" title={a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、')}>{a.config.members?.map(m => `${query.data?.items.find(p => p.id === m.id)?.name || m.id}（${m.weight}）`).join('、') || '尚未配置成员'}</div></> : supplierCell(a)}</TableCell><TableCell>{clientSelectionLabel(allowedClient(a))}{providerKind(a) === 'subscription' && allowedClient(a) !== 'any' && <div className="mt-1 text-xs text-muted-foreground">仅原厂客户端</div>}</TableCell><TableCell>{providerKind(a) === 'group' ? '按成员限制' : a.config.max_concurrent_connections || 1}</TableCell><TableCell><Badge enabled={a.enabled} /></TableCell><TableCell>{providerKind(a) !== 'group' && <ProviderQuota account={a} />}</TableCell><TableCell><div className="flex gap-1"><Button variant="ghost" size="icon" aria-label={`查看 ${a.name} 模型列表`} onClick={() => setModelsAccount(a)}><Info /></Button><Button variant="ghost" size="icon" aria-label={`编辑 ${a.name}`} onClick={() => setEditing(a)}><Pencil /></Button><Button variant="ghost" size="icon" aria-label={`删除 ${a.name}`} onClick={() => { remove.reset(); setRemoving(a) }}><Trash2 /></Button></div></TableCell></DetailTableRow>)}</Table> : <Empty>{query.data?.items.length ? '没有匹配的账号' : '添加订阅账户或 API 服务，再通过组统一调度多个账号。'}</Empty>}</QueryState></Card>
     {editing && (typeof editing === 'string' ? <AIProviderForm initialKind={editing} onClose={() => setEditing(null)} /> : <AIProviderForm account={editing} onClose={() => setEditing(null)} />)}
     {removing && <Confirm title={`删除账号「${removing.name}」？`} pending={remove.isPending} error={remove.error} onClose={() => setRemoving(null)} onConfirm={() => remove.mutate(removing.id, { onSuccess: () => setRemoving(null) })} />}
     {modelsAccount && <ProviderModels account={modelsAccount} onClose={() => setModelsAccount(null)} />}
@@ -69,7 +72,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
   const kind = account ? providerKind(account) : initialKind
   const [supplier, setSupplier] = useState(account?.config.supplier || (account ? platformSuppliers[account.provider] : '') || '')
   const [apiEndpoint, setAPIEndpoint] = useState(account?.config.api_endpoint || '')
-  const [client, setClient] = useState<ClientType>(account ? allowedClient(account) : 'Any')
+  const [client, setClient] = useState<ClientSelection>(account ? allowedClient(account) : 'any')
   const [members, setMembers] = useState<GroupMember[]>(account?.config.members || [])
   const [name, setName] = useState(account?.name || ''), [aiProvider, setAIProvider] = useState(account?.provider || (kind === 'subscription' ? 'codex' : kind)), auth = kind === 'api' ? 'api_key' : 'oauth'
   const [apiKey, setAPIKey] = useState(''), [credential, setCredential] = useState('')
@@ -83,7 +86,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
   const proxies = useProxies(), save = useAction(actions.saveAIProvider, ['ai-providers', 'provider-options'])
   const isGroup = kind === 'group'
   const nativeClient = platformClients[aiProvider]
-  const selectedClient = kind === 'subscription' ? (client !== 'Any' && nativeClient ? nativeClient : 'Any') : client
+  const selectedClient = kind === 'subscription' ? (client !== 'any' && nativeClient ? nativeClient : 'any') : client
   const memberOptions = providers.data?.items.filter(p => p.id !== account?.id && providerKind(p) !== 'group') || []
   const incompatibleMembers = isGroup ? memberOptions.filter(p => members.some(m => m.id === p.id) && allowedClient(p) !== client) : []
   function changeSubscriptionPlatform(value: string) {
@@ -97,7 +100,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
     e.preventDefault(); setValidation(null)
     try {
       if (auth === 'api_key' && !supplier) throw new Error('请选择模型供应商，服务地址在模型供应商中配置')
-      const config: AIProviderConfig = { ...account?.config, kind: isGroup ? 'group' : auth === 'api_key' ? 'api' : 'subscription', auth_type: auth, enabled, max_concurrent_connections: concurrency, queue_timeout_seconds: timeout, client_type: selectedClient }
+      const config: AIProviderConfig = { ...account?.config, kind: isGroup ? 'group' : auth === 'api_key' ? 'api' : 'subscription', auth_type: auth, enabled, max_concurrent_connections: concurrency, queue_timeout_seconds: timeout, client_type: selectedClient === 'any' ? undefined : selectedClient }
       if (proxy) config.proxy_group_id = Number(proxy); else delete config.proxy_group_id
       delete config.official_only
       delete config.client_types; delete config.proxy; delete config.members; delete config.supplier
@@ -129,7 +132,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
         <div className="space-y-4">
           <Field label="名称"><Input required value={name} onChange={e => setName(e.target.value)} placeholder="例如 provider-group" /></Field>
           <Field label="状态"><AppSelect value={String(enabled)} onValueChange={value => setEnabled(value === 'true')}><SelectItem value="true">已启用</SelectItem><SelectItem value="false">已停用</SelectItem></AppSelect></Field>
-          <Field label="允许的客户端" hint="必须与所有组成员一致；Any 组仅允许 Any 成员。"><AppSelect value={client} onValueChange={value => { setClient(value as ClientType); setValidation(null) }}>{(['Any', 'Anthropic', 'OpenAI', 'Grok'] as ClientType[]).map(value => <SelectItem key={value} value={value}>{clientTypeLabel(value)}</SelectItem>)}</AppSelect></Field>
+          <Field label="允许的客户端" hint="必须与所有组成员一致；不限客户端的组仅允许不限客户端的成员。"><AppSelect value={client} onValueChange={value => { setClient(value as ClientSelection); setValidation(null) }}>{clientOptions.map(value => <SelectItem key={value} value={value}>{clientSelectionLabel(value)}</SelectItem>)}</AppSelect></Field>
         </div>
         <section aria-label="组成员" className="min-w-0 space-y-3">
           <h3 className="text-sm font-medium">组成员</h3>
@@ -140,7 +143,7 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
               const member = members.find(m => m.id === p.id)
               return <TableRow key={p.id} className={member && allowedClient(p) !== client ? 'bg-destructive/10' : undefined}>
                 <TableCell className="px-2 py-3"><Checkbox aria-label={p.name} checked={!!member} onCheckedChange={checked => setMembers(checked ? [...members, { id: p.id, weight: 3 }] : members.filter(m => m.id !== p.id))} /></TableCell>
-                <TableCell className="whitespace-normal px-2 py-3"><div className="break-words font-medium">{p.name}</div><div className="mt-1 text-xs text-muted-foreground">{allowedClient(p) === 'Any' ? '不限客户端' : clientTypeLabel(allowedClient(p))}</div></TableCell>
+                <TableCell className="whitespace-normal px-2 py-3"><div className="break-words font-medium">{p.name}</div><div className="mt-1 text-xs text-muted-foreground">{clientSelectionLabel(allowedClient(p))}</div></TableCell>
                 <TableCell className="px-2 py-3"><span className={p.enabled ? 'text-emerald-300' : 'text-muted-foreground'} title={p.enabled ? undefined : '已停用，不参与调度'}>{p.enabled ? '已启用' : '已停用'}</span></TableCell>
                 <TableCell className="px-2 py-3"><Input aria-label={`${p.name} 权重`} className="w-16" type="number" min={1} max={5} step={1} disabled={!member} required={!!member} value={member?.weight ?? 3} onChange={e => setMembers(members.map(m => m.id === p.id ? { ...m, weight: Number(e.target.value) } : m))} /></TableCell>
               </TableRow>
@@ -165,12 +168,12 @@ export function AIProviderForm({ account, initialKind, onClose }: ({ account: Ac
             {kind === 'subscription' ? <>
               <Field label="订阅平台"><AppSelect disabled={!!account} value={aiProvider} onValueChange={changeSubscriptionPlatform}>{platforms.filter(([v]) => !['api', 'group'].includes(v)).map(([v, n]) => <SelectItem key={v} value={v}>{n}</SelectItem>)}</AppSelect></Field>
               <Field label="订阅套餐" hint="只使用配置值，不从上游推断。"><AppSelect required value={subscriptionPlan} onValueChange={setSubscriptionPlan}>{planOptions.map(p => <SelectItem key={p.id} value={p.id}>{p.label}</SelectItem>)}</AppSelect></Field>
-              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" disabled={!nativeClient} checked={selectedClient !== 'Any'} onChange={e => setClient(e.target.checked ? nativeClient : 'Any')} />仅允许原厂客户端</label>
+              <label className="flex min-h-10 items-center gap-2"><input type="checkbox" disabled={!nativeClient} checked={selectedClient !== 'any'} onChange={e => setClient(e.target.checked ? nativeClient! : 'any')} />仅允许原厂客户端</label>
             </> : <>
               <Field label="模型供应商"><AppSelect required value={supplier} onValueChange={setSupplier}><SelectItem value="">请选择模型供应商</SelectItem>{catalog.data?.catalog.suppliers.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</AppSelect></Field>
               <Field label="覆盖 URL" hint="可选；留空使用模型供应商默认 URL"><Input type="url" value={apiEndpoint} onChange={e => setAPIEndpoint(e.target.value)} placeholder="https://api.example.com/v1" /></Field>
               <Field label="上游 API Key" hint={account?.auth_type === 'api_key' ? '留空保留原密钥' : undefined}><Input type="text" required={account?.auth_type !== 'api_key'} autoComplete="off" value={apiKey} onChange={e => setAPIKey(e.target.value)} placeholder={account?.auth_type === 'api_key' ? '••••••••（已保存）' : 'sk-…'} /></Field>
-              <Field label="允许的客户端" hint="单选；Any 包括未知客户端。"><AppSelect value={client} onValueChange={value => setClient(value as ClientType)}>{(['Any', 'Anthropic', 'OpenAI', 'Grok'] as ClientType[]).map(value => <SelectItem key={value} value={value}>{clientTypeLabel(value)}</SelectItem>)}</AppSelect></Field>
+              <Field label="允许的客户端" hint="单选；不限客户端包括未知客户端。"><AppSelect value={client} onValueChange={value => setClient(value as ClientSelection)}>{clientOptions.map(value => <SelectItem key={value} value={value}>{clientSelectionLabel(value)}</SelectItem>)}</AppSelect></Field>
             </>}
             </div>
             <div className="space-y-4">

@@ -20,7 +20,12 @@ func decodeAIProviderConfig(id int, raw json.RawMessage) (AIProviderConfig, erro
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			return AIProviderConfig{}, err
 		}
-		if err := json.Unmarshal(raw, &config); err != nil {
+		normalizeLegacyClientType(fields)
+		normalized, err := json.Marshal(fields)
+		if err != nil {
+			return AIProviderConfig{}, err
+		}
+		if err := json.Unmarshal(normalized, &config); err != nil {
 			return AIProviderConfig{}, err
 		}
 		if _, ok := fields["enabled"]; !ok {
@@ -77,6 +82,30 @@ func decodeAIProviderConfig(id int, raw json.RawMessage) (AIProviderConfig, erro
 		return AIProviderConfig{}, errors.New("queue_timeout_seconds must not be negative")
 	}
 	return config, nil
+}
+
+func normalizeLegacyClientType(fields map[string]json.RawMessage) {
+	raw, ok := fields["client_type"]
+	if !ok {
+		return
+	}
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
+		return
+	}
+	legacy := map[string]string{
+		"Anthropic": "claude",
+		"OpenAI":    "codex",
+		"Grok":      "grok",
+		"Any":       "",
+	}
+	if replacement, ok := legacy[value]; ok {
+		if replacement == "" {
+			delete(fields, "client_type")
+			return
+		}
+		fields["client_type"] = json.RawMessage(`"` + replacement + `"`)
+	}
 }
 
 func validateEndpoint(endpoint string) error {

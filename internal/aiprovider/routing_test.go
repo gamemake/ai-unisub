@@ -93,10 +93,10 @@ func createRouting(t *testing.T, m *AIProviderManager, id int, kind, raw string)
 func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	m := routingManager(t)
 	const a, b, b2, g, nested, restricted, c, user, other = 1, 2, 3, 4, 5, 6, 7, 10, 11
-	createRouting(t, m, a, "dummy", `{"client_type":"Anthropic"}`)
-	createRouting(t, m, b, "dummy", `{"client_type":"OpenAI"}`)
-	createRouting(t, m, b2, "dummy", `{"client_type":"OpenAI"}`)
-	createRouting(t, m, g, "group", `{"client_type":"OpenAI","members":[{"id":2,"weight":5},{"id":3}]}`)
+	createRouting(t, m, a, "dummy", `{"client_type":"claude"}`)
+	createRouting(t, m, b, "dummy", `{"client_type":"codex"}`)
+	createRouting(t, m, b2, "dummy", `{"client_type":"codex"}`)
+	createRouting(t, m, g, "group", `{"client_type":"codex","members":[{"id":2,"weight":5},{"id":3}]}`)
 	p, _ := m.Get(g)
 	if p.Config().Members[1].Weight != 3 {
 		t.Fatal("default weight")
@@ -104,11 +104,11 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	if _, e := m.Create(nested, "group", json.RawMessage(`{"members":[{"id":4}]}`), nil); e == nil {
 		t.Fatal("nested group accepted")
 	}
-	createRouting(t, m, restricted, "group", `{"client_type":"Anthropic","members":[{"id":1}]}`)
-	if e := m.UpdateConfig(a, json.RawMessage(`{"client_type":"Any"}`)); e == nil {
+	createRouting(t, m, restricted, "group", `{"client_type":"claude","members":[{"id":1}]}`)
+	if e := m.UpdateConfig(a, json.RawMessage(`{}`)); e == nil {
 		t.Fatal("incompatible member update accepted")
 	}
-	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"Anthropic","members":[{"id":1},{"id":2}]}`)); e == nil {
+	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"claude","members":[{"id":1},{"id":2}]}`)); e == nil {
 		t.Fatal("incompatible group update accepted")
 	}
 	h := http.Header{}
@@ -121,8 +121,8 @@ func TestGroupRelationsWeightAffinityAndIsolation(t *testing.T) {
 	if _, err := m.Select(a, user, h, "/v1/messages", nil); !errors.Is(err, ErrClientDenied) {
 		t.Fatal("direct policy bypass", err)
 	}
-	createRouting(t, m, c, "dummy", `{"client_type":"OpenAI"}`)
-	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"OpenAI","members":[{"id":2,"weight":3},{"id":7,"weight":3}]}`)); e != nil {
+	createRouting(t, m, c, "dummy", `{"client_type":"codex"}`)
+	if e := m.UpdateConfig(g, json.RawMessage(`{"client_type":"codex","members":[{"id":2,"weight":3},{"id":7,"weight":3}]}`)); e != nil {
 		t.Fatal(e)
 	}
 	var wg sync.WaitGroup
@@ -172,8 +172,8 @@ func TestCatalogProtectedSuppliers(t *testing.T) {
 }
 
 func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
-	for _, groupClient := range []ClientType{ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok} {
-		for _, memberClient := range []ClientType{ClientAny, ClientAnthropic, ClientOpenAI, ClientGrok} {
+	for _, groupClient := range []ClientType{"", ClientClaude, ClientCodex, ClientGrok} {
+		for _, memberClient := range []ClientType{"", ClientClaude, ClientCodex, ClientGrok} {
 			t.Run(string(groupClient)+"/"+string(memberClient), func(t *testing.T) {
 				m := routingManager(t)
 				raw, _ := json.Marshal(map[string]any{"client_type": memberClient})
@@ -184,9 +184,9 @@ func TestGroupClientTypeMustMatchEveryMember(t *testing.T) {
 					t.Fatalf("group %s, member %s: %v", groupClient, memberClient, err)
 				}
 				if err == nil {
-					other := ClientAny
-					if memberClient == ClientAny {
-						other = ClientOpenAI
+					other := ClientType("")
+					if memberClient == "" {
+						other = ClientCodex
 					}
 					raw, _ = json.Marshal(map[string]any{"client_type": other})
 					if err := m.UpdateConfig(1, raw); err == nil {

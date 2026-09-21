@@ -1,6 +1,6 @@
-# 临时设计：订阅套餐与用量权重
+# AIProvider 订阅套餐与用量权重
 
-> 状态：账号 `subscription_plan`、供应商 `subscription_plan_weights`、`UsageWeight*` **已实现**。`Select` 同档加权随机仍为后续。正式摘要见 [ai-provider.md](ai-provider.md)。
+> 账号 `subscription_plan`、供应商 `subscription_plan_weights`、`UsageWeight*` 已实现；`Select` 同档加权随机仍是后续能力。总览见 [ai-provider.md](ai-provider.md)。
 
 ## 1. 目标
 
@@ -27,7 +27,7 @@
 | 平台／适配器 | 供应商 id | ID 前缀／形态 | 合法 ID | 缺省 |
 | --- | --- | --- | --- | --- |
 | Codex | `openai` | `codex_` | `codex_plus`、`codex_pro_5x`、`codex_pro_20x` | `codex_plus` |
-| Claude | `anthropic` | `claude_` | `claude_pro`、`claude_max` | `claude_pro` |
+| Claude | `anthropic` | `claude_` | `claude_pro`、`claude_max_5x`、`claude_max_20x` | `claude_pro` |
 | Grok | `grok` | `super_grok*` | `super_grok`、`super_grok_plus`、`super_grok_heavy` | `super_grok` |
 | Dummy | 读 anthropic 权重 | 同 Claude | 同 Claude | `claude_pro` |
 
@@ -47,7 +47,8 @@
   "models": ["…"],
   "subscription_plan_weights": {
     "claude_pro": 1,
-    "claude_max": 20
+    "claude_max_5x": 5,
+    "claude_max_20x": 20
   }
 }
 ```
@@ -70,7 +71,8 @@
 | openai | `codex_pro_5x` | **5** | 约 5× |
 | openai | `codex_pro_20x` | **20** | 约 20× |
 | anthropic | `claude_pro` | **1** | 基线 |
-| anthropic | `claude_max` | **20** | **20×**（相对 Pro） |
+| anthropic | `claude_max_5x` | **5** | **5×**（相对 Pro） |
+| anthropic | `claude_max_20x` | **20** | **20×**（相对 Pro） |
 | grok | `super_grok` | **1** | 基线 |
 | grok | `super_grok_plus` | **3** | 中档 |
 | grok | `super_grok_heavy` | **10** | 最高档 |
@@ -90,7 +92,7 @@
 | 概念 | 位置 | 含义 | 调度角色 |
 | --- | --- | --- | --- |
 | **调度优先级** | 组 `members[].weight`（1～5） | 先用哪一档成员 | 现行：取最高档 |
-| **用量权重** | 供应商 `subscription_plan_weights[plan]` | 同档内相对容量／流量份额 | 将来：同档加权随机 |
+| **用量权重** | 供应商 `subscription_plan_weights[plan]` | 同档内相对用量／流量份额 | 将来：同档加权随机 |
 
 二者正交。禁止用 plan 自动改写 `members[].weight`。
 
@@ -148,7 +150,7 @@ quota.subscription[]           ← 用量展示，不反推 plan／权重
 ## 10. 已定结论
 
 1. Codex 倍率档 `codex_pro_5x` / `codex_pro_20x`；无独立 `codex_pro`。
-2. **`claude_max` 用量权重为 20**（20× 相对 `claude_pro` = 1）。
+2. **`claude_max_5x` / `claude_max_20x` 用量权重分别为 5 / 20**（相对 `claude_pro` = 1）。
 3. 套餐 ID 带平台前缀；只相信账号配置的 plan。
 4. Dummy 套餐与权重规则同 Claude（权重表用 anthropic 供应商）。
 5. **用量权重放在模型供应商配置**；**摊开存储**为 `subscription_plan_weights: { plan_id: weight, … }`。

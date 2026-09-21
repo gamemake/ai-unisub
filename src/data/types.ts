@@ -2,7 +2,7 @@ import type { Quota } from './quota'
 export type * from './quota'
 
 export interface User { id: number; name: string; role: 'admin' | 'user'; enabled?: boolean; labels?: string[]; server_version?: string; created_at?: string; updated_at?: string }
-export type ClientType = 'Any' | 'Anthropic' | 'OpenAI' | 'Grok'
+export type ClientType = 'claude' | 'codex' | 'grok'
 export type CCSwitchClient = 'claude_code' | 'claude_desktop' | 'codex' | 'grok_build'
 export interface CCSwitchModelConfig { model: string; supports_1m: boolean }
 export interface CCSwitchClientConfig { supplier_name: string; remark: string; models?: Record<string, CCSwitchModelConfig>; default_model?: string }
