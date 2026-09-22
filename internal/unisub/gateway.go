@@ -38,7 +38,7 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		common.WriteError(w, 400, err.Error())
 		return
 	}
-	if sessionID == "" {
+	if sessionID == "" && requiresSession(r) {
 		common.WriteError(w, http.StatusBadRequest, common.MessageSessionIDRequired)
 		return
 	}
@@ -237,6 +237,16 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	if !recorded && !output.written {
 		common.WriteError(w, 502, common.MessageUpstreamNoResponse)
 	}
+}
+
+// Claude-compatible discovery and message requests can happen before a
+// conversation session exists. API-key authentication still applies at the
+// gateway route; a session is only used for optional affinity and logging.
+func requiresSession(r *http.Request) bool {
+	if r.Method == http.MethodGet && r.URL.Path == "/v1/models" {
+		return false
+	}
+	return r.Method != http.MethodPost || r.URL.Path != "/v1/messages"
 }
 
 // Session IDs identify upstream client conversations, not Dashboard login sessions.

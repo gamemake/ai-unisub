@@ -20,7 +20,7 @@ var clientPatterns = []struct {
 	kind    ClientType
 	pattern *regexp.Regexp
 }{
-	{ClientClaude, regexp.MustCompile(`(?i)(?:^|[\s(])claude-cli/[0-9]`)},
+	{ClientClaude, regexp.MustCompile(`(?i)(?:^|[\s(])(?:claude-cli|claude[- ]desktop)/[0-9]`)},
 	{ClientCodex, regexp.MustCompile(`(?i)(?:^|[\s(])codex(?:_cli_rs|_cli|[- ]cli|-tui|_vscode|_chatgpt_desktop|_atlas)?/[0-9]`)},
 	{ClientGrok, regexp.MustCompile(`(?i)(?:^|[\s(])(?:grok(?:-cli|-shell)?|xai-grok-workspace)/[0-9]`)},
 }

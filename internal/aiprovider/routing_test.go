@@ -13,6 +13,7 @@ import (
 func TestNativeSessionHeaders(t *testing.T) {
 	for _, tc := range []struct{ ua, header, value, want string }{
 		{"claude-cli/2.1.220 (external, cli)", "x-claude-code-session-id", "claude-session", "claude-session"},
+		{"claude-desktop/1.0.0 (Windows)", "x-claude-code-session-id", "desktop-session", "desktop-session"},
 		{"codex_cli_rs/0.120.0 (Windows)", "session_id", "codex-session", "codex-session"},
 		{"codex-tui/0.146.0", "session-id", "codex-session", "codex-session"},
 		{"codex_vscode/1.0.0 (Windows)", "session-id", "codex-session", "codex-session"},

@@ -61,13 +61,15 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if key.Key == "" {
 				t.Fatalf("create key: %s", keyResponse.Body.String())
 			}
-			missing := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
-			missing.Header.Set("Authorization", "Bearer "+key.Key)
-			missing.Header.Set("User-Agent", userAgent)
-			missingResult := httptest.NewRecorder()
-			s.Handler().ServeHTTP(missingResult, missing)
-			if missingResult.Code != http.StatusBadRequest || !strings.Contains(missingResult.Body.String(), "session ID is required") {
-				t.Fatalf("missing session ID: %d %s", missingResult.Code, missingResult.Body.String())
+			if platform != "claude" {
+				missing := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
+				missing.Header.Set("Authorization", "Bearer "+key.Key)
+				missing.Header.Set("User-Agent", userAgent)
+				missingResult := httptest.NewRecorder()
+				s.Handler().ServeHTTP(missingResult, missing)
+				if missingResult.Code != http.StatusBadRequest || !strings.Contains(missingResult.Body.String(), "session ID is required") {
+					t.Fatalf("missing session ID: %d %s", missingResult.Code, missingResult.Body.String())
+				}
 			}
 			req := httptest.NewRequest("POST", "/v1/messages?test=1", strings.NewReader(`{"model":"local-test"}`))
 			req.Header.Set("Authorization", "Bearer "+key.Key)
@@ -172,6 +174,54 @@ func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 		if trace.APIKey != key.Key {
 			t.Fatalf("trace key: %#v", trace)
 		}
+	}
+}
+
+func TestGatewayAllowsClaudeDesktopModelDiscoveryWithoutSession(t *testing.T) {
+	s := testApp(t)
+	cookie := loginTestApp(t, s)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" && r.URL.Path != "/v1/messages" {
+			t.Fatalf("upstream request: %s %s", r.Method, r.URL)
+		}
+		if r.Header.Get("X-Api-Key") != "upstream-secret" || r.Header.Get("Authorization") != "" {
+			t.Fatalf("unexpected upstream auth headers: %v", r.Header)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"claude-sonnet"}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"probe","type":"message","content":[]}`)
+	}))
+	defer upstream.Close()
+
+	provider := addRoutingProvider(t, s, cookie, "desktop", "api", map[string]any{
+		"auth_type":    "api_key",
+		"api_key":      "upstream-secret",
+		"supplier":     "anthropic",
+		"client_type":  "claude",
+		"api_endpoint": upstream.URL + "/v1",
+	})
+	key := routingKey(t, s, cookie, provider)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("User-Agent", "claude-desktop/1.0.0 (Windows)")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"claude-sonnet"`) {
+		t.Fatalf("model discovery: %d %s", w.Code, w.Body.String())
+	}
+
+	probe := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"claude-sonnet","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}`))
+	probe.Header.Set("Authorization", "Bearer "+key)
+	probe.Header.Set("Content-Type", "application/json")
+	probe.Header.Set("User-Agent", "cc-switch/3.20.3")
+	probeResult := httptest.NewRecorder()
+	s.Handler().ServeHTTP(probeResult, probe)
+	if probeResult.Code != http.StatusOK {
+		t.Fatalf("message probe: %d %s", probeResult.Code, probeResult.Body.String())
 	}
 }
 
