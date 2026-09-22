@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { ccSwitchApp, ccSwitchEndpoint, ccSwitchImport, publicBaseURL } from './cc-switch'
+import { ccSwitchApp, ccSwitchEndpoint, ccSwitchImport, ccSwitchImportForClient, publicBaseURL } from './cc-switch'
 
 it('infers the public base from the current page URL', () => {
   expect(publicBaseURL('http://192.168.1.8:8080/#keys')).toBe('http://192.168.1.8:8080')
@@ -35,4 +35,16 @@ it('imports keys as enabled CC Switch providers with model', () => {
   expect(new URL(ccSwitchImport({ pageURL: 'https://nas.local/unisub/#keys', clientType: 'codex', name: 'Codex', apiKey: 'sk-codex', model: 'gpt-5' })!.href).searchParams.get('endpoint')).toBe('https://nas.local/unisub/v1')
   expect(new URL(ccSwitchImport({ pageURL: 'http://192.168.1.8:8080/#keys', clientType: 'grok', name: 'Grok', apiKey: 'sk-grok', model: 'grok-4' })!.href).searchParams.get('app')).toBe('grokbuild')
   expect(ccSwitchImport({ pageURL: 'http://192.168.1.8:8080/#keys', clientType: 'claude', name: 'API', apiKey: 'sk', model: '  ' })).toBeNull()
+})
+
+it('allows the CC Switch window to export without a model', () => {
+  const imported = ccSwitchImportForClient({
+    pageURL: 'http://192.168.1.8:8080/#keys',
+    client: 'codex',
+    name: 'Codex',
+    apiKey: 'sk-codex',
+    config: { supplier_name: 'Codex', remark: '', default_model: '' },
+  })
+  expect(imported).not.toBeNull()
+  expect(new URL(imported!.href).searchParams.has('model')).toBe(false)
 })

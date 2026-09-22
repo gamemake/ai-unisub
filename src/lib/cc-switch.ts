@@ -45,7 +45,6 @@ export function ccSwitchImportForClient(input: { pageURL: string; client: CCSwit
   const protocol = protocolForClient(input.client)
   const endpoint = ccSwitchEndpoint(base, protocol)
   const model = input.client === 'grok_build' || input.client === 'codex' ? input.config.default_model : input.config.models?.sonnet?.model
-  if (input.client !== 'claude_desktop' && !model?.trim()) return null
   const params = new URLSearchParams({ resource: 'provider', app: input.client === 'claude_code' ? 'claude' : input.client === 'claude_desktop' ? 'claude-desktop' : input.client === 'codex' ? 'codex' : 'grokbuild', name: input.config.supplier_name || input.name, endpoint, homepage: base, apiKey: input.apiKey, enabled: 'true' })
   if (model?.trim()) params.set('model', model.trim())
   return { endpoint, href: 'ccswitch://v1/import?' + params }
