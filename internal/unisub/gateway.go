@@ -33,6 +33,10 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 		common.WriteError(w, 401, common.MessageUnauthorized)
 		return
 	}
+	if isVideoGenerationRequest(r) {
+		common.WriteError(w, http.StatusNotImplemented, common.MessageVideoGenerationUnsupported)
+		return
+	}
 	sessionID, err := aiprovider.SessionID(r.Header)
 	if err != nil {
 		common.WriteError(w, 400, err.Error())
@@ -237,6 +241,12 @@ func (m *GatewayModule) handle(ctx service.ModuleContext, w http.ResponseWriter,
 	if !recorded && !output.written {
 		common.WriteError(w, 502, common.MessageUpstreamNoResponse)
 	}
+}
+
+func isVideoGenerationRequest(r *http.Request) bool {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	return path == "/v1/videos" || strings.HasPrefix(path, "/v1/videos/") ||
+		path == "/v1/video/generations" || strings.HasPrefix(path, "/v1/video/generations/")
 }
 
 // Claude-compatible discovery and message requests can happen before a

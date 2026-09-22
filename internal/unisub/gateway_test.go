@@ -1,6 +1,7 @@
 package unisub
 
 import (
+	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"encoding/json"
 	"fmt"
@@ -173,6 +174,29 @@ func TestGatewayAcceptsAuthTokenAndAPIKey(t *testing.T) {
 	for _, trace := range traces {
 		if trace.APIKey != key.Key {
 			t.Fatalf("trace key: %#v", trace)
+		}
+	}
+}
+
+func TestGatewayRejectsVideoGenerationWithoutUpstreamCall(t *testing.T) {
+	s := testApp(t)
+	cookie := loginTestApp(t, s)
+	provider := addRoutingProvider(t, s, cookie, "video", "api", map[string]any{
+		"auth_type":   "api_key",
+		"api_key":     "upstream-secret",
+		"supplier":    "openai",
+		"client_type": "codex",
+	})
+	key := routingKey(t, s, cookie, provider)
+
+	for _, path := range []string{"/v1/videos", "/v1/videos/video-123/content", "/v1/video/generations"} {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"model":"video-model"}`))
+		req.Header.Set("Authorization", "Bearer "+key)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, req)
+
+		if w.Code != http.StatusNotImplemented || !strings.Contains(w.Body.String(), common.MessageVideoGenerationUnsupported) {
+			t.Fatalf("video request %s: %d %s", path, w.Code, w.Body.String())
 		}
 	}
 }
