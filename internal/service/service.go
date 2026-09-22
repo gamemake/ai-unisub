@@ -109,12 +109,12 @@ func loadSupplierCatalog(db database.Database, p *aiprovider.AIProviderManager) 
 		return err
 	}
 	if len(overlays) == 0 {
-		raw, err := db.LoadModuleConfig(aiprovider.ModuleConfigKey)
+		legacy, err := db.LoadConfig(database.ModuleConfigType, aiprovider.ModuleConfigKey)
 		if err != nil {
 			return err
 		}
-		if len(raw) > 0 {
-			migrated, err := aiprovider.MigrateLegacyCatalogOverlays(raw)
+		if len(legacy.Value) > 0 {
+			migrated, err := aiprovider.MigrateLegacyCatalogOverlays(legacy.Value)
 			if err != nil {
 				return err
 			}

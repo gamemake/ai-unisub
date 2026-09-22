@@ -16,20 +16,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// SQLiteDatabase keeps the small, frequently accessed records in a
-// MemoryDatabase and uses SQLite for durable storage and call traces.
-// Call traces are stored in one table per UTC calendar day.
+// SQLiteDatabase is the durable SQLite storage wrapped by MemoryDatabase. It
+// stores call traces and proxy logs in one table per UTC calendar day, keeps no
+// cache, and executes SQL only: input validation and the record cache belong to
+// MemoryDatabase.
 type SQLiteDatabase struct {
 	mu   sync.Mutex
 	path string
 	db   *sql.DB
-	mem  *MemoryDatabase
 }
 
 // NewSQLiteDatabase creates a SQLite-backed database. The file is created by
 // Open; use ":memory:" for a process-local SQLite database.
 func NewSQLiteDatabase(path string) *SQLiteDatabase {
-	return &SQLiteDatabase{path: path, mem: NewMemoryDatabase()}
+	return &SQLiteDatabase{path: path}
 }
 
 func (s *SQLiteDatabase) Open() error {
@@ -67,12 +67,7 @@ func (s *SQLiteDatabase) Open() error {
 		s.db = nil
 		return err
 	}
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS module_configs (module TEXT PRIMARY KEY, config TEXT NOT NULL)`); err != nil {
-		db.Close()
-		s.db = nil
-		return err
-	}
-	if err = s.loadMemory(); err != nil {
+	if err = migrateLegacyModuleConfigsSQLite(db); err != nil {
 		db.Close()
 		s.db = nil
 		return err
@@ -94,93 +89,65 @@ func (s *SQLiteDatabase) Close() error {
 	return err
 }
 
-func (s *SQLiteDatabase) LoadModuleConfig(module string) (json.RawMessage, error) {
-	if err := validateModuleName(module); err != nil {
-		return nil, err
-	}
-	if err := s.ensureOpen(); err != nil {
-		return nil, err
-	}
-	if raw := s.mem.LoadModuleConfig(module); raw != nil {
-		return raw, nil
-	}
-	var raw []byte
-	err := s.db.QueryRow(`SELECT config FROM module_configs WHERE module=?`, module).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err == nil {
-		s.mem.SaveModuleConfig(module, raw)
-	}
-	return raw, err
-}
-
-func (s *SQLiteDatabase) SaveModuleConfig(module string, raw json.RawMessage) error {
-	if err := validateModuleName(module); err != nil {
-		return err
-	}
-	if !json.Valid(raw) {
-		return errors.New("invalid module configuration JSON")
-	}
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`INSERT INTO module_configs(module,config) VALUES(?,?) ON CONFLICT(module) DO UPDATE SET config=excluded.config`, module, string(raw))
-	if err == nil {
-		s.mem.SaveModuleConfig(module, raw)
-	}
-	return err
-}
-
 func (s *SQLiteDatabase) ListConfigs() ([]PersistedConfig, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-	return s.mem.ListConfigs(), nil
+	rows, err := s.db.Query(`SELECT id, type, name, value FROM configs ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]PersistedConfig, 0)
+	for rows.Next() {
+		var value PersistedConfig
+		var raw []byte
+		if err := rows.Scan(&value.ID, &value.Type, &value.Name, &raw); err != nil {
+			return nil, err
+		}
+		value.Value = slices.Clone(raw)
+		result = append(result, value)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteDatabase) ListConfigsByType(configType string) ([]PersistedConfig, error) {
-	if err := validateConfigType(configType); err != nil {
-		return nil, err
-	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-	return s.mem.ListConfigsByType(configType), nil
+	configs, err := s.ListConfigs()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]PersistedConfig, 0, len(configs))
+	for _, value := range configs {
+		if value.Type == configType {
+			result = append(result, value)
+		}
+	}
+	return result, nil
 }
 
 func (s *SQLiteDatabase) LoadConfig(configType, name string) (PersistedConfig, error) {
-	if err := validateConfigType(configType); err != nil {
-		return PersistedConfig{}, err
-	}
-	if err := validateConfigName(name); err != nil {
-		return PersistedConfig{}, err
-	}
 	if err := s.ensureOpen(); err != nil {
 		return PersistedConfig{}, err
 	}
-	value, ok := s.mem.GetConfigByTypeName(configType, name)
-	if !ok {
+	var value PersistedConfig
+	var raw []byte
+	err := s.db.QueryRow(`SELECT id, type, name, value FROM configs WHERE type = ? AND name = ?`, configType, name).Scan(&value.ID, &value.Type, &value.Name, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
 		return PersistedConfig{}, nil
 	}
+	if err != nil {
+		return PersistedConfig{}, err
+	}
+	value.Value = slices.Clone(raw)
 	return value, nil
 }
 
 func (s *SQLiteDatabase) SaveConfig(value *PersistedConfig) error {
-	if err := validateConfig(value); err != nil {
-		return err
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
-	}
-	if value.ID > 0 {
-		existing, ok := s.mem.GetConfig(value.ID)
-		if !ok {
-			return errors.New("config not found")
-		}
-		if existing.Type != value.Type || existing.Name != value.Name {
-			return errors.New("config type and name cannot be changed")
-		}
 	}
 	result, err := s.db.Exec(
 		`INSERT INTO configs(id, type, name, value) VALUES(?, ?, ?, ?)
@@ -197,28 +164,25 @@ func (s *SQLiteDatabase) SaveConfig(value *PersistedConfig) error {
 		}
 		value.ID = int(id)
 	}
-	return s.mem.SaveConfig(*value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteConfig(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM configs WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteConfig(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM configs WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
-	return s.mem.ListProxyGroups(), nil
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return queryProxyGroups(s.db)
 }
 
 func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
-	if value == nil || value.ID < 0 {
-		return errors.New("proxy group and ID are required")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -241,24 +205,18 @@ func (s *SQLiteDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
 		}
 		value.ID = int(id)
 	}
-	return s.mem.SaveProxyGroup(*value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteProxyGroup(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteProxyGroup(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM proxy_groups WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
-	if value == nil {
-		return errors.New("proxy log is nil")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -272,15 +230,6 @@ func (s *SQLiteDatabase) RecordProxyLog(value *PersistedProxyLog) error {
 
 func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
 	if err := s.ensureOpen(); err != nil {
-		return nil, 0, err
-	}
-	if page < 1 {
-		return nil, 0, errors.New("page must be greater than zero")
-	}
-	if pageSize < 1 {
-		return nil, 0, errors.New("page size must be greater than zero")
-	}
-	if err := validateTimeRange(filter.TimeRange); err != nil {
 		return nil, 0, err
 	}
 	rows, err := s.db.Query(`SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'proxy_logs_%'`)
@@ -339,9 +288,6 @@ func (s *SQLiteDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize in
 // CleanupProxyLog removes complete daily proxy log tables older than days. A
 // value of zero removes all tables before today and keeps today's logs.
 func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
-	if days < 0 {
-		return errors.New("cleanup days must not be negative")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -375,9 +321,6 @@ func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
 }
 
 func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
-	if json := s.mem.GetCredential(id); json != nil {
-		return json, nil
-	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
@@ -385,50 +328,33 @@ func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
 	if err := s.db.QueryRow(`SELECT credential FROM oauth_credentials WHERE id = ?`, id).Scan(&raw); err != nil {
 		return nil, err
 	}
-	if !json.Valid(raw) {
-		s.DeleteCredential(id)
-		return nil, errors.New("stored credential is invalid JSON")
-	}
-	s.mem.SetCredential(id, raw)
-	return json.RawMessage(raw), nil
+	return raw, nil
 }
 
 func (s *SQLiteDatabase) SaveCredential(id string, value json.RawMessage) error {
-	if id == "" || len(value) == 0 || !json.Valid(value) {
-		return errors.New("credential ID and credential are required")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`INSERT INTO oauth_credentials(id, credential) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET credential=excluded.credential`, id, value); err != nil {
-		return err
-	}
-	s.mem.SetCredential(id, value)
-	return nil
+	_, err := s.db.Exec(`INSERT INTO oauth_credentials(id, credential) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET credential=excluded.credential`, id, value)
+	return err
 }
 
 func (s *SQLiteDatabase) DeleteCredential(id string) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM oauth_credentials WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteCredential(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM oauth_credentials WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) {
-	return s.mem.ListAccounts(), nil
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return queryAccounts(s.db)
 }
 
 func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
-	if err := validateAccount(value); err != nil {
-		return err
-	}
-	if value.ID > 0 && !s.mem.HasAccount(value.ID) {
-		return errors.New("account not existed")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -459,36 +385,27 @@ func (s *SQLiteDatabase) SaveAccount(value *PersistedAccount) error {
 		}
 		value.ID = int(id)
 	}
-	return s.mem.SaveAccount(*value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteAccount(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM accounts WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteAccount(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM accounts WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) ListUsers() ([]PersistedUser, error) {
-	return s.mem.ListUsers(), nil
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return queryUsers(s.db)
 }
 
 func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
-	if err := validateUser(value); err != nil {
-		return err
-	}
-	if value.ID > 0 && !s.mem.HasUser(value.ID) {
-		return errors.New("user not found")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
-	}
-	if !value.Enabled && value.UpdatedAt.IsZero() {
-		value.Enabled = true
 	}
 	labels, err := json.Marshal(value.Labels)
 	if err != nil {
@@ -509,31 +426,38 @@ func (s *SQLiteDatabase) SaveUser(value *PersistedUser) error {
 		}
 		value.ID = int(id)
 	}
-	return s.mem.SaveUser(*value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteUser(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteUser(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM users WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) ListAPIKeys(userID int) ([]PersistedAPIKey, error) {
-	return s.mem.ListAPIKeys(userID), nil
+	if err := s.ensureOpen(); err != nil {
+		return nil, err
+	}
+	keys, err := queryAPIKeys(s.db)
+	if err != nil {
+		return nil, err
+	}
+	if userID == 0 {
+		return keys, nil
+	}
+	result := make([]PersistedAPIKey, 0, len(keys))
+	for _, value := range keys {
+		if value.UserID == userID {
+			result = append(result, value)
+		}
+	}
+	return result, nil
 }
 
 func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
-	if err := validateAPIKey(value); err != nil {
-		return err
-	}
-	if value.ID > 0 && !s.mem.HasAPIKey(value.ID) {
-		return errors.New("apikey not found")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -558,24 +482,18 @@ func (s *SQLiteDatabase) SaveAPIKey(value *PersistedAPIKey) error {
 		}
 		value.ID = int(id)
 	}
-	return s.mem.SaveAPIKey(*value)
+	return nil
 }
 
 func (s *SQLiteDatabase) DeleteAPIKey(id int) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	if _, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id); err != nil {
-		return err
-	}
-	s.mem.DeleteAPIKey(id)
-	return nil
+	_, err := s.db.Exec(`DELETE FROM api_keys WHERE id = ?`, id)
+	return err
 }
 
 func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
-	if trace == nil {
-		return errors.New("call trace is nil")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -589,9 +507,6 @@ func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 // GetCallTrace returns the complete trace from the UTC daily table identified
 // by startedAt. The list query intentionally does not load these large fields.
 func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error) {
-	if id <= 0 {
-		return nil, errors.New("call trace ID is required")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
@@ -624,9 +539,6 @@ func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCa
 // CleanupCallTrace removes complete daily CallTrace tables older than days. A value of
 // zero removes all tables before today and keeps today's traces.
 func (s *SQLiteDatabase) CleanupCallTrace(days int) error {
-	if days < 0 {
-		return errors.New("cleanup days must not be negative")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
@@ -664,16 +576,10 @@ func (s *SQLiteDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize 
 	if filter.Search != "" {
 		values = append(values, filter.Search)
 	}
-	if err := validateTimeRange(filter.TimeRange); err != nil {
-		return nil, 0, err
-	}
 	return s.queryCallTraces("", nil, page, pageSize, &filter.TimeRange, filter, values...)
 }
 
 func (s *SQLiteDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error) {
-	if err := validateTimeRange(timeRange); err != nil {
-		return nil, UsageTotals{}, err
-	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, UsageTotals{}, err
 	}
@@ -715,12 +621,6 @@ func (s *SQLiteDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageR
 }
 
 func (s *SQLiteDatabase) QueryUserUsage(timeRange TimeRange, accountID int) ([]UserUsageRow, UsageTotals, error) {
-	if err := validateTimeRange(timeRange); err != nil {
-		return nil, UsageTotals{}, err
-	}
-	if accountID < 0 {
-		return nil, UsageTotals{}, errors.New("account ID must not be negative")
-	}
 	if err := s.ensureOpen(); err != nil {
 		return nil, UsageTotals{}, err
 	}
@@ -809,15 +709,6 @@ func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *i
 	if err := s.ensureOpen(); err != nil {
 		return nil, 0, err
 	}
-	if page < 1 {
-		return nil, 0, errors.New("page must be greater than zero")
-	}
-	if pageSize < 1 {
-		return nil, 0, errors.New("page size must be greater than zero")
-	}
-	if timeRange != nil && timeRange.Start.After(timeRange.End) {
-		return nil, 0, errors.New("start time must not be after end time")
-	}
 	var startTime, endTime *time.Time
 	if timeRange != nil {
 		startTime = new(timeRange.Start.UTC())
@@ -887,121 +778,6 @@ func (s *SQLiteDatabase) ensureOpen() error {
 		return errors.New("sqlite database is not open")
 	}
 	return nil
-}
-
-func (s *SQLiteDatabase) loadMemory() error {
-	accounts, err := s.db.Query(`SELECT id, provider, name, config, state, quota, created_at, updated_at FROM accounts`)
-	if err != nil {
-		return err
-	}
-	for accounts.Next() {
-		var v PersistedAccount
-		var config, state, quota []byte
-		if err = accounts.Scan(&v.ID, &v.AIProvider, &v.Name, &config, &state, &quota, &v.CreatedAt, &v.UpdatedAt); err != nil {
-			accounts.Close()
-			return err
-		}
-		v.Config = append([]byte(nil), config...)
-		v.State = append([]byte(nil), state...)
-		v.Quota = append([]byte(nil), quota...)
-		if err = s.mem.SaveAccount(v); err != nil {
-			accounts.Close()
-			return err
-		}
-	}
-	if err = accounts.Err(); err != nil {
-		accounts.Close()
-		return err
-	}
-	accounts.Close()
-	users, err := s.db.Query(`SELECT id, name, labels, role, enabled, password_hash, created_at, updated_at FROM users`)
-	if err != nil {
-		return err
-	}
-	for users.Next() {
-		var v PersistedUser
-		var labels []byte
-		if err = users.Scan(&v.ID, &v.Name, &labels, &v.Role, &v.Enabled, &v.PasswordHash, &v.CreatedAt, &v.UpdatedAt); err != nil {
-			users.Close()
-			return err
-		}
-		if err = json.Unmarshal(labels, &v.Labels); err != nil {
-			users.Close()
-			return err
-		}
-		if err = s.mem.SaveUser(v); err != nil {
-			users.Close()
-			return err
-		}
-	}
-	if err = users.Err(); err != nil {
-		users.Close()
-		return err
-	}
-	users.Close()
-	groups, err := s.db.Query(`SELECT id, config, state, created_at, updated_at FROM proxy_groups`)
-	if err != nil {
-		return err
-	}
-	for groups.Next() {
-		var v PersistedProxyGroup
-		var config, state []byte
-		if err = groups.Scan(&v.ID, &config, &state, &v.CreatedAt, &v.UpdatedAt); err != nil {
-			groups.Close()
-			return err
-		}
-		v.Config = append([]byte(nil), config...)
-		v.State = append([]byte(nil), state...)
-		if err = s.mem.SaveProxyGroup(v); err != nil {
-			groups.Close()
-			return err
-		}
-	}
-	if err = groups.Err(); err != nil {
-		groups.Close()
-		return err
-	}
-	groups.Close()
-	keys, err := s.db.Query(`SELECT id, user_id, account_id, name, key_value, config, valid_seconds, created_at, updated_at FROM api_keys`)
-	if err != nil {
-		return err
-	}
-	for keys.Next() {
-		var v PersistedAPIKey
-		var config []byte
-		if err = keys.Scan(&v.ID, &v.UserID, &v.AccountID, &v.Name, &v.Key, &config, &v.ValidSeconds, &v.CreatedAt, &v.UpdatedAt); err != nil {
-			keys.Close()
-			return err
-		}
-		v.Config = append([]byte(nil), config...)
-		if err = s.mem.SaveAPIKey(v); err != nil {
-			keys.Close()
-			return err
-		}
-	}
-	if err = keys.Err(); err != nil {
-		keys.Close()
-		return err
-	}
-	keys.Close()
-	configs, err := s.db.Query(`SELECT id, type, name, value FROM configs`)
-	if err != nil {
-		return err
-	}
-	for configs.Next() {
-		var v PersistedConfig
-		var raw []byte
-		if err = configs.Scan(&v.ID, &v.Type, &v.Name, &raw); err != nil {
-			configs.Close()
-			return err
-		}
-		v.Value = append([]byte(nil), raw...)
-		if err = s.mem.SaveConfig(v); err != nil {
-			configs.Close()
-			return err
-		}
-	}
-	return configs.Err()
 }
 
 func (s *SQLiteDatabase) insertTrace(table string, t *PersistedCallTrace) error {
@@ -1286,5 +1062,18 @@ CREATE INDEX IF NOT EXISTS idx_api_keys_key_value ON api_keys(key_value);
 CREATE TABLE IF NOT EXISTS proxy_groups (id INTEGER PRIMARY KEY AUTOINCREMENT, config BLOB NOT NULL DEFAULT '{}', state BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE TABLE IF NOT EXISTS configs (id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, name TEXT NOT NULL, value TEXT NOT NULL, UNIQUE(type, name));
 CREATE INDEX IF NOT EXISTS idx_configs_type ON configs(type);`
+
+func migrateLegacyModuleConfigsSQLite(db *sql.DB) error {
+	var exists bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='module_configs')`).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	_, err := db.Exec(`INSERT OR IGNORE INTO configs(type, name, value)
+		SELECT ?, module, config FROM module_configs`, ModuleConfigType)
+	return err
+}
 
 var _ Database = (*SQLiteDatabase)(nil)

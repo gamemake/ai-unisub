@@ -108,7 +108,7 @@ go vet ./...
 npm run test:e2e
 ```
 
-端到端测试自动使用独立的 SQLite 内存数据库（`sqlite::memory:`）和 `127.0.0.1:28080`，不会读取 `data/` 中的账号或凭据。这里是 SQLite 的存储模式，不是数据库模块内部用于统一缓存逻辑的 `MemoryDatabase` 结构。默认在 Windows 上使用已安装的 Edge；其他系统默认使用 Playwright Chromium（首次需 `npx playwright install chromium`）。可通过 `PLAYWRIGHT_CHANNEL` 指定 `chrome`、`msedge` 等通道。
+端到端测试自动使用独立的 SQLite 内存数据库（`sqlite::memory:`）和 `127.0.0.1:28080`，不会读取 `data/` 中的账号或凭据。这里是 SQLite 的存储模式，不是数据库模块中实现 `Database` 并包装 SQL 存储的 `MemoryDatabase`。默认在 Windows 上使用已安装的 Edge；其他系统默认使用 Playwright Chromium（首次需 `npx playwright install chromium`）。可通过 `PLAYWRIGHT_CHANNEL` 指定 `chrome`、`msedge` 等通道。
 
 ## API 调用
 

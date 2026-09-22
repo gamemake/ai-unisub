@@ -11,12 +11,15 @@ import (
 
 var ErrCallTraceNotFound = errors.New("call trace not found")
 
-// NewDatabase creates a database implementation from a database URL.
-// SQLite is currently the only supported scheme. Examples:
+// NewDatabase creates a database implementation from a database URL. The
+// returned Database is a MemoryDatabase that caches the small records and
+// delegates durable storage to the SQLite or PostgreSQL store selected by the
+// URL. Supported schemes are SQLite, postgres, and postgresql. Examples:
 //
 //	sqlite::memory:
 //	sqlite://./data/app.db
 //	sqlite:///var/lib/app/data.db
+//	postgresql://user:password@localhost:5432/ai_unisub?sslmode=disable
 func NewDatabase(databaseURL string) (Database, error) {
 	parsed, err := url.Parse(databaseURL)
 	if err != nil {
@@ -25,15 +28,18 @@ func NewDatabase(databaseURL string) (Database, error) {
 	if parsed.Scheme == "" {
 		return nil, errors.New("database URL must include a scheme")
 	}
-	if !strings.EqualFold(parsed.Scheme, "sqlite") {
+	switch {
+	case strings.EqualFold(parsed.Scheme, "sqlite"):
+		path, err := sqlitePathFromURL(parsed, databaseURL)
+		if err != nil {
+			return nil, err
+		}
+		return newMemoryDatabase(NewSQLiteDatabase(path)), nil
+	case strings.EqualFold(parsed.Scheme, "postgres"), strings.EqualFold(parsed.Scheme, "postgresql"):
+		return newMemoryDatabase(NewPostgreSQLDatabase(databaseURL)), nil
+	default:
 		return nil, errors.New("unsupported database scheme: " + parsed.Scheme)
 	}
-
-	path, err := sqlitePathFromURL(parsed, databaseURL)
-	if err != nil {
-		return nil, err
-	}
-	return NewSQLiteDatabase(path), nil
 }
 
 func sqlitePathFromURL(parsed *url.URL, rawURL string) (string, error) {
@@ -87,6 +93,10 @@ type PersistedConfig struct {
 	Name  string          `json:"name"`
 	Value json.RawMessage `json:"value"`
 }
+
+// ModuleConfigType identifies legacy whole-module configuration documents
+// stored as generic PersistedConfig rows.
+const ModuleConfigType = "module"
 
 // PersistedProxyLog records an upstream HTTP error for a proxy.
 type PersistedProxyLog struct {
@@ -282,8 +292,10 @@ func validateTimeRange(r TimeRange) error {
 	return nil
 }
 
-// Database is the persistence contract. SQLiteDatabase is the concrete
-// implementation; tests can use SQLiteDatabase with the :memory: path.
+// Database is the persistence contract. MemoryDatabase implements it: it owns
+// validation and the record cache while SQLiteDatabase or PostgreSQLDatabase
+// executes the SQL. Tests can use the sqlite::memory: URL for a process-local
+// database.
 // AIProvider configurations are instance records, not configuration records
 // for a provider type.
 type Database interface {
@@ -291,13 +303,6 @@ type Database interface {
 	Open() error
 	// Close releases the database resources.
 	Close() error
-
-	// Module configurations are opaque JSON documents keyed by module name.
-	// Missing configurations return nil, nil; modules own defaults and schema validation.
-	// LoadModuleConfig loads a module configuration by module name.
-	LoadModuleConfig(module string) (json.RawMessage, error)
-	// SaveModuleConfig validates and stores a module configuration.
-	SaveModuleConfig(module string, config json.RawMessage) error
 
 	// ListConfigs returns all generic configuration objects, ordered by ID.
 	ListConfigs() ([]PersistedConfig, error)
@@ -349,6 +354,7 @@ type Database interface {
 	DeleteUser(id int) error
 
 	// ListAPIKeys returns API keys belonging to the specified user.
+	// userID 0 returns the keys of every user.
 	ListAPIKeys(userID int) ([]PersistedAPIKey, error)
 	// SaveAPIKey creates or updates a persisted API key.
 	SaveAPIKey(key *PersistedAPIKey) error
@@ -363,11 +369,11 @@ type Database interface {
 	// filter.TimeRange start and end are required; the database does not cap the window.
 	QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
-	// and headers. startedAt identifies the UTC daily table containing the trace.
+	// and headers. startedAt identifies the UTC day containing the trace.
 	GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error)
 
 	// QueryAccountUsage aggregates call-trace usage by account_id in timeRange.
-	// Aggregation runs in SQL over daily call_traces tables; no row bodies are loaded.
+	// Aggregation runs in SQL over call-trace storage; no row bodies are loaded.
 	QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error)
 	// QueryUserUsage aggregates call-trace usage by API-key owner (user_id) in timeRange.
 	// accountID 0 means all accounts; otherwise only that account's traces are included.

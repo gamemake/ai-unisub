@@ -187,7 +187,7 @@ func TestConfigValidationAndUniqueness(t *testing.T) {
 
 func TestConfigCacheSurvivesReload(t *testing.T) {
 	path := t.TempDir() + "/configs.db"
-	db := NewSQLiteDatabase(path)
+	db := newMemoryDatabase(NewSQLiteDatabase(path))
 	if err := db.Open(); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +204,7 @@ func TestConfigCacheSurvivesReload(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db2 := NewSQLiteDatabase(path)
+	db2 := newMemoryDatabase(NewSQLiteDatabase(path))
 	if err := db2.Open(); err != nil {
 		t.Fatal(err)
 	}
@@ -224,4 +224,36 @@ func TestConfigCacheSurvivesReload(t *testing.T) {
 	if len(all) != 1 {
 		t.Fatalf("expected 1 config after reload, got %d", len(all))
 	}
+}
+
+func TestNewDatabasePostgreSQL(t *testing.T) {
+	db, err := NewDatabase("postgresql://user:password@localhost:5432/ai_unisub?sslmode=disable")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isPostgreSQLDatabase(db) {
+		t.Fatalf("expected PostgreSQLDatabase store, got %T", db)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err = NewDatabase("postgres://user:password@localhost/ai_unisub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !isPostgreSQLDatabase(db) {
+		t.Fatalf("expected PostgreSQLDatabase store, got %T", db)
+	}
+}
+
+// isPostgreSQLDatabase reports whether NewDatabase routed the URL to the
+// PostgreSQL store behind the MemoryDatabase wrapper.
+func isPostgreSQLDatabase(db Database) bool {
+	memory, ok := db.(*MemoryDatabase)
+	if !ok {
+		return false
+	}
+	_, ok = memory.store.(*PostgreSQLDatabase)
+	return ok
 }

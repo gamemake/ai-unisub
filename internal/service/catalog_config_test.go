@@ -29,7 +29,9 @@ func TestStoredCatalogCannotOverrideBuiltinURLs(t *testing.T) {
 			suppliers = append(suppliers, item)
 		}
 		raw, _ := json.Marshal(map[string]any{"suppliers": suppliers})
-		if err := db.SaveModuleConfig(aiprovider.ModuleConfigKey, raw); err != nil {
+		if err := db.SaveConfig(&database.PersistedConfig{
+			Type: database.ModuleConfigType, Name: aiprovider.ModuleConfigKey, Value: raw,
+		}); err != nil {
 			t.Fatal(err)
 		}
 		s, err := NewWithDependencies(Config{DatabaseURL: "sqlite::memory:"}, db, nil)

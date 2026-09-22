@@ -236,7 +236,7 @@ OAuth 启动参数显式携带 Endpoint，Session 保存本次选定的不可变
 
 每分钟刷新历史聚合。SQLite 用地址、应用、10 分钟桶及进程来源作唯一键，保存绝对计数快照；相同来源的重复写入覆盖，不重复累计。写入成功后移除已结束的聚合桶，当前桶保留用于后续覆盖更新；失败保留待写数据。容量不足时阻止新增统计序列及相应代理请求，返回错误，不无限积压。Close 取消自有探测、停止刷新任务、等待探测结束并刷新统计；失败可重试，成功后重复关闭安全。
 
-Store 包含组读写与聚合统计读写，可选 `HealthStore` 提供健康快照落库；MemoryDatabase 和 SQLiteDatabase 均实现该扩展。Database 通过领域类型及 SQLite 事务实现契约。管理路由继续为 `/api/proxy-groups`，见 [API](unisub-api.md)。
+Store 包含组读写与聚合统计读写，可选 `HealthStore` 提供健康快照落库；持久化经 `database.Database` 适配；该扩展为可选，当前适配层未实现。管理路由继续为 `/api/proxy-groups`，见 [API](unisub-api.md)。
 
 ## 设计验证边界
 

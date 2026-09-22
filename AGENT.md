@@ -13,7 +13,7 @@ UniSub 是 Go + SQLite AI 网关，提供多用户管理、上游订阅凭据与
 | `cmd/unisub/` | 服务进程配置和 HTTP 启动 |
 | `cmd/oauth/`、`cmd/dummy/` | 独立 OAuth CLI、本地模拟工具 |
 | `internal/common/` | 通用 JSON 错误与公共错误消息；不承担代理职责 |
-| `internal/database/` | 统一数据库契约、SQLite 持久化与内部内存缓存结构 |
+| `internal/database/` | 统一数据库契约、SQLite/PostgreSQL 持久化与内存缓存 |
 | `internal/oauth/` | OAuth Manager、Session、凭据刷新和协议适配器 |
 | `internal/aiprovider/` | AIProvider 工厂、运行时 Account、并发队列和上游调用 |
 | `internal/service/` | 模块框架、路由、认证及共享依赖 |

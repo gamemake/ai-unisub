@@ -40,7 +40,7 @@ flowchart TD
 | 包 | 职责 | 关键边界 | 文档 |
 | --- | --- | --- | --- |
 | common | 公共错误消息、JSON 错误输出与统一日志 | 不承担代理职责，不包含 proxy.go | [Common](common.md) |
-| database | 统一数据库接口、SQLite 持久化与内部缓存 | MemoryDatabase 是内部缓存数据结构，不是并列数据库后端 | [Database](database.md) |
+| database | 统一数据库接口、SQLite/PostgreSQL 持久化与内存缓存 | MemoryDatabase 实现 Database 并包装 SQL 存储，不是并列数据库后端 | [Database](database.md) |
 | proxy | 代理对象、内部 URL 校验、HTTP 传输、代理组、调度与统计 | 不依赖 OAuth、AIProvider、Service 或应用；通过自身 Store 接口使用持久化 | [Proxy](proxy.md) |
 | oauth | 授权协议、Session、Credential、刷新与撤销 | 显式依赖 Proxy，不感知应用路由、用户角色、页面或具体数据库 | [OAuth](oauth.md) |
 | aiprovider | 上游配置、工厂、实例、Account 和调用转发 | 使用 OAuth 与代理能力，不依赖数据库；记录由调用方接收 | [AIProvider](ai-provider.md) |
@@ -121,8 +121,8 @@ API 校验管理员权限并解析输入 → Proxy Manager 管理组、状态和
 
 | 状态 | 所属组件 | 保存位置 |
 | --- | --- | --- |
-| 用户、账号、API Key、Credential | Database | SQLite；部分实体经内部 MemoryDatabase 缓存 |
-| 调用记录 | Database | SQLite，当前按 UTC 日期分表，不进入 MemoryDatabase 缓存 |
+| 用户、账号、API Key、Credential | Database | SQLite／PostgreSQL；由 MemoryDatabase 缓存 |
+| 调用记录 | Database | SQLite 按 UTC 日期分表，PostgreSQL 按 UTC 日期分区；不进入 MemoryDatabase 缓存 |
 | 浏览器 Session | Service AuthService | 进程内存 |
 | 授权 Session、凭据刷新锁 | OAuthManager | 进程内存 |
 | Web OAuth 一次性结果 | Service OAuthResultStore | 进程内存 |

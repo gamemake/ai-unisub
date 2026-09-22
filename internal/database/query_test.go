@@ -19,15 +19,16 @@ func testDB(t *testing.T) Database {
 	return db
 }
 
-func testFileDB(t *testing.T) *SQLiteDatabase {
+func testFileDB(t *testing.T) (*MemoryDatabase, *SQLiteDatabase) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "calls.db")
-	db := NewSQLiteDatabase(path)
+	store := NewSQLiteDatabase(path)
+	db := newMemoryDatabase(store)
 	if err := db.Open(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return db
+	return db, store
 }
 
 func TestQueryCallTracesRequiresTimeRange(t *testing.T) {
@@ -63,7 +64,7 @@ func TestQueryProxyLogsRequiresTimeRange(t *testing.T) {
 }
 
 func TestCallTraceOutboundURLAndLegacySchema(t *testing.T) {
-	db := testFileDB(t)
+	db, store := testFileDB(t)
 	now := time.Now().UTC()
 	table := traceTable(now)
 
@@ -79,10 +80,10 @@ func TestCallTraceOutboundURLAndLegacySchema(t *testing.T) {
 		cache_creation_tokens INTEGER, cache_read_tokens INTEGER,
 		started_at DATETIME, finished_at DATETIME
 	)`
-	if _, err := db.db.Exec(legacySQL); err != nil {
+	if _, err := store.db.Exec(legacySQL); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.db.Exec(
+	if _, err := store.db.Exec(
 		`INSERT INTO `+table+`(apikey, provider_type, account_id, request_id, source_ip, url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, response_headers, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		"sk-legacy", "claude", 1, "req-legacy", "127.0.0.1", "/v1/messages", 200, "",
