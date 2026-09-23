@@ -1,10 +1,29 @@
 package aiprovider
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
+	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestParseUsageGzipEncodedSSE(t *testing.T) {
+	var body bytes.Buffer
+	writer := gzip.NewWriter(&body)
+	_, _ = writer.Write([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"model\":\"claude-opus\",\"usage\":{\"input_tokens\":94,\"cache_creation_input_tokens\":273,\"cache_read_input_tokens\":71352,\"output_tokens\":4}}}\n\n"))
+	_, _ = writer.Write([]byte("event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":94,\"cache_creation_input_tokens\":273,\"cache_read_input_tokens\":71352,\"output_tokens\":82}}\n\n"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	trace := &AIProviderCallTrace{ResponseBody: body.Bytes(), ResponseHeaders: http.Header{"Content-Encoding": []string{"gzip"}}}
+	parseUsage(trace)
+	if trace.Model != "claude-opus" || trace.InputTokens != 94 || trace.OutputTokens != 82 || trace.CacheCreationTokens != 273 || trace.CacheReadTokens != 71352 {
+		t.Fatalf("gzip usage was not parsed: %+v", trace)
+	}
+}
 
 func TestStreamUsageAfterTraceLimitAndAcrossChunks(t *testing.T) {
 	trace := &AIProviderCallTrace{}

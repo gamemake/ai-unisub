@@ -2,8 +2,11 @@ package aiprovider
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 )
 
 var errStreamCompleted = errors.New("stream completed")
@@ -59,12 +62,39 @@ func parseUsage(trace *AIProviderCallTrace) {
 		_ = json.Unmarshal(trace.RequestBody, &request)
 		trace.Model = request.Model
 	}
-	parseUsageJSON(trace, trace.ResponseBody)
-	for line := range bytes.SplitSeq(trace.ResponseBody, []byte("\n")) {
+	body := usageResponseBody(trace)
+	parseUsageJSON(trace, body)
+	for line := range bytes.SplitSeq(body, []byte("\n")) {
 		if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
 			parseUsageJSON(trace, bytes.TrimSpace(data))
 		}
 	}
+}
+
+// usageResponseBody decodes content encodings that prevent the response body
+// from being inspected as JSON/SSE. The original body remains untouched in the
+// trace because it is also used for forwarding and call-record persistence.
+func usageResponseBody(trace *AIProviderCallTrace) []byte {
+	if trace == nil || len(trace.ResponseBody) == 0 {
+		return nil
+	}
+	encodings := strings.Split(trace.ResponseHeaders.Get("Content-Encoding"), ",")
+	for i := len(encodings) - 1; i >= 0; i-- {
+		if !strings.EqualFold(strings.TrimSpace(encodings[i]), "gzip") {
+			continue
+		}
+		reader, err := gzip.NewReader(bytes.NewReader(trace.ResponseBody))
+		if err != nil {
+			return trace.ResponseBody
+		}
+		decoded, err := io.ReadAll(io.LimitReader(reader, 4<<20))
+		_ = reader.Close()
+		if err != nil {
+			return trace.ResponseBody
+		}
+		return decoded
+	}
+	return trace.ResponseBody
 }
 
 // Read usage events throughout a stream, including after the trace body cap.
