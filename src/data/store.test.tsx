@@ -57,7 +57,7 @@ describe('server data boundary', () => {
   it('uses compact UTC dates for call-detail endpoints', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetch)
-    await actions.callDetail({ id: 42, started_at: '2026-09-15T00:00:00Z' } as Parameters<typeof actions.callDetail>[0])
+    await actions.callDetail({ id: 42, finished_at: '2026-09-15T00:00:00Z' } as Parameters<typeof actions.callDetail>[0])
     expect(fetch.mock.calls[0][0]).toBe('/api/calls/20260915/42')
   })
   it('sends numeric proxy_group_id and omits it when unused', async () => {

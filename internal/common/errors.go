@@ -38,7 +38,7 @@ const (
 	MessageCouldNotDeleteUser            = "could not delete user"
 	MessageCouldNotListAIProviders       = "could not list providers"
 	MessageAIProviderAndConfigRequired   = "provider and config are required"
-	MessageInvalidAIProviderConfig       = "invalid provider config"
+	MessageInvalidAccountConfig          = "invalid provider config"
 	MessageCredentialNotFound            = "credential not found"
 	MessageCouldNotGenerateCredentialID  = "could not generate credential ID"
 	MessageCouldNotSaveCredential        = "could not save credential"

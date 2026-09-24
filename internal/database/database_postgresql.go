@@ -53,6 +53,17 @@ func (p *PostgreSQLDatabase) Open() error {
 			return fmt.Errorf("initialize PostgreSQL schema: %w", err)
 		}
 	}
+	for _, statement := range []string{
+		`ALTER TABLE call_traces ADD COLUMN IF NOT EXISTS user_id BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE call_traces ADD COLUMN IF NOT EXISTS request_method TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE call_traces ADD COLUMN IF NOT EXISTS queue_duration_ms BIGINT NOT NULL DEFAULT 0`,
+		`ALTER TABLE call_traces ADD COLUMN IF NOT EXISTS request_duration_ms BIGINT NOT NULL DEFAULT 0`,
+	} {
+		if _, err := db.Exec(statement); err != nil {
+			_ = db.Close()
+			return fmt.Errorf("migrate PostgreSQL call trace schema: %w", err)
+		}
+	}
 	if err := migrateLegacyModuleConfigsPostgreSQL(db); err != nil {
 		_ = db.Close()
 		return err
@@ -429,7 +440,15 @@ func (p *PostgreSQLDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	if err := p.ensureOpen(); err != nil {
 		return err
 	}
-	if err := p.ensurePartition("call_traces", trace.StartedAt); err != nil {
+	finishedAt := trace.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	partitionTime := finishedAt
+	if partitionTime.IsZero() {
+		partitionTime = time.Now().UTC()
+	}
+	if err := p.ensurePartition("call_traces", partitionTime); err != nil {
 		return err
 	}
 	original, err := json.Marshal(trace.OriginalRequestHeaders)
@@ -454,7 +473,7 @@ func (p *PostgreSQLDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 			return err
 		}
 	}
-	args := []any{trace.APIKey, trace.AIProviderType, trace.AccountID, trace.RequestID, trace.SessionID, trace.SourceIP, trace.URL, trace.OutboundURL, trace.HTTPErrorCode, trace.HTTPErrorInfo, string(original), string(outbound), trace.RequestBody, string(response), trace.ResponseBody, trace.RequestBytes, trace.ResponseBytes, trace.Model, trace.InputTokens, trace.OutputTokens, trace.CacheCreationTokens, trace.CacheReadTokens, databaseTime(trace.StartedAt), databaseTime(trace.FinishedAt)}
+	args := []any{trace.UserID, trace.APIKey, trace.AIProviderType, trace.AccountID, trace.RequestID, trace.SessionID, trace.SourceIP, trace.URL, trace.RequestMethod, trace.OutboundURL, trace.HTTPErrorCode, trace.HTTPErrorInfo, string(original), string(outbound), trace.RequestBody, string(response), trace.ResponseBody, trace.RequestBytes, trace.ResponseBytes, trace.QueueDurationMs, trace.RequestDurationMs, trace.Model, trace.InputTokens, trace.OutputTokens, trace.CacheCreationTokens, trace.CacheReadTokens, databaseTime(finishedAt)}
 	if trace.ID > 0 {
 		args = append([]any{trace.ID}, args...)
 	}
@@ -462,11 +481,11 @@ func (p *PostgreSQLDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	// Keep the two insert forms separate: an identity column must be omitted
 	// for new rows, while an explicit ID is used for SQLite-compatible updates.
 	if trace.ID > 0 {
-		query = `INSERT INTO call_traces(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at)
-			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15::jsonb, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26) RETURNING id`
+		query = `INSERT INTO call_traces(id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at)
+			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15::jsonb, $16, $17::jsonb, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28) RETURNING id`
 	} else {
-		query = `INSERT INTO call_traces(apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at)
-			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14::jsonb, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25) RETURNING id`
+		query = `INSERT INTO call_traces(user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at)
+			VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16::jsonb, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27) RETURNING id`
 	}
 	if err := tx.QueryRow(query, args...).Scan(&trace.ID); err != nil {
 		return err
@@ -477,20 +496,20 @@ func (p *PostgreSQLDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	return nil
 }
 
-func (p *PostgreSQLDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error) {
+func (p *PostgreSQLDatabase) GetCallTrace(finishedAt time.Time, id int) (*PersistedCallTrace, error) {
 	if err := p.ensureOpen(); err != nil {
 		return nil, err
 	}
-	query := `SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM call_traces WHERE id=$1`
+	query := `SELECT id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at FROM call_traces WHERE id=$1`
 	args := []any{id}
-	if !startedAt.IsZero() {
-		dayStart := utcDay(startedAt)
-		query += ` AND started_at >= $2 AND started_at < $3`
+	if !finishedAt.IsZero() {
+		dayStart := utcDay(finishedAt)
+		query += ` AND finished_at >= $2 AND finished_at < $3`
 		args = append(args, dayStart, dayStart.AddDate(0, 0, 1))
 	}
 	var trace PersistedCallTrace
 	var original, outbound, response []byte
-	err := p.db.QueryRow(query, args...).Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.RequestBytes, &trace.ResponseBytes, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt)
+	err := p.db.QueryRow(query, args...).Scan(&trace.ID, &trace.UserID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.RequestMethod, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.RequestBytes, &trace.ResponseBytes, &trace.QueueDurationMs, &trace.RequestDurationMs, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCallTraceNotFound
 	}
@@ -538,12 +557,12 @@ func (p *PostgreSQLDatabase) QueryCallTraces(filter CallTraceFilter, page, pageS
 		return nil, 0, err
 	}
 	args = append(args, pageSize, (page-1)*pageSize)
-	rows, err := p.db.Query(`SELECT t.id, t.apikey, t.provider_type, t.account_id, t.request_id, t.session_id, t.source_ip,
-		t.url, t.outbound_url, t.http_error_code, t.http_error_info, t.model, t.input_tokens, t.output_tokens,
-		t.cache_creation_tokens, t.cache_read_tokens, t.started_at, t.finished_at,
+	rows, err := p.db.Query(`SELECT t.id, t.user_id, t.apikey, t.provider_type, t.account_id, t.request_id, t.session_id, t.source_ip,
+		t.url, t.request_method, t.outbound_url, t.http_error_code, t.http_error_info, t.model, t.input_tokens, t.output_tokens,
+		t.cache_creation_tokens, t.cache_read_tokens, t.queue_duration_ms, t.request_duration_ms, t.finished_at,
 		COALESCE((SELECT u.name FROM api_keys k JOIN users u ON u.id=k.user_id
 			WHERE k.key_value=t.apikey OR CAST(k.id AS TEXT)=t.apikey LIMIT 1), '')
-		FROM call_traces t `+where+` ORDER BY t.started_at DESC NULLS LAST, t.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
+		FROM call_traces t `+where+` ORDER BY t.finished_at DESC NULLS LAST, t.id DESC LIMIT $`+fmt.Sprint(len(args)-1)+` OFFSET $`+fmt.Sprint(len(args)), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -551,7 +570,7 @@ func (p *PostgreSQLDatabase) QueryCallTraces(filter CallTraceFilter, page, pageS
 	result := make([]PersistedCallTraceSummary, 0, pageSize)
 	for rows.Next() {
 		var trace PersistedCallTraceSummary
-		if err := rows.Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt, &trace.Username); err != nil {
+		if err := rows.Scan(&trace.ID, &trace.UserID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.RequestMethod, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.QueueDurationMs, &trace.RequestDurationMs, &trace.FinishedAt, &trace.Username); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, trace)
@@ -565,7 +584,7 @@ func (p *PostgreSQLDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUs
 	}
 	rows, err := p.db.Query(`SELECT account_id, COUNT(*), COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0),
 		COALESCE(SUM(cache_creation_tokens),0), COALESCE(SUM(cache_read_tokens),0)
-		FROM call_traces WHERE started_at >= $1 AND started_at <= $2 GROUP BY account_id ORDER BY account_id`, timeRange.Start.UTC(), timeRange.End.UTC())
+		FROM call_traces WHERE finished_at >= $1 AND finished_at <= $2 GROUP BY account_id ORDER BY account_id`, timeRange.Start.UTC(), timeRange.End.UTC())
 	if err != nil {
 		return nil, UsageTotals{}, err
 	}
@@ -591,7 +610,7 @@ func (p *PostgreSQLDatabase) QueryUserUsage(timeRange TimeRange, accountID int) 
 	query := `SELECT COALESCE(k.user_id,0), COUNT(*), COALESCE(SUM(t.input_tokens),0), COALESCE(SUM(t.output_tokens),0),
 		COALESCE(SUM(t.cache_creation_tokens),0), COALESCE(SUM(t.cache_read_tokens),0)
 		FROM call_traces t LEFT JOIN api_keys k ON k.key_value=t.apikey OR CAST(k.id AS TEXT)=t.apikey
-		WHERE t.started_at >= $1 AND t.started_at <= $2`
+		WHERE t.finished_at >= $1 AND t.finished_at <= $2`
 	args := []any{timeRange.Start.UTC(), timeRange.End.UTC()}
 	if accountID > 0 {
 		query += ` AND t.account_id=$3`
@@ -618,7 +637,7 @@ func (p *PostgreSQLDatabase) QueryUserUsage(timeRange TimeRange, accountID int) 
 }
 
 func (p *PostgreSQLDatabase) callTraceWhere(filter CallTraceFilter) (string, []any) {
-	conditions := []string{"t.started_at >= $1", "t.started_at <= $2"}
+	conditions := []string{"t.finished_at >= $1", "t.finished_at <= $2"}
 	args := []any{filter.TimeRange.Start.UTC(), filter.TimeRange.End.UTC()}
 	add := func(condition string, value any) {
 		args = append(args, value)
@@ -736,9 +755,9 @@ var postgresSchema = []string{
 	`CREATE TABLE IF NOT EXISTS proxy_groups (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, config JSONB NOT NULL DEFAULT '{}'::jsonb, state JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL)`,
 	`CREATE TABLE IF NOT EXISTS configs (id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, value JSONB NOT NULL, UNIQUE(type, name))`,
 	`CREATE INDEX IF NOT EXISTS idx_configs_type ON configs(type)`,
-	`CREATE TABLE IF NOT EXISTS call_traces (id BIGINT GENERATED BY DEFAULT AS IDENTITY, apikey TEXT, provider_type TEXT, account_id BIGINT, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, outbound_url TEXT NOT NULL DEFAULT '', http_error_code INTEGER, http_error_info TEXT, original_request_headers JSONB, outbound_request_headers JSONB, request_body BYTEA, response_headers JSONB, response_body BYTEA, request_bytes BIGINT NOT NULL DEFAULT 0, response_bytes BIGINT NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ) PARTITION BY RANGE (started_at)`,
+	`CREATE TABLE IF NOT EXISTS call_traces (id BIGINT GENERATED BY DEFAULT AS IDENTITY, user_id BIGINT NOT NULL DEFAULT 0, apikey TEXT, provider_type TEXT, account_id BIGINT, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, request_method TEXT NOT NULL DEFAULT '', outbound_url TEXT NOT NULL DEFAULT '', http_error_code INTEGER, http_error_info TEXT, original_request_headers JSONB, outbound_request_headers JSONB, request_body BYTEA, response_headers JSONB, response_body BYTEA, request_bytes BIGINT NOT NULL DEFAULT 0, response_bytes BIGINT NOT NULL DEFAULT 0, queue_duration_ms BIGINT NOT NULL DEFAULT 0, request_duration_ms BIGINT NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, finished_at TIMESTAMPTZ) PARTITION BY RANGE (finished_at)`,
 	`CREATE TABLE IF NOT EXISTS call_traces_default PARTITION OF call_traces DEFAULT`,
-	`CREATE INDEX IF NOT EXISTS idx_call_traces_started_at ON call_traces(started_at)`,
+	`CREATE INDEX IF NOT EXISTS idx_call_traces_finished_at ON call_traces(finished_at)`,
 	`CREATE INDEX IF NOT EXISTS idx_call_traces_id ON call_traces(id)`,
 	`CREATE INDEX IF NOT EXISTS idx_call_traces_account_id ON call_traces(account_id)`,
 	`CREATE INDEX IF NOT EXISTS idx_call_traces_apikey ON call_traces(apikey)`,

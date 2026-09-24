@@ -76,7 +76,7 @@ Module Config 使用模块名作为字符串键；Credential 使用 OAuth 提供
 - `call_traces_YYYYMMDD`
 - `proxy_logs_YYYYMMDD`
 
-SQLite 使用独立日表，PostgreSQL 使用同名原生分区表（`PARTITION OF`，按 `started_at`／`time` 的范围分区）。
+SQLite 使用独立日表，PostgreSQL 使用同名原生分区表（`PARTITION OF`，按 `finished_at`／`time` 的范围分区）。调用记录只持久化 `finished_at`；详情路由中的日期参数仅用于定位分区。
 
 `QueryCallTraces` 和 `QueryProxyLogs` 支持分页与过滤，过滤条件中的 `TimeRange` 必须同时填写起止时间，且开始时间不得晚于结束时间；数据库不限制该范围是否落在最近 30 天。`GetCallTrace` 使用 UTC 日期和 `int` 类型记录 ID 查询完整内容。
 

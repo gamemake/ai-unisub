@@ -497,7 +497,11 @@ func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	if err := s.ensureOpen(); err != nil {
 		return err
 	}
-	table := traceTable(trace.StartedAt)
+	partitionTime := trace.FinishedAt
+	if partitionTime.IsZero() {
+		partitionTime = time.Now().UTC()
+	}
+	table := traceTable(partitionTime)
 	if err := s.ensureTraceTable(table); err != nil {
 		return err
 	}
@@ -505,19 +509,19 @@ func (s *SQLiteDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 }
 
 // GetCallTrace returns the complete trace from the UTC daily table identified
-// by startedAt. The list query intentionally does not load these large fields.
-func (s *SQLiteDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error) {
+// by finishedAt. The list query intentionally does not load these large fields.
+func (s *SQLiteDatabase) GetCallTrace(finishedAt time.Time, id int) (*PersistedCallTrace, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
 	}
-	table := traceTable(startedAt)
+	table := traceTable(finishedAt)
 	if err := s.ensureTraceTable(table); err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE id = ?`, table)
+	query := fmt.Sprintf(`SELECT id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at FROM %s WHERE id = ?`, table)
 	var trace PersistedCallTrace
 	var original, outbound, response []byte
-	err := s.db.QueryRow(query, id).Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.RequestBytes, &trace.ResponseBytes, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt)
+	err := s.db.QueryRow(query, id).Scan(&trace.ID, &trace.UserID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.RequestMethod, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &original, &outbound, &trace.RequestBody, &response, &trace.ResponseBody, &trace.RequestBytes, &trace.ResponseBytes, &trace.QueueDurationMs, &trace.RequestDurationMs, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.FinishedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrCallTraceNotFound
 	}
@@ -695,7 +699,7 @@ func buildUsageUnionQuery(tables []string, timeRange TimeRange, accountID int) (
 	start, end := timeRange.Start.UTC(), timeRange.End.UTC()
 	for _, table := range tables {
 		q := fmt.Sprintf(`SELECT account_id, apikey, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens
-			FROM %s WHERE started_at >= ? AND started_at <= ?`, table)
+			FROM %s WHERE finished_at >= ? AND finished_at <= ?`, table)
 		args = append(args, start, end)
 		if accountID > 0 {
 			q += ` AND account_id = ?`
@@ -750,7 +754,7 @@ func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *i
 	}
 
 	offset := (page - 1) * pageSize
-	query := "SELECT t.id, t.apikey, t.provider_type, t.account_id, t.request_id, t.session_id, t.source_ip, t.url, t.outbound_url, t.http_error_code, t.http_error_info, t.model, t.input_tokens, t.output_tokens, t.cache_creation_tokens, t.cache_read_tokens, t.started_at, t.finished_at, COALESCE((SELECT u.name FROM api_keys k JOIN users u ON u.id = k.user_id WHERE (k.key_value = t.apikey OR k.id = t.apikey) LIMIT 1), '') FROM (" + unionQuery + ") AS t ORDER BY t.started_at DESC, t.id DESC LIMIT ? OFFSET ?"
+	query := "SELECT t.id, t.user_id, t.apikey, t.provider_type, t.account_id, t.request_id, t.session_id, t.source_ip, t.url, t.request_method, t.outbound_url, t.http_error_code, t.http_error_info, t.model, t.input_tokens, t.output_tokens, t.cache_creation_tokens, t.cache_read_tokens, t.queue_duration_ms, t.request_duration_ms, t.finished_at, COALESCE((SELECT u.name FROM api_keys k JOIN users u ON u.id = k.user_id WHERE (k.key_value = t.apikey OR k.id = t.apikey) LIMIT 1), '') FROM (" + unionQuery + ") AS t ORDER BY t.finished_at DESC, t.id DESC LIMIT ? OFFSET ?"
 	queryArgs := append(slices.Clone(args), pageSize, offset)
 	rows, err = s.db.Query(query, queryArgs...)
 	if err != nil {
@@ -760,7 +764,7 @@ func (s *SQLiteDatabase) queryCallTraces(aiProviderName string, httpErrorCode *i
 	result := make([]PersistedCallTraceSummary, 0, pageSize)
 	for rows.Next() {
 		var trace PersistedCallTraceSummary
-		if err := rows.Scan(&trace.ID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.StartedAt, &trace.FinishedAt, &trace.Username); err != nil {
+		if err := rows.Scan(&trace.ID, &trace.UserID, &trace.APIKey, &trace.AIProviderType, &trace.AccountID, &trace.RequestID, &trace.SessionID, &trace.SourceIP, &trace.URL, &trace.RequestMethod, &trace.OutboundURL, &trace.HTTPErrorCode, &trace.HTTPErrorInfo, &trace.Model, &trace.InputTokens, &trace.OutputTokens, &trace.CacheCreationTokens, &trace.CacheReadTokens, &trace.QueueDurationMs, &trace.RequestDurationMs, &trace.FinishedAt, &trace.Username); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, trace)
@@ -784,7 +788,11 @@ func (s *SQLiteDatabase) insertTrace(table string, t *PersistedCallTrace) error 
 	original, _ := json.Marshal(t.OriginalRequestHeaders)
 	outbound, _ := json.Marshal(t.OutboundRequestHeaders)
 	response, _ := json.Marshal(t.ResponseHeaders)
-	result, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), databaseID(t.ID), t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.OutboundURL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.RequestBytes, t.ResponseBytes, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, t.StartedAt.UTC(), t.FinishedAt.UTC())
+	finishedAt := t.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = time.Now().UTC()
+	}
+	result, err := s.db.Exec(fmt.Sprintf(`INSERT OR REPLACE INTO %s(id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, table), databaseID(t.ID), t.UserID, t.APIKey, t.AIProviderType, t.AccountID, t.RequestID, t.SessionID, t.SourceIP, t.URL, t.RequestMethod, t.OutboundURL, t.HTTPErrorCode, t.HTTPErrorInfo, original, outbound, t.RequestBody, response, t.ResponseBody, t.RequestBytes, t.ResponseBytes, t.QueueDurationMs, t.RequestDurationMs, t.Model, t.InputTokens, t.OutputTokens, t.CacheCreationTokens, t.CacheReadTokens, finishedAt.UTC())
 	if err == nil && t.ID == 0 {
 		id, idErr := result.LastInsertId()
 		if idErr != nil {
@@ -810,11 +818,11 @@ func traceTableInRange(table string, timeRange *TimeRange) bool {
 }
 
 func createTraceTableSQL(table string) string {
-	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY AUTOINCREMENT, apikey TEXT, provider_type TEXT, account_id INTEGER, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, outbound_url TEXT NOT NULL DEFAULT '', http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, started_at DATETIME, finished_at DATETIME)`, table)
+	return fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL DEFAULT 0, apikey TEXT, provider_type TEXT, account_id INTEGER, request_id TEXT, session_id TEXT NOT NULL DEFAULT '', source_ip TEXT, url TEXT, request_method TEXT NOT NULL DEFAULT '', outbound_url TEXT NOT NULL DEFAULT '', http_error_code INTEGER, http_error_info TEXT, original_request_headers BLOB, outbound_request_headers BLOB, request_body BLOB, response_headers BLOB, response_body BLOB, request_bytes INTEGER NOT NULL DEFAULT 0, response_bytes INTEGER NOT NULL DEFAULT 0, queue_duration_ms INTEGER NOT NULL DEFAULT 0, request_duration_ms INTEGER NOT NULL DEFAULT 0, model TEXT, input_tokens INTEGER, output_tokens INTEGER, cache_creation_tokens INTEGER, cache_read_tokens INTEGER, finished_at DATETIME)`, table)
 }
 
 func createTraceIndexesSQL(table string) string {
-	return fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_started_at ON %s(started_at);
+	return fmt.Sprintf(`CREATE INDEX IF NOT EXISTS idx_%s_finished_at ON %s(finished_at);
 CREATE INDEX IF NOT EXISTS idx_%s_http_error_code ON %s(http_error_code);
 CREATE INDEX IF NOT EXISTS idx_%s_account_id ON %s(account_id);
 CREATE INDEX IF NOT EXISTS idx_%s_apikey ON %s(apikey);
@@ -861,6 +869,19 @@ func (s *SQLiteDatabase) ensureTraceColumns(table string) error {
 			return err
 		}
 	}
+	for _, column := range []string{
+		"user_id INTEGER NOT NULL DEFAULT 0",
+		"request_method TEXT NOT NULL DEFAULT ''",
+		"queue_duration_ms INTEGER NOT NULL DEFAULT 0",
+		"request_duration_ms INTEGER NOT NULL DEFAULT 0",
+	} {
+		name := strings.Fields(column)[0]
+		if _, ok := columns[name]; !ok {
+			if _, err := s.db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, column)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -892,18 +913,18 @@ func (s *SQLiteDatabase) queryTraceTable(table, userName, aiProviderName string,
 	if err := s.ensureTraceTable(table); err != nil {
 		return nil, err
 	}
-	query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE 1=1`, table)
+	query := fmt.Sprintf(`SELECT id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, original_request_headers, outbound_request_headers, request_body, response_headers, response_body, request_bytes, response_bytes, queue_duration_ms, request_duration_ms, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, finished_at FROM %s WHERE 1=1`, table)
 	args := []any{}
 	if code != nil {
 		query += " AND http_error_code = ?"
 		args = append(args, *code)
 	}
 	if startTime != nil {
-		query += " AND started_at >= ?"
+		query += " AND finished_at >= ?"
 		args = append(args, startTime.UTC())
 	}
 	if endTime != nil {
-		query += " AND started_at <= ?"
+		query += " AND finished_at <= ?"
 		args = append(args, endTime.UTC())
 	}
 	if aiProviderName != "" {
@@ -937,7 +958,7 @@ func (s *SQLiteDatabase) queryTraceTable(table, userName, aiProviderName string,
 	for rows.Next() {
 		var t PersistedCallTrace
 		var original, outbound, response []byte
-		if err = rows.Scan(&t.ID, &t.APIKey, &t.AIProviderType, &t.AccountID, &t.RequestID, &t.SessionID, &t.SourceIP, &t.URL, &t.OutboundURL, &t.HTTPErrorCode, &t.HTTPErrorInfo, &original, &outbound, &t.RequestBody, &response, &t.ResponseBody, &t.RequestBytes, &t.ResponseBytes, &t.Model, &t.InputTokens, &t.OutputTokens, &t.CacheCreationTokens, &t.CacheReadTokens, &t.StartedAt, &t.FinishedAt); err != nil {
+		if err = rows.Scan(&t.ID, &t.UserID, &t.APIKey, &t.AIProviderType, &t.AccountID, &t.RequestID, &t.SessionID, &t.SourceIP, &t.URL, &t.RequestMethod, &t.OutboundURL, &t.HTTPErrorCode, &t.HTTPErrorInfo, &original, &outbound, &t.RequestBody, &response, &t.ResponseBody, &t.RequestBytes, &t.ResponseBytes, &t.QueueDurationMs, &t.RequestDurationMs, &t.Model, &t.InputTokens, &t.OutputTokens, &t.CacheCreationTokens, &t.CacheReadTokens, &t.FinishedAt); err != nil {
 			return nil, err
 		}
 		if err = json.Unmarshal(original, &t.OriginalRequestHeaders); err != nil {
@@ -962,7 +983,7 @@ func buildTraceUnionQuery(tables []string, aiProviderName string, code *int, sta
 	queries := make([]string, 0, len(tables))
 	args := make([]any, 0)
 	for _, table := range tables {
-		query := fmt.Sprintf(`SELECT id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, outbound_url, http_error_code, http_error_info, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, started_at, finished_at FROM %s WHERE 1=1`, table)
+		query := fmt.Sprintf(`SELECT id, user_id, apikey, provider_type, account_id, request_id, session_id, source_ip, url, request_method, outbound_url, http_error_code, http_error_info, model, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, queue_duration_ms, request_duration_ms, finished_at FROM %s WHERE 1=1`, table)
 		queryArgs := make([]any, 0)
 		appendFilter := func(condition string, filterArgs ...any) {
 			query += " AND " + condition
@@ -979,10 +1000,10 @@ func buildTraceUnionQuery(tables []string, aiProviderName string, code *int, sta
 			appendFilter("http_error_code = ?", *code)
 		}
 		if startTime != nil {
-			appendFilter("started_at >= ?", startTime.UTC())
+			appendFilter("finished_at >= ?", startTime.UTC())
 		}
 		if endTime != nil {
-			appendFilter("started_at <= ?", endTime.UTC())
+			appendFilter("finished_at <= ?", endTime.UTC())
 		}
 		if aiProviderName != "" {
 			appendFilter("account_id IN (SELECT id FROM accounts WHERE name = ? OR provider = ?)", aiProviderName, aiProviderName)

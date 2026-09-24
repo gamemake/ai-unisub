@@ -88,12 +88,6 @@ export function compareRequestHeaders(original?: CallHeaders | null, outbound?: 
     })
 }
 
-function durationMs(started?: string, finished?: string): number | null {
-  if (!started || !finished) return null
-  const ms = Date.parse(finished) - Date.parse(started)
-  return Number.isFinite(ms) && ms >= 0 ? ms : null
-}
-
 function formatDuration(ms: number | null): string {
   if (ms == null) return '—'
   if (ms < 1000) return `${ms} ms`
@@ -302,7 +296,7 @@ function RequestHeaderCompare({ original, outbound }: { original?: CallHeaders |
 function CallDetailContent({ detail }: { detail: CallDetail }) {
   // 0 means network/transport failure with no HTTP response; 2xx/3xx are success-ish.
   const ok = detail.http_error_code > 0 && detail.http_error_code < 400 && !detail.http_error_info
-  const ms = durationMs(detail.started_at, detail.finished_at)
+  const ms = (detail.queue_duration_ms || 0) + (detail.request_duration_ms || 0)
   const requestHeaders = compareRequestHeaders(detail.original_request_headers, detail.outbound_request_headers)
   const requestHeaderChanges = requestHeaders.filter(row => row.change !== 'same').length
   const responseHeaders = headerEntries(detail.response_headers)
@@ -337,7 +331,6 @@ function CallDetailContent({ detail }: { detail: CallDetail }) {
           <InfoItem label="Source IP" mono>{detail.source_ip}</InfoItem>
           <InfoItem label="Account">{detail.account_id || '—'}</InfoItem>
           <InfoItem label="Tokens" className="col-span-2 sm:col-span-2 lg:col-span-2">{tokenLine(detail)}</InfoItem>
-          <InfoItem label="开始">{date(detail.started_at)}</InfoItem>
           <InfoItem label="结束">{date(detail.finished_at)}</InfoItem>
         </dl>
       </section>

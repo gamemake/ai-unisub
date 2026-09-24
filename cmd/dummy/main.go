@@ -211,7 +211,6 @@ func recordDummyCall(db database.Database, key *database.PersistedAPIKey, accoun
 		Model:                  model,
 		InputTokens:            inputTokens,
 		OutputTokens:           outputTokens,
-		StartedAt:              started,
 		FinishedAt:             finished,
 	}
 	return db.RecordCallTrace(trace)

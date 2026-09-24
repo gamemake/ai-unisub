@@ -28,9 +28,9 @@ func TestQueryAccountAndUserUsage(t *testing.T) {
 	}
 
 	traces := []*PersistedCallTrace{
-		{APIKey: "sk-alice", AccountID: accountA.ID, AIProviderType: "dummy", InputTokens: 10, OutputTokens: 2, StartedAt: now, FinishedAt: now},
-		{APIKey: "sk-alice", AccountID: accountA.ID, AIProviderType: "dummy", InputTokens: 5, OutputTokens: 1, CacheReadTokens: 3, StartedAt: now, FinishedAt: now},
-		{APIKey: "sk-unknown", AccountID: accountB.ID, AIProviderType: "api", InputTokens: 7, OutputTokens: 4, StartedAt: now, FinishedAt: now},
+		{APIKey: "sk-alice", AccountID: accountA.ID, AIProviderType: "dummy", InputTokens: 10, OutputTokens: 2, FinishedAt: now},
+		{APIKey: "sk-alice", AccountID: accountA.ID, AIProviderType: "dummy", InputTokens: 5, OutputTokens: 1, CacheReadTokens: 3, FinishedAt: now},
+		{APIKey: "sk-unknown", AccountID: accountB.ID, AIProviderType: "api", InputTokens: 7, OutputTokens: 4, FinishedAt: now},
 	}
 	for _, tr := range traces {
 		if err := db.RecordCallTrace(tr); err != nil {

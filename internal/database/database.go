@@ -159,7 +159,7 @@ type PersistedAPIKey struct {
 // PersistedCallTrace is the database-owned representation of one API call.
 //
 // This type is intentionally separate from the provider package's
-// AIProviderCallTrace. The layer that coordinates a request should map the provider
+// CallTrace. The layer that coordinates a request should map the provider
 // result into this type and add the request metadata that only the outer
 // layer knows, such as the authenticated user API key and selected provider
 // instance.
@@ -168,6 +168,7 @@ type PersistedAPIKey struct {
 type PersistedCallTrace struct {
 	ID int `json:"id"`
 
+	UserID         int    `json:"user_id"`
 	APIKey         string `json:"apikey"`
 	AIProviderType string `json:"provider_type"`
 	AccountID      int    `json:"account_id"`
@@ -176,6 +177,7 @@ type PersistedCallTrace struct {
 	SourceIP       string `json:"source_ip"`
 
 	URL                    string      `json:"url"`
+	RequestMethod          string      `json:"request_method"`
 	OutboundURL            string      `json:"outbound_url"`
 	HTTPErrorCode          int         `json:"http_error_code"`
 	HTTPErrorInfo          string      `json:"http_error_info,omitempty"`
@@ -186,14 +188,15 @@ type PersistedCallTrace struct {
 	ResponseBody           []byte      `json:"response_body"`
 	RequestBytes           int64       `json:"-"`
 	ResponseBytes          int64       `json:"-"`
+	QueueDurationMs        int64       `json:"queue_duration_ms"`
+	RequestDurationMs      int64       `json:"request_duration_ms"`
 
-	Model               string `json:"model"`
+	Model               string `json:"model"` // 只需要记录发给上游的模型名字
 	InputTokens         int    `json:"input_tokens"`
 	OutputTokens        int    `json:"output_tokens"`
 	CacheCreationTokens int    `json:"cache_creation_tokens"`
 	CacheReadTokens     int    `json:"cache_read_tokens"`
 
-	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
 }
 
@@ -202,6 +205,7 @@ type PersistedCallTrace struct {
 // pages do not load large request/response payloads into memory.
 type PersistedCallTraceSummary struct {
 	ID                  int       `json:"id"`
+	UserID              int       `json:"user_id"`
 	APIKey              string    `json:"apikey"`
 	AIProviderType      string    `json:"provider_type"`
 	AccountID           int       `json:"account_id"`
@@ -210,6 +214,7 @@ type PersistedCallTraceSummary struct {
 	SourceIP            string    `json:"source_ip"`
 	Username            string    `json:"username"`
 	URL                 string    `json:"url"`
+	RequestMethod       string    `json:"request_method"`
 	OutboundURL         string    `json:"outbound_url"`
 	HTTPErrorCode       int       `json:"http_error_code"`
 	HTTPErrorInfo       string    `json:"http_error_info,omitempty"`
@@ -218,8 +223,9 @@ type PersistedCallTraceSummary struct {
 	OutputTokens        int       `json:"output_tokens"`
 	CacheCreationTokens int       `json:"cache_creation_tokens"`
 	CacheReadTokens     int       `json:"cache_read_tokens"`
-	StartedAt           time.Time `json:"started_at"`
 	FinishedAt          time.Time `json:"finished_at"`
+	QueueDurationMs     int64     `json:"queue_duration_ms"`
+	RequestDurationMs   int64     `json:"request_duration_ms"`
 }
 
 // CallTraceFilter combines exact search and structured filters for call traces.
@@ -296,7 +302,7 @@ func validateTimeRange(r TimeRange) error {
 // validation and the record cache while SQLiteDatabase or PostgreSQLDatabase
 // executes the SQL. Tests can use the sqlite::memory: URL for a process-local
 // database.
-// AIProvider configurations are instance records, not configuration records
+// Account configurations are instance records, not configuration records
 // for a provider type.
 type Database interface {
 	// Open initializes the database and makes it ready for use.
@@ -369,8 +375,8 @@ type Database interface {
 	// filter.TimeRange start and end are required; the database does not cap the window.
 	QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error)
 	// GetCallTrace returns the complete trace, including request/response bodies
-	// and headers. startedAt identifies the UTC day containing the trace.
-	GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error)
+	// and headers. finishedAt identifies the UTC day containing the trace.
+	GetCallTrace(finishedAt time.Time, id int) (*PersistedCallTrace, error)
 
 	// QueryAccountUsage aggregates call-trace usage by account_id in timeRange.
 	// Aggregation runs in SQL over call-trace storage; no row bodies are loaded.

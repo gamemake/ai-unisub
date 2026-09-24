@@ -73,7 +73,8 @@ it('renders collapsible sections and header change markers', async () => {
     output_tokens: 34,
     cache_creation_tokens: 1,
     cache_read_tokens: 2,
-    started_at: '2026-09-15T01:00:00.000Z',
+    queue_duration_ms: 25,
+    request_duration_ms: 975,
     finished_at: '2026-09-15T01:00:01.250Z',
     original_request_headers: { Authorization: ['Bearer client'], Accept: ['application/json'] },
     outbound_request_headers: { Authorization: ['Bearer upstream'], Accept: ['application/json'], 'X-Api-Key': ['k'] },
@@ -99,7 +100,8 @@ it('renders collapsible sections and header change markers', async () => {
     http_error_code: 200,
     input_tokens: 12,
     output_tokens: 34,
-    started_at: '2026-09-15T01:00:00.000Z',
+    queue_duration_ms: 25,
+    request_duration_ms: 975,
     finished_at: '2026-09-15T01:00:01.250Z',
   }
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })

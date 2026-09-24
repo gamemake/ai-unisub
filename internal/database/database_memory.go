@@ -393,14 +393,14 @@ func (m *MemoryDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	return m.store.RecordCallTrace(trace)
 }
 
-func (m *MemoryDatabase) GetCallTrace(startedAt time.Time, id int) (*PersistedCallTrace, error) {
+func (m *MemoryDatabase) GetCallTrace(finishedAt time.Time, id int) (*PersistedCallTrace, error) {
 	if id <= 0 {
 		return nil, errors.New("call trace ID is required")
 	}
 	if err := m.ensureOpen(); err != nil {
 		return nil, err
 	}
-	return m.store.GetCallTrace(startedAt, id)
+	return m.store.GetCallTrace(finishedAt, id)
 }
 
 func (m *MemoryDatabase) CleanupCallTrace(days int) error {

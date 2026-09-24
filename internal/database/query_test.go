@@ -2,6 +2,7 @@ package database
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -49,6 +50,61 @@ func TestQueryCallTracesRequiresTimeRange(t *testing.T) {
 	old := now.Add(-400 * 24 * time.Hour)
 	if _, _, err := db.QueryCallTraces(CallTraceFilter{TimeRange: TimeRange{Start: old, End: old.Add(24 * time.Hour)}}, 1, 10); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCallTraceExecutionMetadataRoundTrip(t *testing.T) {
+	db := testDB(t)
+	now := time.Now().UTC()
+	trace := &PersistedCallTrace{
+		UserID:            7,
+		APIKey:            "key",
+		AIProviderType:    "dummy",
+		AccountID:         1,
+		RequestMethod:     "POST",
+		URL:               "/v1/messages",
+		QueueDurationMs:   12,
+		RequestDurationMs: 34,
+		FinishedAt:        now,
+	}
+	if err := db.RecordCallTrace(trace); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.GetCallTrace(now, trace.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UserID != 7 || got.RequestMethod != "POST" || got.QueueDurationMs != 12 || got.RequestDurationMs != 34 {
+		t.Fatalf("metadata did not round trip: %+v", got)
+	}
+}
+
+func TestNewCallTraceTableDoesNotPersistStartedAt(t *testing.T) {
+	db, store := testFileDB(t)
+	now := time.Now().UTC()
+	if err := db.RecordCallTrace(&PersistedCallTrace{FinishedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	columns, err := store.tableColumns(traceTable(now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := columns["started_at"]; ok {
+		t.Fatal("new call-trace schema still persists started_at")
+	}
+	if _, ok := columns["finished_at"]; !ok {
+		t.Fatal("new call-trace schema is missing finished_at")
+	}
+}
+
+func TestNewPostgreSQLCallTraceSchemaUsesFinishedAtPartitionKey(t *testing.T) {
+	for _, statement := range postgresSchema {
+		if !strings.Contains(statement, "CREATE TABLE IF NOT EXISTS call_traces ") {
+			continue
+		}
+		if strings.Contains(statement, "started_at") || !strings.Contains(statement, "PARTITION BY RANGE (finished_at)") {
+			t.Fatalf("unexpected PostgreSQL call-trace schema: %s", statement)
+		}
 	}
 }
 
@@ -106,7 +162,7 @@ func TestCallTraceOutboundURLAndLegacySchema(t *testing.T) {
 		APIKey: "sk-new", AIProviderType: "claude", AccountID: 1, RequestID: "req-new",
 		URL: "/v1/messages", OutboundURL: "https://api.anthropic.com/v1/messages",
 		HTTPErrorCode: 201, Model: "claude-sonnet", InputTokens: 3, OutputTokens: 4,
-		StartedAt: now, FinishedAt: now,
+		FinishedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
