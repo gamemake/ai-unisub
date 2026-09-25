@@ -4,12 +4,9 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 )
-
-var ErrAccountNotFound = errors.New("account not found")
 
 func (m *providerManager) ListAccounts() []*Account {
 	if m == nil {
@@ -31,7 +28,7 @@ func (m *providerManager) ListAccounts() []*Account {
 
 func (m *providerManager) NewAccount(value json.RawMessage) (*Account, error) {
 	if m == nil {
-		return nil, errors.New("manager is nil")
+		return nil, errManagerNil
 	}
 
 	account, err := NewAccount(m, 0, value)
@@ -55,7 +52,7 @@ func (m *providerManager) NewAccount(value json.RawMessage) (*Account, error) {
 
 func (m *providerManager) DelAccount(id int) error {
 	if m == nil {
-		return errors.New("manager is nil")
+		return errManagerNil
 	}
 
 	m.mu.Lock()
@@ -140,7 +137,7 @@ func (m *providerManager) GetModels(ctx context.Context, id int, _ string) ([]st
 
 func (m *providerManager) account(id int) (*Account, error) {
 	if m == nil {
-		return nil, errors.New("manager is nil")
+		return nil, errManagerNil
 	}
 	account := m.getAccount(id)
 	if account == nil {

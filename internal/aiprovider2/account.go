@@ -1,18 +1,26 @@
 package aiprovider2
 
 import (
+	"ai-unisub/internal/oauth2"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"slices"
 	"strings"
 	"sync"
+	"time"
+)
+
+const (
+	accessTokenRefreshInterval = 17 * time.Hour
+	accessTokenRefreshAdvance  = 5 * time.Minute
 )
 
 type Account struct {
 	mu        sync.RWMutex
+	accessMu  sync.Mutex
 	manager   *providerManager
 	limiter   AccountLimiter // 超过最大连接数，需要排队。只对非 Group 类型有效
 	scheduler GroupScheduler // 从子 Account 中选择一个。支队 Group 类型有效
@@ -34,7 +42,8 @@ func parseAccountConfig(raw json.RawMessage) (AccountConfig, error) {
 	config.Supplier = strings.ToLower(strings.TrimSpace(config.Supplier))
 	config.APIEndpoint = strings.TrimSpace(config.APIEndpoint)
 	config.APIKey = strings.TrimSpace(config.APIKey)
-	config.CredentialID = strings.TrimSpace(config.CredentialID)
+	config.Credential.AccessToken = strings.TrimSpace(config.Credential.AccessToken)
+	config.Credential.RefreshToken = strings.TrimSpace(config.Credential.RefreshToken)
 	return config, nil
 }
 
@@ -128,67 +137,67 @@ func (a *Account) initializeRuntime() {
 
 func (a *Account) checkAccountConfig(config AccountConfig) error {
 	if a == nil || a.manager == nil {
-		return errors.New("account manager is required")
+		return errAccountManagerRequired
 	}
 	if config.Name == "" {
-		return errors.New("account name is required")
+		return errAccountNameRequired
 	}
 	if config.ProxyGroupID < 0 || config.MaxConcurrentConnections < 0 || config.QueueTimeoutSeconds < 0 {
-		return errors.New("account limits and proxy group ID must not be negative")
+		return errAccountLimitsOrProxyGroupNegative
 	}
 	switch config.ClientType {
 	case "", ClientClaude, ClientCodex, ClientGrok:
 	default:
-		return errors.New("invalid client type")
+		return errInvalidClientType
 	}
 	if config.APIEndpoint != "" {
 		endpoint, err := url.Parse(config.APIEndpoint)
 		if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.Scheme != "http" && endpoint.Scheme != "https" {
-			return errors.New("invalid API endpoint")
+			return errInvalidAPIEndpoint
 		}
 	}
 
 	switch config.Kind {
 	case AccountGroup:
 		if len(config.Members) == 0 {
-			return errors.New("group account requires members")
+			return errGroupAccountRequiresMembers
 		}
-		if config.Supplier != "" || config.APIKey != "" || config.CredentialID != "" || config.APIEndpoint != "" || config.OfficialOnly {
-			return errors.New("group account cannot own supplier credentials or endpoint")
+		if config.Supplier != "" || config.APIKey != "" || config.Credential != (oauth2.OAuthCredential{}) || config.APIEndpoint != "" || config.OfficialOnly {
+			return errGroupAccountHasSupplierConfiguration
 		}
 		seen := make(map[int]struct{}, len(config.Members))
 		for _, member := range config.Members {
 			if member.ID <= 0 || member.ID == a.ID || member.Weight <= 0 {
-				return errors.New("group member ID and weight must be positive")
+				return errGroupMemberIDOrWeightInvalid
 			}
 			if _, ok := seen[member.ID]; ok {
-				return errors.New("duplicate group member")
+				return errDuplicateGroupMember
 			}
 			seen[member.ID] = struct{}{}
 		}
 		return nil
 	case AccountOAuth:
-		if config.CredentialID == "" {
-			return errors.New("OAuth account credential_id is required")
+		if config.Credential.AccessToken == "" {
+			return errOAuthAccountAccessTokenRequired
 		}
 		if config.APIKey != "" {
-			return errors.New("OAuth account cannot contain an API key")
+			return errOAuthAccountHasAPIKey
 		}
 	case AccountAPI:
 		if config.APIKey == "" {
-			return errors.New("API account api_key is required")
+			return errAPIAccountAPIKeyRequired
 		}
-		if config.CredentialID != "" || config.OfficialOnly || config.SubscriptionPlan != "" {
-			return errors.New("API account cannot contain subscription fields")
+		if config.Credential != (oauth2.OAuthCredential{}) || config.OfficialOnly || config.SubscriptionPlan != "" {
+			return errAPIAccountHasSubscriptionFields
 		}
 	default:
-		return errors.New("invalid account kind")
+		return errInvalidAccountKind
 	}
 	if len(config.Members) != 0 {
-		return errors.New("only group accounts may contain members")
+		return errOnlyGroupAccountsMayHaveMembers
 	}
 	if config.Supplier == "" || a.manager.getSupplier(config.Supplier) == nil {
-		return errors.New("unknown supplier")
+		return errUnknownSupplier
 	}
 	return nil
 }
@@ -197,6 +206,15 @@ func (a *Account) UpdateConfig(raw json.RawMessage) error {
 	config, err := parseAccountConfig(raw)
 	if err != nil {
 		return err
+	}
+
+	a.accessMu.Lock()
+	defer a.accessMu.Unlock()
+	a.mu.RLock()
+	currentCredential := a.Config.Credential
+	a.mu.RUnlock()
+	if config.Kind == AccountOAuth && config.Credential.RefreshToken != "" && config.Credential.RefreshToken == currentCredential.RefreshToken {
+		config.Credential = currentCredential
 	}
 	if err := a.checkAccountConfig(config); err != nil {
 		return err
@@ -218,6 +236,147 @@ func (a *Account) close() {
 	newAccountLimiter(a).Close()
 }
 
+// GetAccess resolves one concrete account for req and returns both values
+// needed to forward it. API accounts use their API key as the access token;
+// OAuth accounts refresh an expiring credential using ctx.
+func (a *Account) GetAccess(ctx context.Context, req *http.Request) (accessToken, apiBaseURL string, err error) {
+	if ctx == nil {
+		return "", "", errContextRequired
+	}
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+
+	account, err := a.accountForRequest(req)
+	if err != nil {
+		return "", "", err
+	}
+
+	account.mu.RLock()
+	config := account.Config
+	manager := account.manager
+	account.mu.RUnlock()
+
+	switch config.Kind {
+	case AccountAPI:
+		apiBaseURL, err = resolveAPIBaseURL(config, manager, req)
+		if err != nil {
+			return "", "", err
+		}
+		if config.APIKey == "" {
+			return "", "", errAccountAPIKeyEmpty
+		}
+		return config.APIKey, apiBaseURL, nil
+	case AccountOAuth:
+	default:
+		return "", "", errAccountDoesNotProvideAccessToken
+	}
+
+	account.accessMu.Lock()
+	defer account.accessMu.Unlock()
+
+	account.mu.RLock()
+	config = account.Config
+	manager = account.manager
+	refreshAt := account.State.RefreshAt
+	account.mu.RUnlock()
+	apiBaseURL, err = resolveAPIBaseURL(config, manager, req)
+	if err != nil {
+		return "", "", err
+	}
+	credential := config.Credential
+	if credential.AccessToken == "" {
+		return "", "", errOAuthCredentialNoAccessToken
+	}
+	if !accessTokenNeedsRefresh(time.Now(), refreshAt, credential.ExpiresAt) {
+		return credential.AccessToken, apiBaseURL, nil
+	}
+	if manager == nil || manager.oauth == nil {
+		return "", "", errOAuthManagerNotConfigured
+	}
+
+	refreshed, err := manager.oauth.Refresh(ctx, config.Supplier, &credential, config.ProxyGroupID)
+	if err != nil {
+		return "", "", fmt.Errorf("refresh OAuth credential: %w", err)
+	}
+	account.mu.Lock()
+	account.Config.Credential = *refreshed
+	account.State.RefreshAt = time.Now().UTC()
+	account.Dirty = true
+	account.mu.Unlock()
+	return refreshed.AccessToken, apiBaseURL, nil
+}
+
+func accessTokenNeedsRefresh(now, refreshAt, expiresAt time.Time) bool {
+	if refreshAt.IsZero() || now.Sub(refreshAt) >= accessTokenRefreshInterval {
+		return true
+	}
+	return !expiresAt.IsZero() && !expiresAt.After(now.Add(accessTokenRefreshAdvance))
+}
+
+func resolveAPIBaseURL(config AccountConfig, manager *providerManager, req *http.Request) (string, error) {
+	if config.APIEndpoint != "" {
+		return config.APIEndpoint, nil
+	}
+	if config.Kind == AccountOAuth && config.Supplier == "openai" && !isClaudeRequest(req) {
+		return "https://chatgpt.com/backend-api/codex", nil
+	}
+	if manager == nil {
+		return "", errAccountManagerNotConfigured
+	}
+	supplier := manager.getSupplier(config.Supplier)
+	if supplier == nil {
+		return "", errUnknownSupplier
+	}
+
+	supplierConfig := supplier.GetConfig()
+	baseURL := supplierConfig.OpenAIURL
+	if isClaudeRequest(req) {
+		baseURL = supplierConfig.ClaudeURL
+	}
+	if baseURL == "" {
+		return "", errSupplierNoAPIBaseURL
+	}
+	return baseURL, nil
+}
+
+func (a *Account) accountForRequest(req *http.Request) (*Account, error) {
+	if a == nil {
+		return nil, errAccountRequired
+	}
+	if req == nil {
+		return nil, errRequestRequired
+	}
+
+	account := a
+	visited := make(map[*Account]struct{})
+	for {
+		if _, exists := visited[account]; exists {
+			return nil, errAccountGroupCycle
+		}
+		visited[account] = struct{}{}
+
+		account.mu.RLock()
+		kind := account.Config.Kind
+		scheduler := account.scheduler
+		account.mu.RUnlock()
+		if kind != AccountGroup {
+			return account, nil
+		}
+		if scheduler == nil {
+			return nil, errAccountGroupSchedulerNotConfigured
+		}
+		account = scheduler.GetAccount(req)
+		if account == nil {
+			return nil, ErrUnavailable
+		}
+	}
+}
+
+func isClaudeRequest(req *http.Request) bool {
+	return req.URL != nil && (strings.HasSuffix(req.URL.Path, "/messages") || strings.HasSuffix(req.URL.Path, "/messages/count_tokens"))
+}
+
 func (a *Account) FetchQuota(ctx context.Context) (AccountQuota, error) {
 	a.mu.RLock()
 	config := a.Config
@@ -228,7 +387,7 @@ func (a *Account) FetchQuota(ctx context.Context) (AccountQuota, error) {
 
 	supplier := a.manager.getSupplier(config.Supplier)
 	if supplier == nil {
-		return AccountQuota{}, errors.New("unknown supplier")
+		return AccountQuota{}, errUnknownSupplier
 	}
 
 	quota, err := supplier.FetchQuota(ctx, a)
@@ -253,7 +412,7 @@ func (a *Account) ResetQuota(ctx context.Context, resetType string) error {
 
 	supplier := a.manager.getSupplier(config.Supplier)
 	if supplier == nil {
-		return errors.New("unknown supplier")
+		return errUnknownSupplier
 	}
 
 	if err := supplier.ResetQuota(ctx, a, resetType); err != nil {

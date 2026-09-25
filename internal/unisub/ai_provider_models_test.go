@@ -109,7 +109,7 @@ func assertAdminCallRecorded(t *testing.T, s interface {
 	if total < 1 || len(items) < 1 {
 		t.Fatalf("expected call trace for account %d, total=%d items=%d", accountID, total, len(items))
 	}
-	detail, err := s.Database().GetCallTrace(items[0].StartedAt, items[0].ID)
+	detail, err := s.Database().GetCallTrace(items[0].FinishedAt, items[0].ID)
 	if err != nil || detail == nil {
 		t.Fatalf("get call trace: %v", err)
 	}

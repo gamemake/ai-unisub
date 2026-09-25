@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"net/http"
 	"net/url"
 	"slices"
@@ -61,7 +60,7 @@ func (a *AnthropicAdapter) Exchange(ctx context.Context, code, state, verifier, 
 
 func (a *AnthropicAdapter) Refresh(ctx context.Context, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error) {
 	if credential == nil || credential.RefreshToken == "" {
-		return nil, errors.New("credential has no refresh token")
+		return nil, errCredentialNoRefreshToken
 	}
 	refreshed, err := a.token(ctx, map[string]string{
 		"grant_type": "refresh_token", "refresh_token": credential.RefreshToken, "client_id": a.config.ClientID,

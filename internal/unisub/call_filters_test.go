@@ -60,7 +60,7 @@ func TestCallsAPICombinedFiltersAndAuthorization(t *testing.T) {
 		}
 	}
 	now := time.Now().UTC()
-	for _, trace := range []database.PersistedCallTrace{{APIKey: "secret-a", AccountID: accountA.ID, SessionID: "shared", StartedAt: now, FinishedAt: now}, {APIKey: "secret-b", AccountID: accountB.ID, SessionID: "shared", HTTPErrorCode: 500, StartedAt: now, FinishedAt: now}, {APIKey: "unknown", AccountID: accountA.ID, SessionID: "unattributed", StartedAt: now, FinishedAt: now}} {
+	for _, trace := range []database.PersistedCallTrace{{APIKey: "secret-a", AccountID: accountA.ID, SessionID: "shared", FinishedAt: now}, {APIKey: "secret-b", AccountID: accountB.ID, SessionID: "shared", HTTPErrorCode: 500, FinishedAt: now}, {APIKey: "unknown", AccountID: accountA.ID, SessionID: "unattributed", FinishedAt: now}} {
 		if err := s.Database().RecordCallTrace(&trace); err != nil {
 			t.Fatal(err)
 		}

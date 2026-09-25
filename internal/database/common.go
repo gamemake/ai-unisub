@@ -3,7 +3,6 @@ package database
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"slices"
 	"strings"
 )
@@ -96,28 +95,28 @@ func queryProxyGroups(source rowSource) ([]PersistedProxyGroup, error) {
 
 func validateAccount(value *PersistedAccount) error {
 	if value == nil || value.ID < 0 {
-		return errors.New("account and account ID are required")
+		return errAccountAndIDRequired
 	}
 	return nil
 }
 
 func validateUser(value *PersistedUser) error {
 	if value == nil || value.ID < 0 {
-		return errors.New("user and user ID are required")
+		return errUserAndIDRequired
 	}
 	return nil
 }
 
 func validateAPIKey(value *PersistedAPIKey) error {
 	if value == nil || value.ID < 0 {
-		return errors.New("API key and key ID are required")
+		return errAPIKeyAndIDRequired
 	}
 	return nil
 }
 
 func validateConfig(value *PersistedConfig) error {
 	if value == nil || value.ID < 0 {
-		return errors.New("config and config ID are required")
+		return errConfigAndIDRequired
 	}
 	if err := validateConfigType(value.Type); err != nil {
 		return err
@@ -126,21 +125,21 @@ func validateConfig(value *PersistedConfig) error {
 		return err
 	}
 	if len(value.Value) == 0 || !json.Valid(value.Value) {
-		return errors.New("config value must be valid JSON")
+		return errConfigValueInvalidJSON
 	}
 	return nil
 }
 
 func validateConfigType(configType string) error {
 	if configType == "" || strings.TrimSpace(configType) != configType {
-		return errors.New("config type is required and must not have surrounding whitespace")
+		return errConfigTypeInvalid
 	}
 	return nil
 }
 
 func validateConfigName(name string) error {
 	if name == "" || strings.TrimSpace(name) != name {
-		return errors.New("config name is required and must not have surrounding whitespace")
+		return errConfigNameInvalid
 	}
 	return nil
 }

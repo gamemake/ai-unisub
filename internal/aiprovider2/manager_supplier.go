@@ -3,13 +3,10 @@ package aiprovider2
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
 )
-
-var ErrSupplierNotFound = errors.New("supplier not found")
 
 func (m *providerManager) ListSuppliers() []Supplier {
 	if m == nil {
@@ -95,7 +92,7 @@ func (m *providerManager) RefreshModels(ctx context.Context, supplierID string, 
 
 func (m *providerManager) supplier(id string) (Supplier, error) {
 	if m == nil {
-		return nil, errors.New("manager is nil")
+		return nil, errManagerNil
 	}
 	id = strings.ToLower(strings.TrimSpace(id))
 	supplier := m.getSupplier(id)

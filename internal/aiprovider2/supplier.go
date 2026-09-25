@@ -1,24 +1,21 @@
 package aiprovider2
 
 import (
+	"ai-unisub/internal/database"
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxSupplierResponseBytes = 1 << 20
-
-var (
-	ErrModelsUnsupported  = errors.New("supplier does not support model listing")
-	ErrQuotaUnsupported   = errors.New("supplier does not support quota queries")
-	ErrUpstream           = errors.New("supplier upstream request failed")
-	ErrAuthentication     = errors.New("supplier authentication failed")
-	ErrRateLimited        = errors.New("supplier request rate limited")
-	ErrInvalidResponse    = errors.New("invalid supplier response")
-	ErrQuotaNotConfigured = errors.New("quota credentials or endpoint are not configured")
-)
 
 type SubscriptionPlanWeight struct {
 	Name   string `json:"name"`
@@ -50,6 +47,8 @@ type SupplierOverlayConfig struct {
 type SupplierConfig = SupplierBuiltinConfig
 
 type Supplier interface {
+	GatewaySupplierListener
+
 	GetID() string
 	GetName() string
 	GetModels() []string
@@ -71,6 +70,221 @@ type SupplierData struct {
 	builtin SupplierBuiltinConfig // 代码中的内置的配置，用于恢复修改
 	overlay SupplierOverlayConfig // 实际的配置，包含修改和内置配置
 	mu      sync.RWMutex
+}
+
+func (s *SupplierData) GetAccess(ctx context.Context, account *Account, req *http.Request) (string, string, error) {
+	if account == nil {
+		return "", "", errAccountRequired
+	}
+	account.mu.RLock()
+	supplierID := account.Config.Supplier
+	account.mu.RUnlock()
+	if supplierID != s.id {
+		return "", "", errAccountSupplierMismatch
+	}
+	return account.GetAccess(ctx, req)
+}
+
+func (s *SupplierData) PreRequest(account *Account, req *http.Request, body *[]byte) error {
+	if account == nil || req == nil || body == nil {
+		return errAccountRequestAndBodyRequired
+	}
+	config := s.GetConfig()
+	if len(config.Mappings) > 0 && len(*body) > 0 {
+		var payload map[string]jsontext.Value
+		if err := json.Unmarshal(*body, &payload); err != nil {
+			return fmt.Errorf("parse request body for model mapping: %w", err)
+		}
+		var model string
+		if rawModel, ok := payload["model"]; ok && json.Unmarshal(rawModel, &model) == nil {
+			mapped := MapModel(config.Mappings, model)
+			if mapped != model {
+				mappedModel, err := json.Marshal(mapped)
+				if err != nil {
+					return fmt.Errorf("encode mapped model: %w", err)
+				}
+				payload["model"] = mappedModel
+				mappedBody, err := json.Marshal(payload)
+				if err != nil {
+					return fmt.Errorf("encode mapped request body: %w", err)
+				}
+				*body = mappedBody
+			}
+		}
+	}
+
+	account.mu.RLock()
+	accountConfig := account.Config
+	account.mu.RUnlock()
+	if isClaudeRequest(req) {
+		if req.Header.Get("Anthropic-Version") == "" {
+			req.Header.Set("Anthropic-Version", "2023-06-01")
+		}
+		if accountConfig.Kind == AccountOAuth && s.id == "anthropic" {
+			req.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
+			req.Header.Set("User-Agent", "claude-code/2.1.7")
+		}
+	} else if accountConfig.Kind == AccountOAuth && s.id == "openai" {
+		req.Header.Set("OpenAI-Beta", "codex-1")
+		req.Header.Set("User-Agent", "codex-cli")
+		if accountConfig.Credential.AccountID != "" {
+			req.Header.Set("ChatGPT-Account-Id", accountConfig.Credential.AccountID)
+		}
+	}
+	return nil
+}
+
+func (s *SupplierData) DoRequest(ctx context.Context, account *Account, req *http.Request) (*http.Response, error) {
+	if ctx == nil || account == nil || req == nil {
+		return nil, errContextAccountAndRequestRequired
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	account.mu.RLock()
+	proxyGroupID := account.Config.ProxyGroupID
+	account.mu.RUnlock()
+	if s.manager == nil || s.manager.proxy == nil {
+		return nil, errSupplierProxyManagerNotConfigured
+	}
+
+	body, err := supplierRequestBody(req)
+	if err != nil {
+		return nil, err
+	}
+	var handle func(*http.Response) error
+	if supplierRequestReplaySafe(req) {
+		handle = func(response *http.Response) error {
+			if response.StatusCode == http.StatusTooManyRequests || response.StatusCode >= 500 {
+				return fmt.Errorf("supplier upstream returned HTTP %d", response.StatusCode)
+			}
+			return nil
+		}
+	}
+	response, requestErr := s.manager.proxy.Do(proxyGroupID, s.id, req.WithContext(ctx), body, handle)
+	if response != nil {
+		// proxy2 returns the final response together with the classifier error.
+		// The Gateway must forward that upstream response to the client.
+		return response, nil
+	}
+	return nil, requestErr
+}
+
+func supplierRequestBody(req *http.Request) ([]byte, error) {
+	if req.GetBody != nil {
+		body, err := req.GetBody()
+		if err != nil {
+			return nil, fmt.Errorf("recreate request body: %w", err)
+		}
+		defer body.Close()
+		return io.ReadAll(body)
+	}
+	if req.Body == nil || req.Body == http.NoBody {
+		return nil, nil
+	}
+	return nil, errRequestBodyNotReplayable
+}
+
+func supplierRequestReplaySafe(req *http.Request) bool {
+	if req.Header.Get("Idempotency-Key") != "" {
+		return true
+	}
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *SupplierData) doGET(ctx context.Context, account *Account, endpoint string, headers http.Header) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if s.manager == nil || s.manager.proxy == nil || s.manager.db == nil {
+		return nil, errSupplierManagerNotConfigured
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header = headers.Clone()
+	started := time.Now()
+	response, requestErr := s.DoRequest(ctx, account, req)
+	if requestErr != nil {
+		recordErr := s.recordCall(account, req, nil, nil, requestErr, started)
+		return nil, errors.Join(ErrUpstream, requestErr, recordErr)
+	}
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, maxSupplierResponseBytes+1))
+	readErr = errors.Join(readErr, response.Body.Close())
+	recordErr := s.recordCall(account, req, response, body, readErr, started)
+	if readErr != nil || len(body) > maxSupplierResponseBytes {
+		return nil, errors.Join(ErrInvalidResponse, readErr, recordErr)
+	}
+	if recordErr != nil {
+		return nil, recordErr
+	}
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, ErrAuthentication
+	case http.StatusTooManyRequests:
+		return nil, ErrRateLimited
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return nil, fmt.Errorf("%w: HTTP %d", ErrUpstream, response.StatusCode)
+	}
+	return body, nil
+}
+
+func (s *SupplierData) recordCall(account *Account, req *http.Request, response *http.Response, body []byte, requestErr error, started time.Time) error {
+	trace := &database.PersistedCallTrace{
+		AccountID: account.ID, AIProviderType: s.id, RequestMethod: req.Method,
+		URL: req.URL.String(), OutboundURL: req.URL.String(),
+		OriginalRequestHeaders: req.Header.Clone(), OutboundRequestHeaders: req.Header.Clone(),
+		ResponseBody: slices.Clone(body), RequestDurationMs: time.Since(started).Milliseconds(), FinishedAt: time.Now().UTC(),
+	}
+	if response != nil {
+		trace.HTTPErrorCode = response.StatusCode
+		trace.ResponseHeaders = response.Header.Clone()
+	}
+	if requestErr != nil {
+		trace.HTTPErrorInfo = requestErr.Error()
+	}
+	return s.manager.db.RecordCallTrace(trace)
+}
+
+func (*SupplierData) PostResponse(account *Account, response *http.Response, _ []byte) error {
+	if account == nil || response == nil {
+		return errAccountAndResponseRequired
+	}
+	items := make([]QuotaItem, 0)
+	for name, values := range response.Header {
+		lower := strings.ToLower(name)
+		if !strings.Contains(lower, "ratelimit") && !strings.Contains(lower, "rate-limit") {
+			continue
+		}
+		for _, value := range values {
+			items = append(items, QuotaItem{Name: name, Value: value, Source: "header"})
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	slices.SortFunc(items, func(a, b QuotaItem) int {
+		if result := strings.Compare(a.Name, b.Name); result != 0 {
+			return result
+		}
+		return strings.Compare(a.Value, b.Value)
+	})
+	account.mu.Lock()
+	account.Quota.Items = items
+	account.Quota.CacheStatus = QuotaCacheFresh
+	account.Quota.UpdatedAt = time.Now().UTC()
+	account.Dirty = true
+	account.mu.Unlock()
+	return nil
 }
 
 func (s *SupplierData) GetID() string {
@@ -127,7 +341,7 @@ func (s *SupplierData) DiffConfig(config SupplierConfig) (SupplierOverlayConfig,
 	builtin := cloneSupplierConfig(s.builtin)
 	s.mu.RUnlock()
 	if config.ClaudeURL != builtin.ClaudeURL || config.OpenAIURL != builtin.OpenAIURL {
-		return SupplierOverlayConfig{}, errors.New("supplier URLs are built in and cannot be changed")
+		return SupplierOverlayConfig{}, errSupplierURLsImmutable
 	}
 	if err := validateSupplierValues(config.Models, config.Mappings, config.Weights); err != nil {
 		return SupplierOverlayConfig{}, err
@@ -199,10 +413,10 @@ func validateSupplierValues(models []string, mappings []ModelMapping, weights []
 	for _, model := range models {
 		trimmed := strings.TrimSpace(model)
 		if trimmed == "" || trimmed != model {
-			return errors.New("supplier model must not be empty")
+			return errSupplierModelEmpty
 		}
 		if _, ok := seenModels[model]; ok {
-			return errors.New("duplicate supplier model")
+			return errDuplicateSupplierModel
 		}
 		seenModels[model] = struct{}{}
 	}
@@ -210,19 +424,19 @@ func validateSupplierValues(models []string, mappings []ModelMapping, weights []
 		pattern := strings.TrimSpace(mapping.Pattern)
 		target := strings.TrimSpace(mapping.Target)
 		if pattern == "" || pattern != mapping.Pattern || target == "" || target != mapping.Target {
-			return errors.New("model mapping pattern and target must be non-empty without surrounding whitespace")
+			return errModelMappingInvalid
 		}
 		if _, ok := seenModels[target]; !ok {
-			return errors.New("model mapping target must be a valid supplier model")
+			return errModelMappingTargetInvalid
 		}
 	}
 	seenWeights := make(map[string]struct{}, len(weights))
 	for _, weight := range weights {
 		if strings.TrimSpace(weight.Name) == "" || weight.Weight <= 0 {
-			return errors.New("subscription weight must be positive and named")
+			return errSubscriptionWeightInvalid
 		}
 		if _, ok := seenWeights[weight.Name]; ok {
-			return errors.New("duplicate subscription weight")
+			return errDuplicateSubscriptionWeight
 		}
 		seenWeights[weight.Name] = struct{}{}
 	}

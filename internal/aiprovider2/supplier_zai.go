@@ -2,12 +2,9 @@ package aiprovider2
 
 import (
 	"ai-unisub/internal/database"
-	"ai-unisub/internal/proxy"
 	"context"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"slices"
@@ -33,7 +30,7 @@ func (*SupplierZAI) GetName() string { return "zAI" }
 
 func (s *SupplierZAI) RefreshModel(ctx context.Context, account *Account) ([]string, error) {
 	if account == nil {
-		return nil, errors.New("account is required")
+		return nil, errAccountRequired
 	}
 	config := s.accountConfig(account)
 	base := config.APIEndpoint
@@ -56,7 +53,7 @@ func (s *SupplierZAI) RefreshModel(ctx context.Context, account *Account) ([]str
 
 func (s *SupplierZAI) FetchQuota(ctx context.Context, account *Account) (AccountQuota, error) {
 	if account == nil {
-		return AccountQuota{}, errors.New("account is required")
+		return AccountQuota{}, errAccountRequired
 	}
 	config := s.accountConfig(account)
 	if config.APIEndpoint != "" {
@@ -73,7 +70,7 @@ func (s *SupplierZAI) ResetQuota(ctx context.Context, account *Account, _ string
 		return err
 	}
 	if account == nil {
-		return errors.New("account is required")
+		return errAccountRequired
 	}
 	return ErrQuotaUnsupported
 }
@@ -97,46 +94,12 @@ func (s *SupplierZAI) authHeaders(config AccountConfig) (http.Header, error) {
 		headers.Set("Authorization", "Bearer "+config.APIKey)
 		return headers, nil
 	}
-	if config.CredentialID == "" || s.manager == nil || s.manager.db == nil {
-		return nil, ErrQuotaNotConfigured
-	}
-	raw, err := s.manager.db.LoadCredential(config.CredentialID)
-	if err != nil {
-		return nil, fmt.Errorf("load OAuth credential: %w", err)
-	}
-	var credential map[string]any
-	if err := json.Unmarshal(raw, &credential); err != nil {
-		return nil, fmt.Errorf("parse OAuth credential: %w", err)
-	}
-	token := s.findString(credential, "access_token", "accessToken", "token")
+	token := config.Credential.AccessToken
 	if token == "" {
 		return nil, ErrQuotaNotConfigured
 	}
 	headers.Set("Authorization", "Bearer "+token)
 	return headers, nil
-}
-
-func (s *SupplierZAI) findString(value any, names ...string) string {
-	switch value := value.(type) {
-	case map[string]any:
-		for _, name := range names {
-			if candidate, ok := value[name].(string); ok && strings.TrimSpace(candidate) != "" {
-				return strings.TrimSpace(candidate)
-			}
-		}
-		for _, nested := range value {
-			if candidate := s.findString(nested, names...); candidate != "" {
-				return candidate
-			}
-		}
-	case []any:
-		for _, nested := range value {
-			if candidate := s.findString(nested, names...); candidate != "" {
-				return candidate
-			}
-		}
-	}
-	return ""
 }
 
 func (*SupplierZAI) parseModels(body []byte) ([]string, error) {
@@ -215,81 +178,8 @@ func (s *SupplierZAI) flattenQuota(path string, value any, items *[]QuotaItem) {
 }
 
 func (s *SupplierZAI) doGET(ctx context.Context, account *Account, endpoint string, headers http.Header) ([]byte, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	config := s.accountConfig(account)
-	manager := s.manager
-	if manager == nil || manager.proxy == nil || manager.db == nil {
-		return nil, errors.New("supplier manager is not configured")
-	}
-	tried := make([]string, 0)
-	attempts := manager.proxy.ProxyRetryLimit(config.ProxyGroupID) + 1
-	for attempt := range attempts {
-		selected, err := manager.proxy.ResolveProxy(ctx, config.ProxyGroupID, "zhipu", tried)
-		if err != nil {
-			return nil, fmt.Errorf("resolve supplier proxy: %w", err)
-		}
-		if selected != nil {
-			tried = append(tried, selected.String())
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-		if err != nil {
-			_ = manager.proxy.ReportProxyResult(selected, "zhipu", proxy.ApplicationIgnored, err, 0)
-			return nil, err
-		}
-		req.Header = headers.Clone()
-		client := proxy.Client(&http.Client{Timeout: 25 * time.Second}, selected)
-		started := time.Now()
-		resp, requestErr := client.Do(req)
-		if requestErr != nil {
-			class := proxy.NetworkError
-			if ctx.Err() != nil {
-				class = proxy.Canceled
-			}
-			_ = manager.proxy.ReportProxyResult(selected, "zhipu", class, requestErr, 0)
-			recordErr := s.recordCall(account, req, nil, nil, requestErr, started)
-			if ctx.Err() != nil {
-				return nil, errors.Join(ctx.Err(), recordErr)
-			}
-			if attempt+1 < attempts {
-				continue
-			}
-			return nil, errors.Join(ErrUpstream, requestErr, recordErr)
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, maxSupplierResponseBytes+1))
-		readErr = errors.Join(readErr, resp.Body.Close())
-		class := proxy.Success
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			class = proxy.ApplicationIgnored
-			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-				class = proxy.ApplicationError
-			}
-		}
-		_ = manager.proxy.ReportProxyResult(selected, "zhipu", class, readErr, resp.StatusCode)
-		recordErr := s.recordCall(account, req, resp, body, readErr, started)
-		if readErr != nil || len(body) > maxSupplierResponseBytes {
-			return nil, errors.Join(ErrInvalidResponse, readErr, recordErr)
-		}
-		if recordErr != nil {
-			return nil, recordErr
-		}
-		switch resp.StatusCode {
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return nil, ErrAuthentication
-		case http.StatusTooManyRequests:
-			return nil, ErrRateLimited
-		}
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return nil, fmt.Errorf("%w: HTTP %d", ErrUpstream, resp.StatusCode)
-		}
-		return body, nil
-	}
-	return nil, ErrUpstream
+	return s.SupplierData.doGET(ctx, account, endpoint, headers)
 }
-
 func (s *SupplierZAI) recordCall(account *Account, req *http.Request, resp *http.Response, body []byte, requestErr error, started time.Time) error {
 	config := s.accountConfig(account)
 	trace := &database.PersistedCallTrace{

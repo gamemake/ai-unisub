@@ -47,7 +47,6 @@ func recordAdminProviderCall(ctx framework.ModuleContext, r *http.Request, accou
 		OutputTokens:           trace.OutputTokens,
 		CacheCreationTokens:    trace.CacheCreationTokens,
 		CacheReadTokens:        trace.CacheReadTokens,
-		StartedAt:              started,
 		FinishedAt:             time.Now().UTC(),
 	}
 	if trace.HTTPErrorInfo != "" {

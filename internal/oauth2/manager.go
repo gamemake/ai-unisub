@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -43,7 +44,7 @@ func NewManager(db database.Database, proxy proxy2.ProxyManager) OAuthManager {
 
 func (m *oauthManager) Register(adapter OAuthAdapter) error {
 	if adapter == nil || adapter.Service() == "" {
-		return errors.New("invalid oauth adapter")
+		return errInvalidOAuthAdapter
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,6 +52,7 @@ func (m *oauthManager) Register(adapter OAuthAdapter) error {
 		return fmt.Errorf("oauth service %q is already registered", adapter.Service())
 	}
 	m.adapters[adapter.Service()] = adapter
+	logger.InfoAttrs("adapter_registered", slog.String("service", adapter.Service()))
 	return nil
 }
 
@@ -80,7 +82,7 @@ func (m *oauthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	switch flow := adapter.(type) {
 	case PKCEAdapter:
 		if redirectURI == "" {
-			return nil, errors.New("redirect URI is required for PKCE authorization")
+			return nil, errRedirectURIRequiredForPKCE
 		}
 		session.State, err = randomID()
 		if err != nil {
@@ -100,10 +102,13 @@ func (m *oauthManager) Start(ctx context.Context, service, subjectID, redirectUR
 			CodeVerifier: session.CodeVerifier, RedirectURI: redirectURI,
 		})
 		if err != nil {
+			logOAuthFailure("authorization_start_failed", service, err)
 			return nil, err
 		}
 		if built.AuthorizationURL == "" {
-			return nil, errors.New("oauth adapter returned no authorization URL")
+			err := errOAuthAdapterNoAuthorizationURL
+			logOAuthFailure("authorization_start_failed", service, err)
+			return nil, err
 		}
 		result.AuthorizationURL = built.AuthorizationURL
 		if !built.ExpiresAt.IsZero() && built.ExpiresAt.Before(session.ExpiresAt) {
@@ -113,10 +118,13 @@ func (m *oauthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	case DeviceAdapter:
 		device, err := flow.StartDeviceAuthorization(ctx, DeviceStartInput{HTTPClient: client, Service: service})
 		if err != nil {
+			logOAuthFailure("authorization_start_failed", service, err)
 			return nil, err
 		}
 		if device.DeviceCode == "" {
-			return nil, errors.New("oauth adapter returned no device code")
+			err := errOAuthAdapterNoDeviceCode
+			logOAuthFailure("authorization_start_failed", service, err)
+			return nil, err
 		}
 		session.DeviceCode = device.DeviceCode
 		if !device.ExpiresAt.IsZero() {
@@ -133,6 +141,7 @@ func (m *oauthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	m.mu.Lock()
 	m.sessions[session.ID] = session
 	m.mu.Unlock()
+	logger.InfoAttrs("authorization_started", slog.String("service", service), slog.Time("expires_at", session.ExpiresAt.UTC()))
 	return result, nil
 }
 
@@ -145,6 +154,7 @@ func (m *oauthManager) Complete(ctx context.Context, sessionID, code, state stri
 		return nil, ErrUnsupportedFlow
 	}
 	if state != session.State {
+		logger.WarnAttrs("state_mismatch", slog.String("service", session.Service))
 		return nil, ErrStateMismatch
 	}
 	adapter, err := m.adapter(session.Service)
@@ -160,9 +170,16 @@ func (m *oauthManager) Complete(ctx context.Context, sessionID, code, state stri
 	}
 	credential, err := flow.Exchange(ctx, code, state, session.CodeVerifier, session.RedirectURI, session.HTTPClient)
 	if err != nil {
+		logOAuthFailure("authorization_complete_failed", session.Service, err)
 		return nil, err
 	}
-	return validCredential(credential, "exchange")
+	credential, err = validCredential(credential, "exchange")
+	if err != nil {
+		logOAuthFailure("authorization_complete_failed", session.Service, err)
+		return nil, err
+	}
+	logger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
+	return credential, nil
 }
 
 func (m *oauthManager) SessionForState(state string) (OAuthSession, error) {
@@ -223,21 +240,28 @@ func (m *oauthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	}
 	credential, err := flow.PollDeviceToken(ctx, session.DeviceCode, session.HTTPClient)
 	if err != nil {
+		if errors.Is(err, ErrAuthorizationPending) || errors.Is(err, ErrSlowDown) {
+			logger.DebugAttrs("authorization_pending", slog.String("service", session.Service))
+		} else {
+			logOAuthFailure("authorization_poll_failed", session.Service, err)
+		}
 		return nil, err
 	}
 	credential, err = validCredential(credential, "device authorization")
 	if err != nil {
+		logOAuthFailure("authorization_poll_failed", session.Service, err)
 		return nil, err
 	}
 	if _, err := m.session(sessionID, true); err != nil {
 		return nil, err
 	}
+	logger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
 	return credential, nil
 }
 
 func (m *oauthManager) Refresh(ctx context.Context, service string, credential *OAuthCredential, proxyGroup int) (*OAuthCredential, error) {
 	if credential == nil {
-		return nil, errors.New("credential is nil")
+		return nil, errCredentialNil
 	}
 	adapter, err := m.adapter(service)
 	if err != nil {
@@ -249,10 +273,12 @@ func (m *oauthManager) Refresh(ctx context.Context, service string, credential *
 	}
 	refreshed, err := adapter.Refresh(ctx, credential, client)
 	if err != nil {
+		logOAuthFailure("credential_refresh_failed", service, err)
 		return nil, err
 	}
 	refreshed, err = validCredential(refreshed, "refresh")
 	if err != nil {
+		logOAuthFailure("credential_refresh_failed", service, err)
 		return nil, err
 	}
 	refreshed.RefreshToken = cmp.Or(refreshed.RefreshToken, credential.RefreshToken)
@@ -260,12 +286,13 @@ func (m *oauthManager) Refresh(ctx context.Context, service string, credential *
 	refreshed.AccountID = cmp.Or(refreshed.AccountID, credential.AccountID)
 	refreshed.AccountName = cmp.Or(refreshed.AccountName, credential.AccountName)
 	refreshed.Email = cmp.Or(refreshed.Email, credential.Email)
+	logger.InfoAttrs("credential_refreshed", slog.String("service", service))
 	return refreshed, nil
 }
 
 func (m *oauthManager) Revoke(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) error {
 	if credential == nil {
-		return errors.New("credential is nil")
+		return errCredentialNil
 	}
 	adapter, err := m.adapter(service)
 	if err != nil {
@@ -273,13 +300,22 @@ func (m *oauthManager) Revoke(ctx context.Context, service string, credential *O
 	}
 	revocable, ok := adapter.(RevocableAdapter)
 	if !ok {
-		return errors.New("oauth service does not support revoke")
+		return errOAuthServiceRevokeUnsupported
 	}
 	loggedClient, err := m.revokeClient(service, client)
 	if err != nil {
 		return err
 	}
-	return revocable.Revoke(ctx, credential, loggedClient)
+	if err := revocable.Revoke(ctx, credential, loggedClient); err != nil {
+		logOAuthFailure("credential_revoke_failed", service, err)
+		return err
+	}
+	logger.InfoAttrs("credential_revoked", slog.String("service", service))
+	return nil
+}
+
+func logOAuthFailure(event, service string, err error) {
+	logger.WarnAttrs(event, slog.String("service", service), slog.String("error", err.Error()))
 }
 
 func (m *oauthManager) adapter(service string) (OAuthAdapter, error) {
@@ -311,10 +347,10 @@ func (m *oauthManager) session(id string, consume bool) (OAuthSession, error) {
 
 func (m *oauthManager) httpClient(service string, proxyGroup int) (*http.Client, error) {
 	if proxyGroup < 0 {
-		return nil, errors.New("proxy group must not be negative")
+		return nil, errProxyGroupNegative
 	}
 	if m.proxy == nil {
-		return nil, errors.New("proxy manager is not configured")
+		return nil, errProxyManagerNotConfigured
 	}
 	return &http.Client{Transport: &proxyTransport{manager: m.proxy, groupID: proxyGroup, app: "oauth:" + service}, Timeout: 30 * time.Second}, nil
 }
@@ -324,7 +360,7 @@ func (m *oauthManager) revokeClient(service string, supplied *http.Client) (*htt
 		return m.httpClient(service, 0)
 	}
 	if m.db == nil {
-		return nil, errors.New("oauth database is not configured")
+		return nil, errOAuthDatabaseNotConfigured
 	}
 	client := *supplied
 	transport := client.Transport

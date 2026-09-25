@@ -1,7 +1,6 @@
 package proxy2
 
 import (
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,7 +44,7 @@ func TestProxyManagerRetriesAndPersistsHealth(t *testing.T) {
 	}
 	handle := func(response *http.Response) error {
 		if response.StatusCode == http.StatusBadGateway {
-			return errors.New("application detected a proxy failure")
+			return errApplicationDetectedProxyFailure
 		}
 		return nil
 	}

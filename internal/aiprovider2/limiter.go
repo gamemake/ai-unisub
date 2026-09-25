@@ -1,16 +1,11 @@
 package aiprovider2
 
 import (
-	"ai-unisub/internal/common"
 	"context"
-	"errors"
 	"time"
 )
 
 const defaultQueueTimeout = 180 * time.Second
-
-var ErrQueueTimeout = errors.New(common.MessageAIProviderQueueTimeout)
-var ErrUnavailable = errors.New(common.MessageAIProviderUnavailable)
 
 type AccountLimiter interface {
 	Acquire(ctx context.Context) error

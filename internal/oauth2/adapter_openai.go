@@ -3,7 +3,6 @@ package oauth2
 import (
 	"cmp"
 	"context"
-	"errors"
 	"net/http"
 	"net/url"
 	"slices"
@@ -61,7 +60,7 @@ func (a *OpenAIAdapter) Exchange(ctx context.Context, code, _, verifier, redirec
 
 func (a *OpenAIAdapter) Refresh(ctx context.Context, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error) {
 	if credential == nil || credential.RefreshToken == "" {
-		return nil, errors.New("credential has no refresh token")
+		return nil, errCredentialNoRefreshToken
 	}
 	return a.token(ctx, url.Values{
 		"grant_type": {"refresh_token"}, "refresh_token": {credential.RefreshToken}, "client_id": {a.config.ClientID},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"slices"
@@ -45,16 +46,18 @@ func (m *proxyManager) Open() error {
 		}
 	}
 	if m.db == nil {
-		return errors.New("proxy database is nil")
+		return errProxyDatabaseNil
 	}
 	records, err := m.db.ListProxyGroups()
 	if err != nil {
+		logger.ErrorAttrs("open_failed", slog.String("error", err.Error()))
 		return err
 	}
 	groups := make(map[int]*ProxyGroup, len(records))
 	for _, record := range records {
 		group, err := decodeGroup(record)
 		if err != nil {
+			logger.ErrorAttrs("open_failed", slog.Int("group_id", record.ID), slog.String("error", err.Error()))
 			return fmt.Errorf("decode proxy group %d: %w", record.ID, err)
 		}
 		groups[group.ID] = &group
@@ -63,6 +66,7 @@ func (m *proxyManager) Open() error {
 	m.stop = make(chan struct{})
 	m.done = make(chan struct{})
 	go m.flushLoop(m.stop, m.done)
+	logger.InfoAttrs("opened", slog.Int("groups", len(groups)))
 	return nil
 }
 
@@ -84,8 +88,12 @@ func (m *proxyManager) Close() error {
 
 	<-done
 	m.requests.Wait()
-	return m.flushDirty()
-
+	if err := m.flushDirty(); err != nil {
+		logger.ErrorAttrs("close_failed", slog.String("error", err.Error()))
+		return err
+	}
+	logger.Info("closed", "")
+	return nil
 }
 
 func (m *proxyManager) flushLoop(stop <-chan struct{}, done chan<- struct{}) {
@@ -96,7 +104,9 @@ func (m *proxyManager) flushLoop(stop <-chan struct{}, done chan<- struct{}) {
 		case <-stop:
 			return
 		case <-ticks:
-			_ = m.flushDirty()
+			if err := m.flushDirty(); err != nil {
+				logger.ErrorAttrs("state_flush_failed", slog.String("error", err.Error()))
+			}
 		}
 	}
 }
@@ -131,10 +141,11 @@ func (m *proxyManager) Create(config ProxyGroupConfig) (int, error) {
 		return 0, err
 	}
 	if record.ID <= 0 {
-		return 0, errors.New("database did not assign a proxy group ID")
+		return 0, errDatabaseDidNotAssignProxyGroupID
 	}
 	group.ID = record.ID
 	m.groups[group.ID] = &group
+	logger.InfoAttrs("group_created", slog.Int("group_id", group.ID))
 	return group.ID, nil
 }
 
@@ -154,6 +165,7 @@ func (m *proxyManager) Delete(id int) error {
 		return err
 	}
 	delete(m.groups, id)
+	logger.InfoAttrs("group_deleted", slog.Int("group_id", id))
 	return nil
 }
 
@@ -186,15 +198,16 @@ func (m *proxyManager) Update(id int, config ProxyGroupConfig) error {
 		return err
 	}
 	*current = next
+	logger.InfoAttrs("group_updated", slog.Int("group_id", id))
 	return nil
 }
 
 func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, handle func(res *http.Response) error) (*http.Response, error) {
 	if req == nil {
-		return nil, errors.New("request is nil")
+		return nil, errRequestNil
 	}
 	if req.URL == nil {
-		return nil, errors.New("request URL is nil")
+		return nil, errRequestURLNil
 	}
 	m.mu.Lock()
 	if err := m.lifecycleError(); err != nil {
@@ -217,6 +230,7 @@ func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, ha
 	if id == 0 {
 		response, err := http.DefaultClient.Do(requestWithBody(req, body))
 		if err != nil {
+			logger.WarnAttrs("request_failed", slog.Int("group_id", id), slog.String("app", app))
 			logErr := m.recordCall(0, "", app, req.URL.String(), 0, err.Error())
 			return response, errors.Join(err, logErr)
 		}
@@ -227,12 +241,14 @@ func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, ha
 		message := ""
 		if handleErr != nil {
 			message = handleErr.Error()
+			logger.WarnAttrs("response_rejected", slog.Int("group_id", id), slog.String("app", app), slog.Int("status", response.StatusCode))
 		}
 		logErr := m.recordCall(0, "", app, req.URL.String(), response.StatusCode, message)
 		return response, errors.Join(handleErr, logErr)
 	}
 	addresses := orderedProxies(*group, app)
 	if len(addresses) == 0 {
+		logger.WarnAttrs("no_available_proxy", slog.Int("group_id", id), slog.String("app", app))
 		return nil, ErrNoAvailableProxy
 	}
 	var attemptErrors []error
@@ -240,6 +256,7 @@ func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, ha
 		attempt := requestWithBody(req, body)
 		response, requestErr := doProxyRequest(attempt, address)
 		if requestErr != nil {
+			logger.WarnAttrs("proxy_attempt_failed", slog.Int("group_id", id), slog.String("app", app))
 			m.setNetworkHealth(id, address, false)
 			logErr := m.recordCall(id, address, app, req.URL.String(), 0, requestErr.Error())
 			attemptErrors = append(attemptErrors, requestErr, logErr)
@@ -256,6 +273,7 @@ func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, ha
 			return response, logErr
 		}
 		m.setApplicationHealth(id, address, app, false)
+		logger.WarnAttrs("proxy_response_rejected", slog.Int("group_id", id), slog.String("app", app), slog.Int("status", response.StatusCode))
 		logErr := m.recordCall(id, address, app, req.URL.String(), response.StatusCode, handleErr.Error())
 		attemptErrors = append(attemptErrors, handleErr, logErr)
 		if i == len(addresses)-1 {
@@ -269,10 +287,10 @@ func (m *proxyManager) Do(id int, app string, req *http.Request, body []byte, ha
 func validateConfig(config ProxyGroupConfig) (ProxyGroupConfig, error) {
 	config.Name = strings.TrimSpace(config.Name)
 	if config.Name == "" {
-		return ProxyGroupConfig{}, errors.New("proxy group name is required")
+		return ProxyGroupConfig{}, errProxyGroupNameRequired
 	}
 	if len(config.Proxies) == 0 {
-		return ProxyGroupConfig{}, errors.New("at least one proxy is required")
+		return ProxyGroupConfig{}, errNoProxies
 	}
 	config.Proxies = slices.Clone(config.Proxies)
 	seen := make(map[string]struct{}, len(config.Proxies))
@@ -282,7 +300,7 @@ func validateConfig(config ProxyGroupConfig) (ProxyGroupConfig, error) {
 			return ProxyGroupConfig{}, fmt.Errorf("proxy %d: %w", i+1, err)
 		}
 		if _, ok := seen[normalized]; ok {
-			return ProxyGroupConfig{}, errors.New("duplicate proxy URL")
+			return ProxyGroupConfig{}, errDuplicateProxyURL
 		}
 		seen[normalized] = struct{}{}
 		config.Proxies[i] = normalized
@@ -293,16 +311,16 @@ func validateConfig(config ProxyGroupConfig) (ProxyGroupConfig, error) {
 func normalizeProxyURL(address string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(address))
 	if err != nil || parsed.Host == "" || parsed.Hostname() == "" {
-		return "", errors.New("invalid proxy URL")
+		return "", errInvalidProxyURL
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	switch parsed.Scheme {
 	case "http", "https", "socks5", "socks5h":
 	default:
-		return "", errors.New("unsupported proxy URL scheme")
+		return "", errUnsupportedProxyURLScheme
 	}
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("proxy URL must not contain a query or fragment")
+		return "", errProxyURLHasQueryOrFragment
 	}
 	if parsed.Path == "/" {
 		parsed.Path = ""
@@ -460,9 +478,13 @@ func (m *proxyManager) lifecycleError() error {
 
 func (m *proxyManager) recordCall(groupID int, proxyURL, app, requestURL string, status int, message string) error {
 	if m.db == nil {
-		return errors.New("proxy database is nil")
+		return errProxyDatabaseNil
 	}
-	return m.db.RecordProxyLog(&database.PersistedProxyLog{GroupID: groupID, ProxyURL: proxyURL, URL: requestURL, AppType: app, HTTPErrorCode: status, HTTPErrorMessage: message, Time: time.Now()})
+	err := m.db.RecordProxyLog(&database.PersistedProxyLog{GroupID: groupID, ProxyURL: proxyURL, URL: requestURL, AppType: app, HTTPErrorCode: status, HTTPErrorMessage: message, Time: time.Now()})
+	if err != nil {
+		logger.ErrorAttrs("record_call_failed", slog.Int("group_id", groupID), slog.String("app", app), slog.String("error", err.Error()))
+	}
+	return err
 }
 
 func encodeGroup(group ProxyGroup) (database.PersistedProxyGroup, error) {

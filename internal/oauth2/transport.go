@@ -42,7 +42,7 @@ func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, e
 
 func (t *proxyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil {
-		return nil, errors.New("request is nil")
+		return nil, errRequestNil
 	}
 	var body []byte
 	if request.Body != nil {

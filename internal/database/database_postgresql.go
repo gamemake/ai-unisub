@@ -35,7 +35,7 @@ func NewPostgreSQLDatabase(databaseURL string) *PostgreSQLDatabase {
 
 func (p *PostgreSQLDatabase) Open() error {
 	if p == nil {
-		return errors.New("postgresql database is nil")
+		return errPostgreSQLDatabaseNil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -74,7 +74,7 @@ func (p *PostgreSQLDatabase) Open() error {
 
 func (p *PostgreSQLDatabase) Close() error {
 	if p == nil {
-		return errors.New("postgresql database is nil")
+		return errPostgreSQLDatabaseNil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -673,7 +673,7 @@ func (p *PostgreSQLDatabase) ensureOpen() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.db == nil {
-		return errors.New("postgresql database is not open")
+		return errPostgreSQLDatabaseNotOpen
 	}
 	return nil
 }
@@ -683,7 +683,7 @@ func (p *PostgreSQLDatabase) ensurePartition(parent string, value time.Time) err
 		return nil
 	}
 	if parent != "call_traces" && parent != "proxy_logs" {
-		return errors.New("invalid partitioned table")
+		return errInvalidPartitionedTable
 	}
 	dayStart := utcDay(value)
 	name := parent + "_" + dayStart.Format("20060102")

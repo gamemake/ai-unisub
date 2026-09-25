@@ -96,7 +96,7 @@ func TestGatewayAPIKeyForwardingAndConfigEdit(t *testing.T) {
 			if traces[0].OutboundURL != wantOutbound {
 				t.Fatalf("outbound url = %q, want %q", traces[0].OutboundURL, wantOutbound)
 			}
-			trace, err := s.Database().GetCallTrace(traces[0].StartedAt, traces[0].ID)
+			trace, err := s.Database().GetCallTrace(traces[0].FinishedAt, traces[0].ID)
 			if err != nil {
 				t.Fatal(err)
 			}

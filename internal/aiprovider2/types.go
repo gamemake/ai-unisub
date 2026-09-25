@@ -1,6 +1,9 @@
 package aiprovider2
 
-import "time"
+import (
+	"ai-unisub/internal/oauth2"
+	"time"
+)
 
 type ClientType string
 
@@ -36,9 +39,9 @@ type AccountConfig struct {
 	QueueTimeoutSeconds      int         `json:"queue_timeout_seconds"`
 
 	// 订阅独有
-	SubscriptionPlan string `json:"subscription_plan,omitempty"`
-	OfficialOnly     bool   `json:"official_only,omitzero"`
-	CredentialID     string `json:"credential_id,omitempty"`
+	SubscriptionPlan string                 `json:"subscription_plan,omitempty"`
+	OfficialOnly     bool                   `json:"official_only,omitzero"`
+	Credential       oauth2.OAuthCredential `json:"credential,omitzero"`
 
 	// API 独有
 	APIEndpoint string `json:"api_endpoint"`
@@ -49,8 +52,9 @@ type AccountConfig struct {
 }
 
 type AccountState struct {
-	ActiveConnections int `json:"active_connections"`
-	QueuedConnections int `json:"queued_connections"`
+	ActiveConnections int       `json:"active_connections"`
+	QueuedConnections int       `json:"queued_connections"`
+	RefreshAt         time.Time `json:"refresh_at,omitzero"`
 }
 
 type SubscriptionQuotaItem struct {

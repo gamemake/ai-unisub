@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -59,7 +58,7 @@ func doOAuthRequest(client *http.Client, request *http.Request, output any) erro
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxOAuthResponseBytes+1))
 	if err != nil || len(body) > maxOAuthResponseBytes {
-		return errors.New("oauth response is too large or unreadable")
+		return errOAuthResponseTooLargeOrUnreadable
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		failure := new(struct {
@@ -77,7 +76,7 @@ func doOAuthRequest(client *http.Client, request *http.Request, output any) erro
 
 func credentialFromToken(token tokenResponse) (*OAuthCredential, error) {
 	if token.AccessToken == "" {
-		return nil, errors.New("oauth response has no access token")
+		return nil, errOAuthResponseNoAccessToken
 	}
 	credential := &OAuthCredential{
 		AccessToken: token.AccessToken, RefreshToken: token.RefreshToken,

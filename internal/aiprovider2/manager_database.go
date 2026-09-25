@@ -3,7 +3,6 @@ package aiprovider2
 import (
 	"ai-unisub/internal/database"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"slices"
 )
@@ -56,7 +55,7 @@ func (m *providerManager) loadAccounts() error {
 
 func (m *providerManager) saveAccount(a *Account) error {
 	if a == nil {
-		return errors.New("account is nil")
+		return errAccountRequired
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()

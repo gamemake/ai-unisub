@@ -2,7 +2,6 @@ package oauth2
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -22,7 +21,7 @@ func (a *DummyAdapter) Service() string { return OAuthServiceDummy }
 
 func (a *DummyAdapter) Refresh(_ context.Context, credential *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
 	if credential == nil {
-		return nil, errors.New("credential is nil")
+		return nil, errCredentialNil
 	}
 	result := *credential
 	return &result, nil
@@ -48,7 +47,7 @@ func (a *DummyAdapter) PollDeviceToken(_ context.Context, deviceCode string, _ *
 	defer a.mu.Unlock()
 	polls, ok := a.polls[deviceCode]
 	if !ok {
-		return nil, errors.New("dummy device code not found")
+		return nil, errDummyDeviceCodeNotFound
 	}
 	if polls == 0 {
 		a.polls[deviceCode] = 1

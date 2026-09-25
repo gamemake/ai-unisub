@@ -60,7 +60,7 @@ func (a *XAIAdapter) StartDeviceAuthorization(ctx context.Context, input DeviceS
 		return DeviceAuthorizationResult{}, err
 	}
 	if response.DeviceCode == "" {
-		return DeviceAuthorizationResult{}, errors.New("xAI device authorization returned no device code")
+		return DeviceAuthorizationResult{}, errXAIDeviceAuthorizationNoDeviceCode
 	}
 	interval := time.Duration(response.Interval) * time.Second
 	if interval <= 0 {
@@ -79,7 +79,7 @@ func (a *XAIAdapter) StartDeviceAuthorization(ctx context.Context, input DeviceS
 
 func (a *XAIAdapter) PollDeviceToken(ctx context.Context, deviceCode string, client *http.Client) (*OAuthCredential, error) {
 	if deviceCode == "" {
-		return nil, errors.New("device code is required")
+		return nil, errDeviceCodeRequired
 	}
 	values := url.Values{
 		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
@@ -99,7 +99,7 @@ func (a *XAIAdapter) PollDeviceToken(ctx context.Context, deviceCode string, cli
 
 func (a *XAIAdapter) Refresh(ctx context.Context, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error) {
 	if credential == nil || credential.RefreshToken == "" {
-		return nil, errors.New("credential has no refresh token")
+		return nil, errCredentialNoRefreshToken
 	}
 	return a.token(ctx, url.Values{
 		"grant_type": {"refresh_token"}, "refresh_token": {credential.RefreshToken}, "client_id": {a.config.ClientID},

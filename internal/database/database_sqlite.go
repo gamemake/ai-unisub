@@ -34,7 +34,7 @@ func NewSQLiteDatabase(path string) *SQLiteDatabase {
 
 func (s *SQLiteDatabase) Open() error {
 	if s == nil {
-		return errors.New("sqlite database is nil")
+		return errSQLiteDatabaseNil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -77,7 +77,7 @@ func (s *SQLiteDatabase) Open() error {
 
 func (s *SQLiteDatabase) Close() error {
 	if s == nil {
-		return errors.New("sqlite database is nil")
+		return errSQLiteDatabaseNil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -779,7 +779,7 @@ func (s *SQLiteDatabase) ensureOpen() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db == nil {
-		return errors.New("sqlite database is not open")
+		return errSQLiteDatabaseNotOpen
 	}
 	return nil
 }
@@ -835,7 +835,7 @@ CREATE INDEX IF NOT EXISTS idx_%s_request_id ON %s(request_id);`, table, table, 
 // additive column upgrades so older daily tables keep working.
 func (s *SQLiteDatabase) ensureTraceTable(table string) error {
 	if !traceTablePattern.MatchString(table) {
-		return errors.New("invalid call trace table name")
+		return errInvalidCallTraceTableName
 	}
 	if _, err := s.db.Exec(createTraceTableSQL(table)); err != nil {
 		return err
@@ -888,7 +888,7 @@ func (s *SQLiteDatabase) ensureTraceColumns(table string) error {
 func (s *SQLiteDatabase) tableColumns(table string) (map[string]struct{}, error) {
 	// PRAGMA identifiers are not parameterized; only allow safe names.
 	if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`).MatchString(table) {
-		return nil, errors.New("invalid table name")
+		return nil, errInvalidTableName
 	}
 	rows, err := s.db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
 	if err != nil {

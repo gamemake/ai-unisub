@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"sync"
@@ -50,29 +52,43 @@ func newMemoryDatabase(store Database) *MemoryDatabase {
 // interface it wraps.
 func (m *MemoryDatabase) Open() error {
 	if err := m.store.Open(); err != nil {
+		m.logStoreError("open", err)
 		return err
 	}
 	accounts, err := m.store.ListAccounts()
 	if err != nil {
+		m.logStoreError("load_accounts", err)
 		return err
 	}
 	users, err := m.store.ListUsers()
 	if err != nil {
+		m.logStoreError("load_users", err)
 		return err
 	}
 	apiKeys, err := m.store.ListAPIKeys(0)
 	if err != nil {
+		m.logStoreError("load_api_keys", err)
 		return err
 	}
 	proxyGroups, err := m.store.ListProxyGroups()
 	if err != nil {
+		m.logStoreError("load_proxy_groups", err)
 		return err
 	}
 	configs, err := m.store.ListConfigs()
 	if err != nil {
+		m.logStoreError("load_configs", err)
 		return err
 	}
 	m.replaceCache(accounts, users, apiKeys, proxyGroups, configs)
+	logger.InfoAttrs("opened",
+		slog.String("backend", fmt.Sprintf("%T", m.store)),
+		slog.Int("accounts", len(accounts)),
+		slog.Int("users", len(users)),
+		slog.Int("api_keys", len(apiKeys)),
+		slog.Int("proxy_groups", len(proxyGroups)),
+		slog.Int("configs", len(configs)),
+	)
 	return nil
 }
 
@@ -82,7 +98,20 @@ func (m *MemoryDatabase) Close() error {
 	m.mu.Lock()
 	m.opened = false
 	m.mu.Unlock()
-	return m.store.Close()
+	if err := m.store.Close(); err != nil {
+		m.logStoreError("close", err)
+		return err
+	}
+	logger.InfoAttrs("closed", slog.String("backend", fmt.Sprintf("%T", m.store)))
+	return nil
+}
+
+func (m *MemoryDatabase) logStoreError(operation string, err error) {
+	logger.ErrorAttrs("operation_failed",
+		slog.String("backend", fmt.Sprintf("%T", m.store)),
+		slog.String("operation", operation),
+		slog.String("error", err.Error()),
+	)
 }
 
 // ensureOpen reports whether Open succeeded and Close has not been called.
@@ -90,7 +119,7 @@ func (m *MemoryDatabase) ensureOpen() error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if !m.opened {
-		return errors.New("database is not open")
+		return errDatabaseNotOpen
 	}
 	return nil
 }
@@ -139,13 +168,14 @@ func (m *MemoryDatabase) SaveConfig(value *PersistedConfig) error {
 	if value.ID > 0 {
 		existing, ok := m.cachedConfig(value.ID)
 		if !ok {
-			return errors.New("config not found")
+			return errConfigNotFound
 		}
 		if existing.Type != value.Type || existing.Name != value.Name {
-			return errors.New("config type and name cannot be changed")
+			return errConfigIdentityImmutable
 		}
 	}
 	if err := m.store.SaveConfig(value); err != nil {
+		m.logStoreError("save_config", err)
 		return err
 	}
 	m.cacheConfig(*value)
@@ -157,6 +187,7 @@ func (m *MemoryDatabase) DeleteConfig(id int) error {
 		return err
 	}
 	if err := m.store.DeleteConfig(id); err != nil {
+		m.logStoreError("delete_config", err)
 		return err
 	}
 	m.dropConfig(id)
@@ -172,12 +203,13 @@ func (m *MemoryDatabase) ListProxyGroups() ([]PersistedProxyGroup, error) {
 
 func (m *MemoryDatabase) SaveProxyGroup(value *PersistedProxyGroup) error {
 	if value == nil || value.ID < 0 {
-		return errors.New("proxy group and ID are required")
+		return errProxyGroupAndIDRequired
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
 	if err := m.store.SaveProxyGroup(value); err != nil {
+		m.logStoreError("save_proxy_group", err)
 		return err
 	}
 	m.cacheProxyGroup(*value)
@@ -189,6 +221,7 @@ func (m *MemoryDatabase) DeleteProxyGroup(id int) error {
 		return err
 	}
 	if err := m.store.DeleteProxyGroup(id); err != nil {
+		m.logStoreError("delete_proxy_group", err)
 		return err
 	}
 	m.dropProxyGroup(id)
@@ -197,12 +230,16 @@ func (m *MemoryDatabase) DeleteProxyGroup(id int) error {
 
 func (m *MemoryDatabase) RecordProxyLog(value *PersistedProxyLog) error {
 	if value == nil {
-		return errors.New("proxy log is nil")
+		return errProxyLogNil
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
-	return m.store.RecordProxyLog(value)
+	if err := m.store.RecordProxyLog(value); err != nil {
+		m.logStoreError("record_proxy_log", err)
+		return err
+	}
+	return nil
 }
 
 func (m *MemoryDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error) {
@@ -210,25 +247,34 @@ func (m *MemoryDatabase) QueryProxyLogs(filter ProxyLogFilter, page, pageSize in
 		return nil, 0, err
 	}
 	if page < 1 {
-		return nil, 0, errors.New("page must be greater than zero")
+		return nil, 0, errPagePositive
 	}
 	if pageSize < 1 {
-		return nil, 0, errors.New("page size must be greater than zero")
+		return nil, 0, errPageSizePositive
 	}
 	if err := validateTimeRange(filter.TimeRange); err != nil {
 		return nil, 0, err
 	}
-	return m.store.QueryProxyLogs(filter, page, pageSize)
+	logs, total, err := m.store.QueryProxyLogs(filter, page, pageSize)
+	if err != nil {
+		m.logStoreError("query_proxy_logs", err)
+	}
+	return logs, total, err
 }
 
 func (m *MemoryDatabase) CleanupProxyLog(days int) error {
 	if days < 0 {
-		return errors.New("cleanup days must not be negative")
+		return errCleanupDaysNegative
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
-	return m.store.CleanupProxyLog(days)
+	if err := m.store.CleanupProxyLog(days); err != nil {
+		m.logStoreError("cleanup_proxy_logs", err)
+		return err
+	}
+	logger.InfoAttrs("proxy_logs_cleaned", slog.Int("retention_days", days))
+	return nil
 }
 
 func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
@@ -240,11 +286,13 @@ func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
 	}
 	raw, err := m.store.LoadCredential(id)
 	if err != nil {
+		m.logStoreError("load_credential", err)
 		return nil, err
 	}
 	if !json.Valid(raw) {
+		logger.Warn("invalid_credential_removed", "")
 		_ = m.DeleteCredential(id)
-		return nil, errors.New("stored credential is invalid JSON")
+		return nil, errStoredCredentialInvalidJSON
 	}
 	m.cacheCredential(id, raw)
 	return raw, nil
@@ -252,12 +300,13 @@ func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
 
 func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) error {
 	if id == "" || len(value) == 0 || !json.Valid(value) {
-		return errors.New("credential ID and credential are required")
+		return errCredentialAndIDRequired
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
 	if err := m.store.SaveCredential(id, value); err != nil {
+		m.logStoreError("save_credential", err)
 		return err
 	}
 	m.cacheCredential(id, value)
@@ -269,6 +318,7 @@ func (m *MemoryDatabase) DeleteCredential(id string) error {
 		return err
 	}
 	if err := m.store.DeleteCredential(id); err != nil {
+		m.logStoreError("delete_credential", err)
 		return err
 	}
 	m.dropCredential(id)
@@ -290,9 +340,10 @@ func (m *MemoryDatabase) SaveAccount(value *PersistedAccount) error {
 		return err
 	}
 	if value.ID > 0 && !m.hasAccount(value.ID) {
-		return errors.New("account not existed")
+		return errAccountNotExisted
 	}
 	if err := m.store.SaveAccount(value); err != nil {
+		m.logStoreError("save_account", err)
 		return err
 	}
 	m.cacheAccount(*value)
@@ -304,6 +355,7 @@ func (m *MemoryDatabase) DeleteAccount(id int) error {
 		return err
 	}
 	if err := m.store.DeleteAccount(id); err != nil {
+		m.logStoreError("delete_account", err)
 		return err
 	}
 	m.dropAccount(id)
@@ -325,12 +377,13 @@ func (m *MemoryDatabase) SaveUser(value *PersistedUser) error {
 		return err
 	}
 	if value.ID > 0 && !m.hasUser(value.ID) {
-		return errors.New("user not found")
+		return errUserNotFound
 	}
 	if !value.Enabled && value.UpdatedAt.IsZero() {
 		value.Enabled = true
 	}
 	if err := m.store.SaveUser(value); err != nil {
+		m.logStoreError("save_user", err)
 		return err
 	}
 	m.cacheUser(*value)
@@ -342,6 +395,7 @@ func (m *MemoryDatabase) DeleteUser(id int) error {
 		return err
 	}
 	if err := m.store.DeleteUser(id); err != nil {
+		m.logStoreError("delete_user", err)
 		return err
 	}
 	m.dropUser(id)
@@ -363,9 +417,10 @@ func (m *MemoryDatabase) SaveAPIKey(value *PersistedAPIKey) error {
 		return err
 	}
 	if value.ID > 0 && !m.hasAPIKey(value.ID) {
-		return errors.New("apikey not found")
+		return errAPIKeyNotFound
 	}
 	if err := m.store.SaveAPIKey(value); err != nil {
+		m.logStoreError("save_api_key", err)
 		return err
 	}
 	m.cacheAPIKey(*value)
@@ -377,6 +432,7 @@ func (m *MemoryDatabase) DeleteAPIKey(id int) error {
 		return err
 	}
 	if err := m.store.DeleteAPIKey(id); err != nil {
+		m.logStoreError("delete_api_key", err)
 		return err
 	}
 	m.dropAPIKey(id)
@@ -385,32 +441,45 @@ func (m *MemoryDatabase) DeleteAPIKey(id int) error {
 
 func (m *MemoryDatabase) RecordCallTrace(trace *PersistedCallTrace) error {
 	if trace == nil {
-		return errors.New("call trace is nil")
+		return errCallTraceNil
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
-	return m.store.RecordCallTrace(trace)
+	if err := m.store.RecordCallTrace(trace); err != nil {
+		m.logStoreError("record_call_trace", err)
+		return err
+	}
+	return nil
 }
 
 func (m *MemoryDatabase) GetCallTrace(finishedAt time.Time, id int) (*PersistedCallTrace, error) {
 	if id <= 0 {
-		return nil, errors.New("call trace ID is required")
+		return nil, errCallTraceIDRequired
 	}
 	if err := m.ensureOpen(); err != nil {
 		return nil, err
 	}
-	return m.store.GetCallTrace(finishedAt, id)
+	trace, err := m.store.GetCallTrace(finishedAt, id)
+	if err != nil && !errors.Is(err, ErrCallTraceNotFound) {
+		m.logStoreError("get_call_trace", err)
+	}
+	return trace, err
 }
 
 func (m *MemoryDatabase) CleanupCallTrace(days int) error {
 	if days < 0 {
-		return errors.New("cleanup days must not be negative")
+		return errCleanupDaysNegative
 	}
 	if err := m.ensureOpen(); err != nil {
 		return err
 	}
-	return m.store.CleanupCallTrace(days)
+	if err := m.store.CleanupCallTrace(days); err != nil {
+		m.logStoreError("cleanup_call_traces", err)
+		return err
+	}
+	logger.InfoAttrs("call_traces_cleaned", slog.Int("retention_days", days))
+	return nil
 }
 
 func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize int) ([]PersistedCallTraceSummary, int, error) {
@@ -421,12 +490,16 @@ func (m *MemoryDatabase) QueryCallTraces(filter CallTraceFilter, page, pageSize 
 		return nil, 0, err
 	}
 	if page < 1 {
-		return nil, 0, errors.New("page must be greater than zero")
+		return nil, 0, errPagePositive
 	}
 	if pageSize < 1 {
-		return nil, 0, errors.New("page size must be greater than zero")
+		return nil, 0, errPageSizePositive
 	}
-	return m.store.QueryCallTraces(filter, page, pageSize)
+	traces, total, err := m.store.QueryCallTraces(filter, page, pageSize)
+	if err != nil {
+		m.logStoreError("query_call_traces", err)
+	}
+	return traces, total, err
 }
 
 func (m *MemoryDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageRow, UsageTotals, error) {
@@ -436,7 +509,11 @@ func (m *MemoryDatabase) QueryAccountUsage(timeRange TimeRange) ([]AccountUsageR
 	if err := m.ensureOpen(); err != nil {
 		return nil, UsageTotals{}, err
 	}
-	return m.store.QueryAccountUsage(timeRange)
+	rows, totals, err := m.store.QueryAccountUsage(timeRange)
+	if err != nil {
+		m.logStoreError("query_account_usage", err)
+	}
+	return rows, totals, err
 }
 
 func (m *MemoryDatabase) QueryUserUsage(timeRange TimeRange, accountID int) ([]UserUsageRow, UsageTotals, error) {
@@ -444,12 +521,16 @@ func (m *MemoryDatabase) QueryUserUsage(timeRange TimeRange, accountID int) ([]U
 		return nil, UsageTotals{}, err
 	}
 	if accountID < 0 {
-		return nil, UsageTotals{}, errors.New("account ID must not be negative")
+		return nil, UsageTotals{}, errAccountIDNegative
 	}
 	if err := m.ensureOpen(); err != nil {
 		return nil, UsageTotals{}, err
 	}
-	return m.store.QueryUserUsage(timeRange, accountID)
+	rows, totals, err := m.store.QueryUserUsage(timeRange, accountID)
+	if err != nil {
+		m.logStoreError("query_user_usage", err)
+	}
+	return rows, totals, err
 }
 
 // replaceCache refreshes every cached map from the records loaded through the
