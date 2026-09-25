@@ -12,7 +12,7 @@ const (
 	DB_CONFIG_TYPE_SUPPLIER string = "supplier"
 )
 
-func (m *Manager) flashToDB() error {
+func (m *providerManager) flashToDB() error {
 	m.mu.RLock()
 	accounts := make([]*Account, 0, len(m.accounts))
 	for _, account := range m.accounts {
@@ -33,7 +33,7 @@ func (m *Manager) flashToDB() error {
 	return nil
 }
 
-func (m *Manager) loadAccounts() error {
+func (m *providerManager) loadAccounts() error {
 	accounts, err := m.db.ListAccounts()
 	if err != nil {
 		return err
@@ -54,7 +54,7 @@ func (m *Manager) loadAccounts() error {
 	return nil
 }
 
-func (m *Manager) saveAccount(a *Account) error {
+func (m *providerManager) saveAccount(a *Account) error {
 	if a == nil {
 		return errors.New("account is nil")
 	}
@@ -91,7 +91,7 @@ func (m *Manager) saveAccount(a *Account) error {
 	return nil
 }
 
-func (m *Manager) loadSuppliers() error {
+func (m *providerManager) loadSuppliers() error {
 	suppliers := []Supplier{
 		newSupplierAnthropic(m),
 		newSupplierOpenAI(m),
@@ -139,7 +139,7 @@ func (m *Manager) loadSuppliers() error {
 	return nil
 }
 
-func (m *Manager) saveSupplier(name string, overlay SupplierOverlayConfig) error {
+func (m *providerManager) saveSupplier(name string, overlay SupplierOverlayConfig) error {
 	id, _ := m.suppliersIDs[name]
 	value, err := json.Marshal(overlay)
 	if err != nil {

@@ -3,6 +3,8 @@ package aiprovider2
 import (
 	"ai-unisub/internal/database"
 	"ai-unisub/internal/proxy"
+	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"time"
@@ -10,7 +12,24 @@ import (
 
 const flashInterval = 30 * time.Second
 
-type Manager struct {
+type ProviderManager interface {
+	Open() error
+	Close() error
+
+	ListAccounts() []*Account
+	NewAccount(value json.RawMessage) (*Account, error)
+	DelAccount(id int) error
+	SetAccountConfig(ctx context.Context, id int, value json.RawMessage) error
+	FetchQuota(ctx context.Context, id int) (AccountQuota, error)
+	ResetQuota(ctx context.Context, id int, resetType string) error
+	GetModels(ctx context.Context, id int, clientType string) ([]string, error)
+
+	ListSuppliers() []Supplier
+	SetOverlayConfig(ctx context.Context, supplierID string, value json.RawMessage) error
+	RefreshModels(ctx context.Context, supplierID string, accountID int) error
+}
+
+type providerManager struct {
 	db    database.Database
 	proxy *proxy.Manager
 
@@ -25,14 +44,16 @@ type Manager struct {
 	flashDone   chan struct{}
 }
 
-func NewManager(db database.Database, proxy *proxy.Manager) (*Manager, error) {
+var _ ProviderManager = (*providerManager)(nil)
+
+func NewProviderManager(db database.Database, proxy *proxy.Manager) (ProviderManager, error) {
 	if db == nil {
 		return nil, errors.New("database is required")
 	}
 	if proxy == nil {
 		return nil, errors.New("proxy manager is required")
 	}
-	manager := &Manager{
+	manager := &providerManager{
 		db:           db,
 		proxy:        proxy,
 		accounts:     make(map[int]*Account),
@@ -42,7 +63,7 @@ func NewManager(db database.Database, proxy *proxy.Manager) (*Manager, error) {
 	return manager, nil
 }
 
-func (m *Manager) Open() error {
+func (m *providerManager) Open() error {
 	if err := m.loadSuppliers(); err != nil {
 		return err
 	}
@@ -75,7 +96,7 @@ func (m *Manager) Open() error {
 	return nil
 }
 
-func (m *Manager) Close() error {
+func (m *providerManager) Close() error {
 	m.lifecycleMu.Lock()
 	stopFlash := m.stopFlash
 	flashDone := m.flashDone
@@ -92,13 +113,13 @@ func (m *Manager) Close() error {
 	return m.flashToDB()
 }
 
-func (m *Manager) getAccount(id int) *Account {
+func (m *providerManager) getAccount(id int) *Account {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.accounts[id]
 }
 
-func (m *Manager) getSupplier(name string) Supplier {
+func (m *providerManager) getSupplier(name string) Supplier {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.suppliersMap[name]

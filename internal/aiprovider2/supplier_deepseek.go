@@ -17,7 +17,7 @@ import (
 
 type SupplierDeepSeek struct{ SupplierData }
 
-func newSupplierDeepSeek(manager *Manager) Supplier {
+func newSupplierDeepSeek(manager *providerManager) Supplier {
 	return &SupplierDeepSeek{
 		manager: manager, id: "deepseek", name: "DeepSeek",
 		builtin: SupplierBuiltinConfig{

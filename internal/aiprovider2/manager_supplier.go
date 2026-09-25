@@ -11,7 +11,7 @@ import (
 
 var ErrSupplierNotFound = errors.New("supplier not found")
 
-func (m *Manager) ListSuppliers() []Supplier {
+func (m *providerManager) ListSuppliers() []Supplier {
 	if m == nil {
 		return nil
 	}
@@ -20,7 +20,7 @@ func (m *Manager) ListSuppliers() []Supplier {
 	return slices.Clone(m.suppliers)
 }
 
-func (m *Manager) SetOverlayConfig(ctx context.Context, supplierID string, value json.RawMessage) error {
+func (m *providerManager) SetOverlayConfig(ctx context.Context, supplierID string, value json.RawMessage) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func (m *Manager) SetOverlayConfig(ctx context.Context, supplierID string, value
 	return m.storeSupplierOverlay(supplier, overlay)
 }
 
-func (m *Manager) RefreshModels(ctx context.Context, supplierID string, accountID int) error {
+func (m *providerManager) RefreshModels(ctx context.Context, supplierID string, accountID int) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (m *Manager) RefreshModels(ctx context.Context, supplierID string, accountI
 	return m.storeSupplierOverlay(supplier, overlay)
 }
 
-func (m *Manager) supplier(id string) (Supplier, error) {
+func (m *providerManager) supplier(id string) (Supplier, error) {
 	if m == nil {
 		return nil, errors.New("manager is nil")
 	}
@@ -105,7 +105,7 @@ func (m *Manager) supplier(id string) (Supplier, error) {
 	return supplier, nil
 }
 
-func (m *Manager) storeSupplierOverlay(supplier Supplier, overlay SupplierOverlayConfig) error {
+func (m *providerManager) storeSupplierOverlay(supplier Supplier, overlay SupplierOverlayConfig) error {
 	id := supplier.GetID()
 
 	m.mu.Lock()

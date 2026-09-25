@@ -65,7 +65,7 @@ type Supplier interface {
 }
 
 type SupplierData struct {
-	manager *Manager
+	manager *providerManager
 	id      string
 	name    string
 	builtin SupplierBuiltinConfig // 代码中的内置的配置，用于恢复修改

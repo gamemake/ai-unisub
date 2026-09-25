@@ -17,7 +17,7 @@ import (
 
 type SupplierKimi struct{ SupplierData }
 
-func newSupplierKimi(manager *Manager) Supplier {
+func newSupplierKimi(manager *providerManager) Supplier {
 	return &SupplierKimi{
 		manager: manager, id: "kimi", name: "Kimi",
 		builtin: SupplierBuiltinConfig{

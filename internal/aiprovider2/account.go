@@ -9,92 +9,20 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
-)
-
-type ClientType string
-
-const (
-	ClientClaude ClientType = "claude"
-	ClientCodex  ClientType = "codex"
-	ClientGrok   ClientType = "grok"
-)
-
-type AccountKind string
-
-const (
-	AccountOAuth AccountKind = "oauth"
-	AccountAPI   AccountKind = "api"
-	AccountGroup AccountKind = "group"
-)
-
-type GroupMember struct {
-	ID     int `json:"id"`
-	Weight int `json:"weight"`
-}
-
-type AccountConfig struct {
-	// 公共部分
-	Kind                     AccountKind `json:"kind,omitempty"`
-	Name                     string      `json:"name"`
-	Labels                   []string    `json:"labels"`
-	Supplier                 string      `json:"supplier,omitempty"`
-	ClientType               ClientType  `json:"client_type,omitempty"`
-	ProxyGroupID             int         `json:"proxy_group_id,omitempty"`
-	Enabled                  bool        `json:"enabled"`
-	MaxConcurrentConnections int         `json:"max_concurrent_connections"`
-	QueueTimeoutSeconds      int         `json:"queue_timeout_seconds"`
-
-	// 订阅独有
-	SubscriptionPlan string `json:"subscription_plan,omitempty"`
-	OfficialOnly     bool   `json:"official_only,omitzero"`
-	CredentialID     string `json:"credential_id,omitempty"`
-
-	// API 独有
-	APIEndpoint string `json:"api_endpoint"`
-	APIKey      string `json:"api_key,omitempty"`
-
-	// Group 独有
-	Members []GroupMember `json:"members,omitempty"`
-}
-
-type AccountState struct{}
-
-type AccountQuota struct {
-	Subscription []SubscriptionQuotaItem `json:"subscription,omitempty"`
-	Items        []QuotaItem             `json:"items,omitempty"`
-	CacheStatus  QuotaCacheStatus        `json:"cache_status,omitempty"`
-	UpdatedAt    time.Time               `json:"updated_at,omitzero"`
-}
-
-type QuotaItem struct {
-	Name   string `json:"name"`
-	Value  string `json:"value"`
-	Source string `json:"source,omitempty"`
-}
-
-type SubscriptionQuotaItem struct {
-	TimeDimension string    `json:"time_dimension"`
-	Usage         float64   `json:"usage"`
-	ResetAt       time.Time `json:"reset_at"`
-}
-
-type QuotaCacheStatus string
-
-const (
-	QuotaCacheMissing QuotaCacheStatus = "missing"
-	QuotaCacheFresh   QuotaCacheStatus = "fresh"
 )
 
 type Account struct {
-	Manager *Manager
-	ID      int
-	Config  AccountConfig
-	State   AccountState
-	Quota   AccountQuota
-	Dirty   bool // 修改了数据之后需要设置此标志，用来外部把修改落库
+	mu        sync.RWMutex
+	manager   *providerManager
+	limiter   AccountLimiter // 超过最大连接数，需要排队。只对非 Group 类型有效
+	scheduler GroupScheduler // 从子 Account 中选择一个。支队 Group 类型有效
 
-	mu sync.RWMutex
+	ID     int
+	Config AccountConfig
+	State  AccountState
+	Quota  AccountQuota
+	Dirty  bool // 修改了数据之后需要设置此标志，用来外部把修改落库
+
 }
 
 func parseAccountConfig(raw json.RawMessage) (AccountConfig, error) {
@@ -135,14 +63,14 @@ func unmarshalObject(raw json.RawMessage, dst any) error {
 	return json.Unmarshal(raw, dst)
 }
 
-func NewAccount(manager *Manager, id int, configJson json.RawMessage) (*Account, error) {
+func NewAccount(manager *providerManager, id int, configJson json.RawMessage) (*Account, error) {
 	config, err := parseAccountConfig(configJson)
 	if err != nil {
 		return nil, err
 	}
 
 	account := &Account{
-		Manager: manager,
+		manager: manager,
 		ID:      id,
 		Config:  config,
 		State:   AccountState{},
@@ -153,11 +81,12 @@ func NewAccount(manager *Manager, id int, configJson json.RawMessage) (*Account,
 	if err := account.checkAccountConfig(config); err != nil {
 		return nil, err
 	}
+	account.initializeRuntime()
 
 	return account, nil
 }
 
-func NewAccountFromDatabase(manager *Manager, id int, configJson json.RawMessage, stateJson json.RawMessage, quotaJson json.RawMessage) (*Account, error) {
+func NewAccountFromDatabase(manager *providerManager, id int, configJson json.RawMessage, stateJson json.RawMessage, quotaJson json.RawMessage) (*Account, error) {
 	config, err := parseAccountConfig(configJson)
 	if err != nil {
 		return nil, err
@@ -166,13 +95,15 @@ func NewAccountFromDatabase(manager *Manager, id int, configJson json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	state.ActiveConnections = 0
+	state.QueuedConnections = 0
 	quota, err := parseAccountQuota(quotaJson)
 	if err != nil {
 		return nil, err
 	}
 
 	account := &Account{
-		Manager: manager,
+		manager: manager,
 		ID:      id,
 		Config:  config,
 		State:   state,
@@ -182,12 +113,21 @@ func NewAccountFromDatabase(manager *Manager, id int, configJson json.RawMessage
 	if err := account.checkAccountConfig(config); err != nil {
 		return nil, err
 	}
+	account.initializeRuntime()
 
 	return account, nil
 }
 
+func (a *Account) initializeRuntime() {
+	if a.Config.Kind == AccountGroup {
+		newGroupScheduler(a)
+		return
+	}
+	newAccountLimiter(a)
+}
+
 func (a *Account) checkAccountConfig(config AccountConfig) error {
-	if a == nil || a.Manager == nil {
+	if a == nil || a.manager == nil {
 		return errors.New("account manager is required")
 	}
 	if config.Name == "" {
@@ -247,7 +187,7 @@ func (a *Account) checkAccountConfig(config AccountConfig) error {
 	if len(config.Members) != 0 {
 		return errors.New("only group accounts may contain members")
 	}
-	if config.Supplier == "" || a.Manager.getSupplier(config.Supplier) == nil {
+	if config.Supplier == "" || a.manager.getSupplier(config.Supplier) == nil {
 		return errors.New("unknown supplier")
 	}
 	return nil
@@ -264,8 +204,18 @@ func (a *Account) UpdateConfig(raw json.RawMessage) error {
 	a.mu.Lock()
 	a.Config = config
 	a.Dirty = true
+	if a.limiter != nil {
+		a.limiter.NotifyConfigChangedLocked()
+	}
+	if a.scheduler != nil {
+		a.scheduler.NotifyConfigChangedLocked()
+	}
 	a.mu.Unlock()
 	return nil
+}
+
+func (a *Account) close() {
+	newAccountLimiter(a).Close()
 }
 
 func (a *Account) FetchQuota(ctx context.Context) (AccountQuota, error) {
@@ -276,7 +226,7 @@ func (a *Account) FetchQuota(ctx context.Context) (AccountQuota, error) {
 		return AccountQuota{}, ErrQuotaUnsupported
 	}
 
-	supplier := a.Manager.getSupplier(config.Supplier)
+	supplier := a.manager.getSupplier(config.Supplier)
 	if supplier == nil {
 		return AccountQuota{}, errors.New("unknown supplier")
 	}
@@ -301,7 +251,7 @@ func (a *Account) ResetQuota(ctx context.Context, resetType string) error {
 		return ErrQuotaUnsupported
 	}
 
-	supplier := a.Manager.getSupplier(config.Supplier)
+	supplier := a.manager.getSupplier(config.Supplier)
 	if supplier == nil {
 		return errors.New("unknown supplier")
 	}
@@ -322,7 +272,7 @@ func (a *Account) GetModels() []string {
 }
 
 func (a *Account) getModels(visited map[*Account]struct{}) []string {
-	if a == nil || a.Manager == nil {
+	if a == nil || a.manager == nil {
 		return nil
 	}
 	if _, exists := visited[a]; exists {
@@ -338,7 +288,7 @@ func (a *Account) getModels(visited map[*Account]struct{}) []string {
 		memberModels := make([][]string, 0, len(config.Members))
 		memberMappings := make([][]ModelMapping, 0, len(config.Members))
 		for _, member := range config.Members {
-			account := a.Manager.getAccount(member.ID)
+			account := a.manager.getAccount(member.ID)
 			if account == nil {
 				return nil
 			}
@@ -350,7 +300,7 @@ func (a *Account) getModels(visited map[*Account]struct{}) []string {
 				memberMappings = append(memberMappings, nil)
 				continue
 			}
-			supplier := a.Manager.getSupplier(memberConfig.Supplier)
+			supplier := a.manager.getSupplier(memberConfig.Supplier)
 			if supplier == nil {
 				return nil
 			}
@@ -360,7 +310,7 @@ func (a *Account) getModels(visited map[*Account]struct{}) []string {
 		}
 		return intersectMappedModels(memberModels, memberMappings)
 	}
-	supplier := a.Manager.getSupplier(config.Supplier)
+	supplier := a.manager.getSupplier(config.Supplier)
 	if supplier == nil {
 		return []string{}
 	}

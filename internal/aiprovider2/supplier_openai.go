@@ -17,7 +17,7 @@ import (
 
 type SupplierOpenAI struct{ SupplierData }
 
-func newSupplierOpenAI(manager *Manager) Supplier {
+func newSupplierOpenAI(manager *providerManager) Supplier {
 	return &SupplierOpenAI{
 		manager: manager, id: "openai", name: "OpenAI",
 		builtin: SupplierBuiltinConfig{

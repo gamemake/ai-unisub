@@ -17,7 +17,7 @@ import (
 
 type SupplierXAI struct{ SupplierData }
 
-func newSupplierXAI(manager *Manager) Supplier {
+func newSupplierXAI(manager *providerManager) Supplier {
 	return &SupplierXAI{
 		manager: manager, id: "grok", name: "xAI",
 		builtin: SupplierBuiltinConfig{

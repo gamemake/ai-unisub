@@ -98,7 +98,8 @@ type PersistedConfig struct {
 // stored as generic PersistedConfig rows.
 const ModuleConfigType = "module"
 
-// PersistedProxyLog records an upstream HTTP error for a proxy.
+// PersistedProxyLog records one outbound HTTP attempt. HTTPErrorCode contains
+// the response status (zero for transport failures), despite its legacy name.
 type PersistedProxyLog struct {
 	GroupID          int       `json:"group_id"`
 	ProxyURL         string    `json:"proxy_url"`

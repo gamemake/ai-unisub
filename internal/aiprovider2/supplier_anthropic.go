@@ -17,7 +17,7 @@ import (
 
 type SupplierAnthropic struct{ SupplierData }
 
-func newSupplierAnthropic(manager *Manager) Supplier {
+func newSupplierAnthropic(manager *providerManager) Supplier {
 	return &SupplierAnthropic{
 		manager: manager, id: "anthropic", name: "Anthropic",
 		builtin: SupplierBuiltinConfig{

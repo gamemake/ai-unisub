@@ -60,7 +60,7 @@ func TestSupplierMappingsCanBeOverlaidAndMustTargetModel(t *testing.T) {
 }
 
 func TestAccountGroupGetModelsIntersectsAfterMapping(t *testing.T) {
-	manager := &Manager{
+	manager := &providerManager{
 		accounts:     make(map[int]*Account),
 		suppliersMap: make(map[string]Supplier),
 	}
@@ -78,10 +78,10 @@ func TestAccountGroupGetModelsIntersectsAfterMapping(t *testing.T) {
 	}
 	manager.suppliersMap[left.GetID()] = left
 	manager.suppliersMap[right.GetID()] = right
-	manager.accounts[1] = &Account{Manager: manager, ID: 1, Config: AccountConfig{Kind: AccountAPI, Supplier: left.GetID()}}
-	manager.accounts[2] = &Account{Manager: manager, ID: 2, Config: AccountConfig{Kind: AccountAPI, Supplier: right.GetID()}}
+	manager.accounts[1] = &Account{manager: manager, ID: 1, Config: AccountConfig{Kind: AccountAPI, Supplier: left.GetID()}}
+	manager.accounts[2] = &Account{manager: manager, ID: 2, Config: AccountConfig{Kind: AccountAPI, Supplier: right.GetID()}}
 	group := &Account{
-		Manager: manager,
+		manager: manager,
 		ID:      3,
 		Config: AccountConfig{
 			Kind:    AccountGroup,

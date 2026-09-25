@@ -17,7 +17,7 @@ import (
 
 type SupplierZAI struct{ SupplierData }
 
-func newSupplierZAI(manager *Manager) Supplier {
+func newSupplierZAI(manager *providerManager) Supplier {
 	return &SupplierZAI{
 		manager: manager, id: "zhipu", name: "zAI",
 		builtin: SupplierBuiltinConfig{

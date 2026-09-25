@@ -11,7 +11,7 @@ import (
 
 var ErrAccountNotFound = errors.New("account not found")
 
-func (m *Manager) ListAccounts() []*Account {
+func (m *providerManager) ListAccounts() []*Account {
 	if m == nil {
 		return nil
 	}
@@ -29,7 +29,7 @@ func (m *Manager) ListAccounts() []*Account {
 	return accounts
 }
 
-func (m *Manager) NewAccount(value json.RawMessage) (*Account, error) {
+func (m *providerManager) NewAccount(value json.RawMessage) (*Account, error) {
 	if m == nil {
 		return nil, errors.New("manager is nil")
 	}
@@ -53,24 +53,26 @@ func (m *Manager) NewAccount(value json.RawMessage) (*Account, error) {
 	return account, nil
 }
 
-func (m *Manager) DelAccount(id int) error {
+func (m *providerManager) DelAccount(id int) error {
 	if m == nil {
 		return errors.New("manager is nil")
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.accounts[id]; !exists {
+	account, exists := m.accounts[id]
+	if !exists {
 		return fmt.Errorf("%w: %d", ErrAccountNotFound, id)
 	}
 	if err := m.db.DeleteAccount(id); err != nil {
 		return fmt.Errorf("delete account %d: %w", id, err)
 	}
+	account.close()
 	delete(m.accounts, id)
 	return nil
 }
 
-func (m *Manager) SetAccountConfig(ctx context.Context, id int, value json.RawMessage) error {
+func (m *providerManager) SetAccountConfig(ctx context.Context, id int, value json.RawMessage) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -90,7 +92,7 @@ func (m *Manager) SetAccountConfig(ctx context.Context, id int, value json.RawMe
 	return nil
 }
 
-func (m *Manager) FetchQuota(ctx context.Context, id int) (AccountQuota, error) {
+func (m *providerManager) FetchQuota(ctx context.Context, id int) (AccountQuota, error) {
 	if err := ctx.Err(); err != nil {
 		return AccountQuota{}, err
 	}
@@ -108,7 +110,7 @@ func (m *Manager) FetchQuota(ctx context.Context, id int) (AccountQuota, error) 
 	return quota, nil
 }
 
-func (m *Manager) ResetQuota(ctx context.Context, id int, resetType string) error {
+func (m *providerManager) ResetQuota(ctx context.Context, id int, resetType string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -125,7 +127,7 @@ func (m *Manager) ResetQuota(ctx context.Context, id int, resetType string) erro
 	return nil
 }
 
-func (m *Manager) GetModels(ctx context.Context, id int, _ string) ([]string, error) {
+func (m *providerManager) GetModels(ctx context.Context, id int, _ string) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -136,7 +138,7 @@ func (m *Manager) GetModels(ctx context.Context, id int, _ string) ([]string, er
 	return account.GetModels(), nil
 }
 
-func (m *Manager) account(id int) (*Account, error) {
+func (m *providerManager) account(id int) (*Account, error) {
 	if m == nil {
 		return nil, errors.New("manager is nil")
 	}
