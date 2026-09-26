@@ -1,7 +1,7 @@
 import { DetailTableRow } from '@/components/detail-table-row'
 import { AppSelect } from '@/components/app-select'
 import { useEffect, useMemo, useState } from 'react'
-import { actions, useAction, useAICatalog, useAIProviders } from '@/data/store'
+import { actions, useAccounts, useAction, useSuppliers } from '@/data/store'
 import type { Account, ClientType, ModelMapping, Supplier } from '@/data/types'
 import { ErrorMessage, PageHeader, QueryState, Table } from '@/components/shared'
 import { TableCell } from '@/components/ui/table'
@@ -19,11 +19,11 @@ function accountSupplier(account: Account) {
   return account.config.supplier || ''
 }
 
-function providerKind(account: Account) {
-  return account.config.kind || (account.provider === 'group' ? 'group' : account.auth_type === 'api_key' ? 'api' : 'subscription')
+function accountKind(account: Account) {
+  return account.config.kind || 'subscription'
 }
 
-function supplierFromHash() { return location.hash.startsWith('#ai-catalog/') ? location.hash.slice('#ai-catalog/'.length) : '' }
+function supplierFromHash() { return location.hash.startsWith('#suppliers/') ? location.hash.slice('#suppliers/'.length) : '' }
 
 function sameModels(a: string[] = [], b: string[] = []) {
   return a.length === b.length && a.every((value, i) => value === b[i])
@@ -47,16 +47,16 @@ function clientLabel(clients: ClientType[] = []) {
   return clients.length ? clients.map(clientTypeLabel).join(' · ') : '—'
 }
 
-export function AICatalogPage() {
-  const query = useAICatalog()
+export function SuppliersPage() {
+  const query = useSuppliers()
   const [supplierID, setSupplierID] = useState(supplierFromHash)
   useEffect(() => { const update = () => { setSupplierID(supplierFromHash()); window.scrollTo(0, 0) }; addEventListener('hashchange', update); return () => removeEventListener('hashchange', update) }, [])
-  const supplier = query.data?.catalog.suppliers.find(s => s.id === supplierID)
+  const supplier = query.data?.suppliers.find(s => s.id === supplierID)
   const builtin = query.data?.builtin_suppliers.find(s => s.id === supplierID)
   return <div><PageHeader title="模型供应商" description="查看内置服务地址，编辑支持模型、模型映射与订阅套餐用量权重；URL 与支持客户端由代码固定。" />
     <QueryState query={query}>{query.data && <>
-      <Card><Table className="table-fixed" headers={['供应商', '支持客户端', '默认 URL', '模型']}>{query.data.catalog.suppliers.map(s =>
-        <DetailTableRow key={s.id} aria-label={`查看 ${s.name} 详情`} onOpen={() => { location.hash = `ai-catalog/${s.id}` }}>
+      <Card><Table className="table-fixed" headers={['供应商', '支持客户端', '默认 URL', '模型']}>{query.data.suppliers.map(s =>
+        <DetailTableRow key={s.id} aria-label={`查看 ${s.name} 详情`} onOpen={() => { location.hash = `suppliers/${s.id}` }}>
           <TableCell className="w-[16%] font-medium text-primary">{s.name}</TableCell>
           <TableCell className="w-[18%] whitespace-normal text-sm">{clientLabel(s.supported_clients)}</TableCell>
           <TableCell className="w-[40%] max-w-0 whitespace-normal break-all font-mono text-xs">
@@ -70,14 +70,14 @@ export function AICatalogPage() {
           </TableCell>
         </DetailTableRow>
       )}</Table></Card>
-      <Dialog open={!!supplierID} onOpenChange={open => { if (!open) location.hash = 'ai-catalog' }}>
+      <Dialog open={!!supplierID} onOpenChange={open => { if (!open) location.hash = 'suppliers' }}>
         <DialogContent className="flex h-[min(40rem,calc(100dvh-2rem))] min-w-0 flex-col gap-4 overflow-hidden p-6 sm:max-w-2xl">
           <DialogHeader className="shrink-0 pr-8">
             <DialogTitle className="text-lg font-semibold leading-snug">{supplier ? `模型供应商 ${supplier.name}` : '模型供应商'}</DialogTitle>
             <DialogDescription className="sr-only">编辑支持模型、模型映射与订阅套餐用量权重；服务地址只读。</DialogDescription>
           </DialogHeader>
           {supplier && builtin ? (
-            <SupplierEditor key={supplier.id} supplier={supplier} builtin={builtin} onClose={() => { location.hash = 'ai-catalog' }} />
+            <SupplierEditor key={supplier.id} supplier={supplier} builtin={builtin} onClose={() => { location.hash = 'suppliers' }} />
           ) : <p role="alert" className="min-h-0 flex-1">未找到该供应商，请关闭窗口后重新选择。</p>}
         </DialogContent>
       </Dialog>
@@ -122,7 +122,7 @@ function validateSupplierForm(models: string[], mappings: ModelMapping[], planID
 }
 
 function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; builtin: Supplier; onClose: () => void }) {
-  const providers = useAIProviders()
+  const providers = useAccounts()
   const planOptions = useMemo(() => subscriptionPlansForSupplier(supplier.id), [supplier.id])
   const hasPlans = planOptions.length > 0
   const [tab, setTab] = useState<EditorTab>('models')
@@ -137,7 +137,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
   })
   const [refreshProviderID, setRefreshProviderID] = useState('')
   const [formError, setFormError] = useState('')
-  const save = useAction(actions.saveSupplier, ['ai-catalog'])
+  const save = useAction(actions.saveSupplier, ['suppliers'])
   const fetchModels = useAction(actions.fetchModels)
   const models = useMemo(() => parseModels(modelsText), [modelsText])
   const normalizedMappings = useMemo(() => normalizeMappings(mappings), [mappings])
@@ -145,7 +145,7 @@ function SupplierEditor({ supplier, builtin, onClose }: { supplier: Supplier; bu
   const mappingsDirty = !sameMappings(normalizedMappings, builtin.model_mappings || [])
   const weightsDirty = hasPlans && !samePlanWeights(weights, builtin.subscription_plan_weights || {})
   const matchingProviders = useMemo(
-    () => (providers.data?.items || []).filter(account => providerKind(account) !== 'group' && accountSupplier(account) === supplier.id),
+    () => (providers.data?.items || []).filter(account => accountKind(account) !== 'group' && accountSupplier(account) === supplier.id),
     [providers.data?.items, supplier.id],
   )
 

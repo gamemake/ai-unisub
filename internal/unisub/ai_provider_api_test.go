@@ -56,8 +56,8 @@ func TestSubscriptionAccountCreateListAndEdit(t *testing.T) {
 	}
 	cookies = login.Result().Cookies()
 
-	created := call(http.MethodPost, "/api/ai-providers", map[string]any{
-		"name": "codex-main", "provider": "openai",
+	created := call(http.MethodPost, "/api/accounts", map[string]any{
+		"name": "codex-main",
 		"config": map[string]any{
 			"kind": "subscription", "supplier": "openai", "subscription_plan": "codex_plus", "enabled": true,
 			"credential": map[string]string{"access_token": "access-secret", "refresh_token": "refresh-secret"},
@@ -67,24 +67,29 @@ func TestSubscriptionAccountCreateListAndEdit(t *testing.T) {
 		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
 	}
 	var item struct {
-		ID       int                      `json:"id"`
-		Provider string                   `json:"provider"`
-		AuthType string                   `json:"auth_type"`
-		Config   aiprovider.AccountConfig `json:"config"`
+		ID     int                      `json:"id"`
+		Config aiprovider.AccountConfig `json:"config"`
 	}
 	if err := json.Unmarshal(created.Body.Bytes(), &item); err != nil {
 		t.Fatal(err)
 	}
-	if item.Provider != "openai" || item.AuthType != "oauth" || item.Config.Supplier != "openai" {
+	if item.Config.Kind != aiprovider.AccountSubscription || item.Config.Supplier != "openai" {
 		t.Fatalf("created account = %+v", item)
 	}
 	if item.Config.Credential.AccessToken != "" || item.Config.Credential.RefreshToken != "" {
 		t.Fatalf("response leaked credential: %+v", item.Config.Credential)
 	}
+	legacyProvider := call(http.MethodPost, "/api/accounts", map[string]any{
+		"name": "legacy", "provider": "openai",
+		"config": map[string]any{"kind": "subscription", "supplier": "openai"},
+	})
+	if legacyProvider.Code != http.StatusBadRequest {
+		t.Fatalf("legacy provider status = %d, want 400; body = %s", legacyProvider.Code, legacyProvider.Body.String())
+	}
 
 	// Edits without a new credential keep the stored one.
-	updated := call(http.MethodPut, "/api/ai-providers/"+strconv.Itoa(item.ID), map[string]any{
-		"name": "codex-renamed", "provider": "openai",
+	updated := call(http.MethodPut, "/api/accounts/"+strconv.Itoa(item.ID), map[string]any{
+		"name":   "codex-renamed",
 		"config": map[string]any{"kind": "subscription", "supplier": "openai", "subscription_plan": "codex_pro_5x", "enabled": true},
 	})
 	if updated.Code != http.StatusOK {
@@ -98,7 +103,7 @@ func TestSubscriptionAccountCreateListAndEdit(t *testing.T) {
 		t.Fatalf("stored credential lost: %+v", account.Config.Credential)
 	}
 
-	changedKind := call(http.MethodPut, "/api/ai-providers/"+strconv.Itoa(item.ID), map[string]any{
+	changedKind := call(http.MethodPut, "/api/accounts/"+strconv.Itoa(item.ID), map[string]any{
 		"config": map[string]any{"kind": "api", "supplier": "openai", "api_key": "sk-test"},
 	})
 	if changedKind.Code != http.StatusBadRequest {

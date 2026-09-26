@@ -174,13 +174,13 @@ test('admin and member workflows, gateway, logs, and responsive navigation', asy
   await expect(member.getByRole('button', { name: '用户管理', exact: true })).toHaveCount(0)
   expect((await member.request.get('/api/users')).status()).toBe(403)
   await expect(member.getByRole('navigation', { name: '主导航' }).getByRole('button')).toHaveText(['个人总览', 'API Key', '调用记录', '安全设置'])
-  for (const path of ['/api/ai-providers', '/api/providers', '/api/ai-catalog', '/api/ai-catalog/kimi', '/api/proxy-groups', '/api/usage/users', '/api/oauth/results/missing']) {
+  for (const path of ['/api/accounts', '/api/suppliers', '/api/suppliers/kimi', '/api/proxy-groups', '/api/usage/users', '/api/oauth/results/missing']) {
     expect((await member.request.get(path)).status()).toBe(403)
   }
-  const memberAccounts = await (await member.request.get('/api/keys/providers')).json()
+  const memberAccounts = await (await member.request.get('/api/keys/accounts')).json()
   expect(memberAccounts.items.length).toBeGreaterThan(0)
   expect(memberAccounts.items.every((a: Record<string, unknown>) => Object.keys(a).sort().join(',') === 'client_types,enabled,id,name,provider')).toBe(true)
-  for (const hash of ['overview', 'ai-providers', 'ai-catalog/kimi', 'users', 'proxies']) {
+  for (const hash of ['overview', 'accounts', 'suppliers/kimi', 'users', 'proxies']) {
     await member.goto('/#' + hash)
     await expect(member.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
   }

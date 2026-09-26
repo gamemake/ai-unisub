@@ -88,7 +88,7 @@ src/components/ui/ shadcn/ui 源码组件
 public/          公共静态资源
 ```
 
-AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页面为 `src/pages/ai-providers.tsx`，接口为 `/api/ai-providers`。旧 API、JSON 字段和数据库列保留兼容，具体见 [AI Provider 设计](docs/ai-provider.md)。
+AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 运行时类型；管理端对外区分账号资源 `/api/accounts` 与供应商资源 `/api/suppliers`，具体见 [AI Provider 设计](docs/ai-provider.md)。
 
 代理能力位于独立的 `internal/proxy` 包，统一包含代理对象构造与内部 URL 校验、HTTP 传输配置和代理管理；`oauth` 显式依赖代理包，通过参数接收代理对象，不用 Context 隐式传递代理，`common` 不保留代理文件或工具。Service 注入代理管理能力，UniSub API 提供管理入口，AIProvider 通过窄接口调用。代理组配置沿用原存储表示，新增 `proxy_stats` 保存幂等的 10 分钟聚合；策略与接口见 [Proxy 设计](docs/proxy.md)。
 
@@ -101,12 +101,15 @@ AI 上游模块统一使用 `aiprovider` 包与 `AIProvider*` 类型；管理页
 ## 验证
 
 ```sh
+npm run generate:api
 npm run build
 npm test
 go test ./...
 go vet ./...
 npm run test:e2e
 ```
+
+`npm run generate:api` 从 Go 中的管理 API operation 和 wire struct 生成 `api/openapi.json` 与前端 `src/data/openapi.gen.ts`。管理员登录后也可以从 Dashboard 的“API 文档”打开 `/api/docs`。
 
 端到端测试自动使用独立的 SQLite 内存数据库（`sqlite::memory:`）和 `127.0.0.1:28080`，不会读取 `data/` 中的账号或凭据。这里是 SQLite 的存储模式，不是数据库模块中实现 `Database` 并包装 SQL 存储的 `MemoryDatabase`。默认在 Windows 上使用已安装的 Edge；其他系统默认使用 Playwright Chromium（首次需 `npx playwright install chromium`）。可通过 `PLAYWRIGHT_CHANNEL` 指定 `chrome`、`msedge` 等通道。
 

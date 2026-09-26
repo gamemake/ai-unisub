@@ -62,7 +62,7 @@
 - **查询函数（已实现）**：`UsageWeight(supplierID, plan)`（builtin）与 `AIProviderManager.UsageWeight` / `UsageWeightFromConfig`（合并 catalog）只读供应商表 + 账号 `subscription_plan`；不读 quota、不读上游。空 plan 用该适配器缺省 plan；API／组固定订阅套餐用量权重 **1**。Dummy 订阅读 **anthropic** 供应商用量权重。
 - **调度**：当前 `Select` 同一组成员优先级权重档内仍均匀随机；接入订阅套餐用量权重为后续，不改变 `members[].weight` 档位语义。
 
-模型供应商页面（`/#ai-catalog`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑模型列表、模型映射与**订阅套餐用量权重**（openai／anthropic／grok；支持「恢复默认」；模型列表可从同供应商账号刷新），URL 与客户端只读。
+模型供应商页面（`/#suppliers`）展示供应商、支持客户端、默认 URL 与模型摘要；详情可编辑模型列表、模型映射与**订阅套餐用量权重**（openai／anthropic／grok；支持「恢复默认」；模型列表可从同供应商账号刷新），URL 与客户端只读。
 
 套餐目录、账号套餐字段与用量权重的详细约定见 [AIProvider 订阅套餐与用量权重](ai-provider-subscription.md)。
 
@@ -96,7 +96,7 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
 ## 当前实现与边界
 
 - 已实现订阅、API、组三种类型；沿用 `provider` 字段指定适配器，新增 `api` 和 `group` 值，旧 `claude/codex/grok/dummy` 保持兼容。组只引用已有非组成员，修改任一关联配置都校验客户端允许集合，仍被组引用的成员不能删除。
-- 供应商目录通过 `/api/ai-catalog` 管理，内置六个供应商不允许删除；可配置字段（name/models/model_mappings）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型列表可在供应商编辑页手工维护，也可选定同供应商的 AIProvider 后调用 `POST /api/ai-providers/{id}/fetch-models` 从上游刷新（写入仍走供应商 PUT）。OpenAI 订阅账号的刷新读取 Codex 公开 `models.json`（`models[].slug`），并使用该账号的 `proxy_group_id`；其它账号仍走上游 `GET {base}/models`。模型映射按供应商规则改写顶层 `model` 与 Grok 覆盖头；未命中则原样转发。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
+- 供应商通过 `/api/suppliers` 管理，内置六个供应商不允许删除；可配置字段（name/models/model_mappings）按 supplier 写入 `PersistedConfig`，URL 与 `supported_clients` 由代码固定。模型列表可在供应商编辑页手工维护，也可选定同供应商账号后调用 `POST /api/accounts/{id}/fetch-models` 从上游刷新（写入仍走供应商 PUT）。OpenAI 订阅账号的刷新读取 Codex 公开 `models.json`（`models[].slug`），并使用该账号的 `proxy_group_id`；其它账号仍走上游 `GET {base}/models`。模型映射按供应商规则改写顶层 `model` 与 Grok 覆盖头；未命中则原样转发。组按成员的请求协议过滤候选；直接绑定账号保持原有透明转发路径。API Key 的 `client_types` 仅按供应商协议能力（group 为成员交集），供 CC Switch；网关访问仍受 Provider `client_type` 策略约束。
 - 组内调度的当前实现与边界（包括 SessionID 粘性、成员健康状态、重试限制和响应安全）见 [AIProvider 组内调度](ai-provider-group-routing.md#当前实现与边界)。
 
 ## 类型与命名
@@ -110,9 +110,9 @@ API 若未指定模型供应商，必须显式填写 URL；若 URL 与可用的�
 | Account | 每账号唯一的运行时并发计数与 FIFO 队列 |
 | AIProviderCallTrace、APICallRecorder | 调用结果及回调，不携带数据库实体 |
 
-具体实现包括 Codex、Claude、Grok、APIProvider、组和 Dummy。前端页面是 `src/pages/ai-providers.tsx`，供应商只读详情页面为 `src/pages/ai-catalog.tsx`；管理接口与缓存键分别为 /api/ai-providers、ai-providers。
+具体实现包括 Codex、Claude、Grok、APIProvider、组和 Dummy。管理端账号与供应商接口分别为 `/api/accounts`、`/api/suppliers`，前端查询键分别为 `accounts`、`suppliers`。
 
-兼容协议包括 /api/providers、旧 #providers/#accounts 页面入口、JSON 字段 provider/provider_type 和已有 SQLite 列名；这些不是 Go 类型名。OAuth CLI 的 provider 标识也保持其协议含义。
+JSON 字段 `provider`／`provider_type`、已有 SQLite 列名和 OAuth CLI 的 provider 标识保持其原有协议含义；它们不是管理资源名。
 
 ## 用量与余额查询接口
 

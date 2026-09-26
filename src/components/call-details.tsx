@@ -61,7 +61,7 @@ export function headerEntries(headers?: CallHeaders | null): [string, string][] 
     .sort(([a], [b]) => a.localeCompare(b, undefined, { sensitivity: 'base' }))
 }
 
-function formatHeaderValue(value: string[] | string | undefined): string {
+function formatHeaderValue(value: string[] | string | null | undefined): string {
   if (value == null) return ''
   if (Array.isArray(value)) return value.filter(Boolean).join(', ')
   return String(value)

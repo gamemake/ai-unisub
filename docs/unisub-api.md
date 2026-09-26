@@ -15,12 +15,28 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 | 响应 | 格式 |
 | --- | --- |
 | 用户、AIProvider、Key、调用记录列表 | `{"items":[],"total":0}` |
-| 代理组列表 | 直接返回数组；空结果可能为 `null`，前端按空列表处理 |
+| 代理组列表 | 直接返回数组；空结果为 `[]` |
 | 用量统计 | `{"data":[],"totals":{},"has_records":false}` |
 | 通常的业务错误 | `{"error":"英文错误消息"}` |
 | 删除成功 | `204`，无响应体 |
 
 成功读取通常为 `200`，创建为 `201`；参数错误 `400`，未登录 `401`，无权限通常为 `403`，未找到 `404`，内部错误 `500`。部分未知路径或方法使用标准 `http.NotFound`，不是统一 JSON。非管理员访问管理接口统一返回 `403`。
+
+## OpenAPI 契约
+
+管理 API 使用 Huma 和标准库 `http.ServeMux` 提供 code-first OpenAPI。`internal/unisub/management_openapi.go` 中的 operation、wire struct 和字段标签是契约源；`api/openapi.json` 与 `src/data/openapi.gen.ts` 均为生成结果，不手工维护。现有 Service Router 继续负责 Session 认证、请求日志和模块生命周期，没有引入 Gin。
+
+| 方法 | 路径 | 权限 | 内容 |
+| --- | --- | --- | --- |
+| GET | `/api/openapi.json` | 管理员 Session | OpenAPI 3.1 JSON |
+| GET | `/api/openapi.yaml` | 管理员 Session | OpenAPI 3.1 YAML |
+| GET | `/api/openapi-3.0.json` | 管理员 Session | 降级后的 OpenAPI 3.0 JSON |
+| GET | `/api/openapi-3.0.yaml` | 管理员 Session | 降级后的 OpenAPI 3.0 YAML |
+| GET | `/api/docs` | 管理员 Session | Scalar API 文档 |
+
+Dashboard 管理导航中的“API 文档”在新窗口打开 `/api/docs`。前端通过 `openapi-typescript` 从同一文档生成 DTO，`src/data/types.ts` 只保留 UI 所需的非空数组归一化、兼容字段和显示枚举。运行 `npm run generate:api` 可同时刷新 OpenAPI JSON 和 TypeScript 类型。
+
+Huma 当前登记 method-aware operation 并生成契约，执行阶段继续调用原有 Handler，以保持既有错误格式、状态码和业务校验。旧前缀分派器作为未登记路径及不支持方法的兼容回退；接口可在后续独立迁移为 Huma typed handler，不要求一次性改写领域逻辑。
 
 ## 登录与登出
 
@@ -45,7 +61,7 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 非管理员仅可见个人总览、API Key、调用记录、安全设置。直接访问管理页面地址不会渲染管理界面；后端独立拦截管理 API，包括兼容别名及 OAuth API。个人接口仅允许 `me`、`password`、`keys`、`calls`；Key 和调用记录仍按当前用户校验归属。登录、登出不受此限制。
 
-`GET /api/keys/providers` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,provider,enabled,client_types}],total}`，不包含配置、URL、组成员或凭据；`client_types` 为绑定供应商协议能力（有 Claude URL → `claude`；有 OpenAI URL → `codex` 与 `grok`；group 为成员能力交集），不与策略 `client_type` 求交；其他方法返回 405。
+`GET /api/keys/accounts` 为个人页面提供绑定及显示选项，仅返回 `{items:[{id,name,kind,supplier,enabled,client_types}],total}`，不包含配置、URL、组成员或凭据；`client_types` 为绑定供应商协议能力（有 Claude URL → `claude`；有 OpenAI URL → `codex` 与 `grok`；group 为成员能力交集），不与策略 `client_type` 求交；其他方法返回 405。
 
 ## 当前用户与密码
 
@@ -68,36 +84,34 @@ AuthService、Session、API Key 校验和密码处理的实现见 [Service](serv
 
 创建时 `role` 必须为 `admin` 或 `user`，用户名非空且不能重复，密码长度至少 8。编辑时空 role 表示不更改。管理员不能删除自己、停用自己、将自己降为普通用户，或通过管理员重置接口重置自己的密码；本人修改密码使用 `/api/password`。
 
-## AIProvider Account
-
-`/api/providers` 是 `/api/ai-providers` 的兼容别名，子路径使用同一处理器。
+## Account
 
 | 方法 | 路径 | Body | 权限 |
 | --- | --- | --- | --- |
-| GET | `/api/ai-providers` | 无 | 管理员 |
-| POST | `/api/ai-providers` | `name/provider/config` | 管理员 |
-| PUT | `/api/ai-providers/{id}` | `name/provider/config` | 管理员 |
-| DELETE | `/api/ai-providers/{id}` | 无 | 管理员 |
-| POST | `/api/ai-providers/{id}/refresh-quota` | 无；主动查询并更新缓存 | 管理员 |
-| POST | `/api/ai-providers/{id}/fetch-models` | 无；向上游查询模型列表 | 管理员 |
+| GET | `/api/accounts` | 无 | 管理员 |
+| POST | `/api/accounts` | `name/config` | 管理员 |
+| PUT | `/api/accounts/{id}` | `name/config` | 管理员 |
+| DELETE | `/api/accounts/{id}` | 无 | 管理员 |
+| POST | `/api/accounts/{id}/refresh-quota` | 无；主动查询并更新缓存 | 管理员 |
+| POST | `/api/accounts/{id}/fetch-models` | 无；向上游查询模型列表 | 管理员 |
 
-`GET /api/ai-providers` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。启动时从 `accounts.state` 恢复上次成功快照。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/ai-providers/{id}/refresh-quota`，查询成功后由 `aiprovider` 提交含额度的 state，应用层用 `SaveAccount` 写入 `accounts.state`，再返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。每次实际上游 HTTP 交换（含 Grok 的周／月两次 billing）写入一条调用记录，归属该账号；原始与出站 request headers 均保存脱敏后的出站请求头。
+`GET /api/accounts` 的管理员列表中，非组项包含 `quota` 缓存快照，结构为 `subscription`（订阅）或 `items`（API 余额）、必填 `cache_status` 和可选的 `updated_at`；Group 项省略 `quota` 字段。无缓存时返回 `{"cache_status":"missing"}`。列表仅读取内存缓存，不请求上游、不刷新令牌。启动时从 `accounts.state` 恢复上次成功快照。不再提供单独读取缓存的接口；主动刷新使用 `POST /api/accounts/{id}/refresh-quota`，查询成功后由 `aiprovider` 提交含额度的 state，应用层用 `SaveAccount` 写入 `accounts.state`，再返回查询结果。刷新 Group 返回 501，不查询任何成员；刷新接口不支持 GET（返回 405）。每次实际上游 HTTP 交换（含 Grok 的周／月两次 billing）写入一条调用记录，归属该账号；原始与出站 request headers 均保存脱敏后的出站请求头。
 
-`POST /api/ai-providers/{id}/fetch-models` 查询模型 id 列表，成功返回 `{"models":["..."]}`（去重、排序）。结果不缓存、不写入供应商目录；调用方（如模型供应商编辑页）自行决定是否保存。一般账号按凭据向上游 `GET {base}/models` 查询：`base` 优先 `api_endpoint`，否则取供应商目录 OpenAI URL（无则 Claude URL），再否则内置缺省。**OpenAI（Codex）OAuth 订阅**不调用 `api.openai.com/v1/models`（该令牌无效），改为从公开的 Codex 目录 `https://github.com/openai/codex/raw/refs/heads/main/codex-rs/models-manager/models.json` 读取 `models[].slug`；请求**走该 AIProvider 的 `proxy_group_id`**（与其它上游查询相同），无需 OAuth 令牌。Group 以及上游明确不支持列表的组合返回 501；缺少凭据或 URL（或已配置代理组但代理不可用）返回 400／上游错误；鉴权失败 502 族错误（401/403 映射为网关错误文案）；接口不支持 GET（405）。每次实际上游 HTTP 交换同样写入调用记录，header 规则与 refresh-quota 相同。
+`POST /api/accounts/{id}/fetch-models` 查询模型 id 列表，成功返回 `{"models":["..."]}`（去重、排序）。结果不缓存、不写入供应商目录；调用方（如模型供应商编辑页）自行决定是否保存。一般账号按凭据向上游 `GET {base}/models` 查询：`base` 优先 `api_endpoint`，否则取供应商目录 OpenAI URL（无则 Claude URL），再否则内置缺省。**OpenAI（Codex）OAuth 订阅**不调用 `api.openai.com/v1/models`（该令牌无效），改为从公开的 Codex 目录 `https://github.com/openai/codex/raw/refs/heads/main/codex-rs/models-manager/models.json` 读取 `models[].slug`；请求**走该 Account 的 `proxy_group_id`**（与其它上游查询相同），无需 OAuth 令牌。Group 以及上游明确不支持列表的组合返回 501；缺少凭据或 URL（或已配置代理组但代理不可用）返回 400／上游错误；鉴权失败 502 族错误（401/403 映射为网关错误文案）；接口不支持 GET（405）。每次实际上游 HTTP 交换同样写入调用记录，header 规则与 refresh-quota 相同。
 
-创建必须提供 provider 和有效 config；当前类型为 `codex`、`claude`、`grok`、`dummy`。更新不能改变 provider 类型。config 可以是 JSON 对象，兼容编码为字符串的 JSON 对象。
+创建必须提供名称和有效的 `config` JSON 对象；账号类型由 `config.kind`（`subscription`、`api`、`group`）表达，模型供应商由非组账号的 `config.supplier` 表达。更新不能改变账号类型。请求体及 config 中的未知字段会返回 400，不接收旧 `provider` 字段或字符串编码的 config。
 
 配置中的内联 `credential` 保存到凭据存储后，账号配置只保存 `credential_id`；提供已有 ID 时验证凭据存在。API Key 认证账号在编辑时省略 `api_key` 可保留原密钥。配置字段与运行时语义见 [AIProvider](ai-provider.md)。
 
-`provider` 新增 `api` 与 `group`。API 支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商目录的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（`claude`、`codex`、`grok`），省略表示不限客户端；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须与所有成员的有效客户端类型完全相同，不限客户端的组只能包含不限客户端的成员；修改成员客户端限制也会校验其所属组。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。AIProvider 仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
+API 账号支持可选 `supplier`，未填 `api_endpoint` 时按请求协议使用供应商的内置 URL；组通过 `config.members: [{id, weight}]` 引用已有非组账号，权重缺省 3，取整数 1～5。组和成员使用单值 `client_type`（`claude`、`codex`、`grok`），省略表示不限客户端；数组不合法，旧 `client_types` 字段忽略且保存时移除。组必须与所有成员的有效客户端类型完全相同，不限客户端的组只能包含不限客户端的成员；修改成员客户端限制也会校验其所属组。组不保存独立凭据、供应商、上游 URL 或代理组；仍被组引用的成员不能删除。账号仅接受 `proxy_group_id`，旧直接 `proxy` 字段作为未知字段忽略。保存后的配置包含归一化的类型、供应商和权重，数据库写入失败时回退运行时配置。
 
 ### 模型供应商
 
 | 方法与路径 | 权限 | 语义 |
 | --- | --- | --- |
-| GET /api/ai-catalog | 管理员 | 返回 `{catalog: {suppliers}, builtin_suppliers}`；前者为合并后的生效视图，后者为代码缺省 |
-| GET /api/ai-catalog/{id} | 管理员 | 返回指定供应商生效视图；不存在返回 404 |
-| PUT /api/ai-catalog/{id} | 管理员 | 仅更新当前供应商的可配置字段；无整表批量 PUT（`PUT /api/ai-catalog` 返回 405） |
+| GET /api/suppliers | 管理员 | 返回 `{suppliers, builtin_suppliers}`；前者为合并后的生效视图，后者为代码缺省 |
+| GET /api/suppliers/{id} | 管理员 | 返回指定供应商生效视图；不存在返回 404 |
+| PUT /api/suppliers/{id} | 管理员 | 仅更新当前供应商的可配置字段；无整表批量 PUT（`PUT /api/suppliers` 返回 405） |
 
 供应商项字段：`{id, name, claude_url, openai_url, models, model_mappings, supported_clients}`，以及可选的 usage header overrides。六大内置 id（anthropic、openai、grok、deepseek、zhipu、kimi）不能删除。
 

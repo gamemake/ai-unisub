@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "dev:hmr": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "generate:api": "go run ./cmd/openapi -out api/openapi.json && openapi-typescript api/openapi.json -o src/data/openapi.gen.ts",
+    "build": "npm run generate:api && tsc -b && vite build",
     "build:server": "npm run build && go build -o bin/ ./cmd/unisub",
     "test": "vitest run",
     "typecheck": "tsc -b",
@@ -35,6 +36,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
     "jsdom": "^26.1.0",
+    "openapi-typescript": "^7.10.1",
     "tailwindcss": "^4.2.0",
     "typescript": "~5.9.3",
     "vite": "^7.3.0",

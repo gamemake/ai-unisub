@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { PropsWithChildren } from 'react'
-import { actions, useAIProviders } from './store'
+import { actions, useAccounts } from './store'
 import { queryClient, request } from './client'
 
 afterEach(() => { cleanup(); queryClient.clear(); vi.unstubAllGlobals() })
@@ -35,11 +35,11 @@ describe('server data boundary', () => {
     vi.stubGlobal('fetch', fetch)
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } })
     const wrapper = ({ children }: PropsWithChildren) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
-    const one = renderHook(useAIProviders, { wrapper }), two = renderHook(useAIProviders, { wrapper })
+    const one = renderHook(useAccounts, { wrapper }), two = renderHook(useAccounts, { wrapper })
     await waitFor(() => expect(one.result.current.data?.items[0].name).toBe('first'))
     expect(two.result.current.data?.items[0].name).toBe('first')
     expect(fetch).toHaveBeenCalledTimes(1)
-    await act(async () => { await client.invalidateQueries({ queryKey: ['ai-providers'] }) })
+    await act(async () => { await client.invalidateQueries({ queryKey: ['accounts'] }) })
     await waitFor(() => expect(two.result.current.data?.items[0].name).toBe('updated'))
     expect(one.result.current.data?.items[0].name).toBe('updated')
     client.clear()

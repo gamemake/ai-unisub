@@ -9,7 +9,7 @@ import (
 	framework "ai-unisub/internal/service"
 )
 
-func (m *APIModule) fetchAIProviderModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+func (m *APIModule) fetchAccountModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if !isAdmin(r) {
 		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
 		return
@@ -40,7 +40,7 @@ func (m *APIModule) fetchAIProviderModels(ctx framework.ModuleContext, w http.Re
 	writeJSON(w, http.StatusOK, modelList(models))
 }
 
-func (m *APIModule) listAIProviderModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+func (m *APIModule) listAccountModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if _, ok := currentUser(r); !ok {
 		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
 		return

@@ -42,9 +42,9 @@
 | GET、POST | `/api/users` | 列出／创建用户 | 管理员 |
 | PUT、DELETE | `/api/users/{id}` | 编辑／删除用户 | 管理员 |
 | POST | `/api/users/{id}/password` | 重置密码 | 管理员，不能重置本人 |
-| GET | `/api/ai-providers` | 列出账号 | 按角色裁剪响应 |
-| POST | `/api/ai-providers` | 创建账号 | 管理员 |
-| PUT、DELETE | `/api/ai-providers/{id}` | 编辑／删除账号 | 管理员 |
+| GET | `/api/accounts` | 列出账号 | 管理员 |
+| POST | `/api/accounts` | 创建账号 | 管理员 |
+| PUT、DELETE | `/api/accounts/{id}` | 编辑／删除账号 | 管理员 |
 | GET、POST | `/api/keys` | 列出／创建 Key | 本人 |
 | GET、DELETE | `/api/keys/{id}` | 读取／删除 Key | Key 所属用户 |
 | GET | `/api/calls` | 调用摘要列表 | 普通用户仅本人；管理员可查全部 |
@@ -57,7 +57,7 @@
 | POST | `/api/proxy-groups/{id}/test` | 测试组内代理 | 管理员 |
 | GET | `/api/proxy-groups/errors` | 读取代理错误记录 | 管理员 |
 
-/api/providers 及其子路径是 /api/ai-providers 的兼容别名，不属于独立模块。
+账号与供应商分别使用 `/api/accounts` 和 `/api/suppliers`，不再以 provider 混称管理资源。
 
 ## OAuthFlow 接口索引
 

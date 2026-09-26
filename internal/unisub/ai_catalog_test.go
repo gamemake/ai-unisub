@@ -12,7 +12,7 @@ import (
 	framework "ai-unisub/internal/service"
 )
 
-func TestAICatalogMatchesFrontendShape(t *testing.T) {
+func TestSuppliersMatchFrontendShape(t *testing.T) {
 	db, err := database.NewDatabase("sqlite::memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -62,24 +62,22 @@ func TestAICatalogMatchesFrontendShape(t *testing.T) {
 		SupportedClients        []string            `json:"supported_clients"`
 		SubscriptionPlanWeights map[string]int      `json:"subscription_plan_weights"`
 	}
-	var catalog struct {
-		Catalog struct {
-			Suppliers []supplier `json:"suppliers"`
-		} `json:"catalog"`
+	var response struct {
+		Suppliers        []supplier `json:"suppliers"`
 		BuiltinSuppliers []supplier `json:"builtin_suppliers"`
 	}
-	listed := call(http.MethodGet, "/api/ai-catalog", nil)
+	listed := call(http.MethodGet, "/api/suppliers", nil)
 	if listed.Code != http.StatusOK {
 		t.Fatalf("list status = %d, body = %s", listed.Code, listed.Body.String())
 	}
-	if err := json.Unmarshal(listed.Body.Bytes(), &catalog); err != nil {
+	if err := json.Unmarshal(listed.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Catalog.Suppliers) == 0 || len(catalog.BuiltinSuppliers) != len(catalog.Catalog.Suppliers) {
+	if len(response.Suppliers) == 0 || len(response.BuiltinSuppliers) != len(response.Suppliers) {
 		t.Fatalf("catalog = %s", listed.Body.String())
 	}
 	var anthropic supplier
-	for _, item := range catalog.Catalog.Suppliers {
+	for _, item := range response.Suppliers {
 		if item.ID == "anthropic" {
 			anthropic = item
 		}
@@ -88,7 +86,7 @@ func TestAICatalogMatchesFrontendShape(t *testing.T) {
 		t.Fatalf("anthropic = %+v", anthropic)
 	}
 
-	updated := call(http.MethodPut, "/api/ai-catalog/anthropic", map[string]any{
+	updated := call(http.MethodPut, "/api/suppliers/anthropic", map[string]any{
 		"id": "anthropic", "models": anthropic.Models,
 		"model_mappings":            []map[string]string{{"from": "claude-*", "to": anthropic.Models[0]}},
 		"subscription_plan_weights": map[string]int{"claude_pro": 1, "claude_max_5x": 6, "claude_max_20x": 20},
@@ -104,8 +102,8 @@ func TestAICatalogMatchesFrontendShape(t *testing.T) {
 		t.Fatalf("updated = %s", updated.Body.String())
 	}
 
-	created := call(http.MethodPost, "/api/ai-providers", map[string]any{
-		"name": "dummy", "provider": "dummy",
+	created := call(http.MethodPost, "/api/accounts", map[string]any{
+		"name": "dummy",
 		"config": map[string]any{
 			"kind": "subscription", "supplier": "dummy", "subscription_plan": "claude_pro", "enabled": true,
 			"credential": map[string]string{"access_token": "dummy-token"},
@@ -120,7 +118,7 @@ func TestAICatalogMatchesFrontendShape(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &account); err != nil {
 		t.Fatal(err)
 	}
-	listedModels := call(http.MethodGet, "/api/ai-providers/"+strconv.Itoa(account.ID)+"/models", nil)
+	listedModels := call(http.MethodGet, "/api/accounts/"+strconv.Itoa(account.ID)+"/models", nil)
 	var models struct {
 		Models []struct {
 			ID string `json:"id"`

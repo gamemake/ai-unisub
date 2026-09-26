@@ -4,7 +4,7 @@ import { Pagination, PaginationContent, PaginationItem } from '@/components/ui/p
 import { TableCell } from '@/components/ui/table'
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react'
-import { useCalls, useProviderOptions } from '@/data/store'
+import { useAccountOptions, useCalls } from '@/data/store'
 import { Badge, Empty, ErrorMessage, PageHeader, QueryState, Table } from '@/components/shared'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -48,7 +48,7 @@ const codeOptions = [
 export function Logs({ me }: { me: User }) {
   const [page, setPage] = useState(1), [search, setSearch] = useState(''), [q, setQ] = useState(''), [selected, setSelected] = useState<Call | null>(null)
   const [account, setAccount] = useState(''), [code, setCode] = useState(''), [time, setTime] = useState<TimeFilter>({ range: '1d' })
-  const accounts = useProviderOptions()
+  const accounts = useAccountOptions()
   const query = useCalls({ page: String(page), page_size: '20', q, account_id: account, code, ...time })
   const pages = Math.max(1, Math.ceil((query.data?.total || 0) / 20))
   const adminSearch = me.role === 'admin'
@@ -59,7 +59,7 @@ export function Logs({ me }: { me: User }) {
         <Input aria-label="搜索调用记录" className="min-w-60 flex-1" value={search} onChange={event => setSearch(event.target.value)} placeholder={adminSearch ? '精确搜索 IP、模型、Session ID、Request ID 或用户名；none 表示系统网络请求' : '精确搜索 IP、模型、Session ID、Request ID'} />
         <AppSelect aria-label="账号" className="w-48" value={account} onValueChange={value => { setAccount(value); setPage(1) }}>
           <SelectItem value="">全部账号</SelectItem>
-          {accounts.data?.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name} · {item.provider}</SelectItem>)}
+          {accounts.data?.items.map(item => <SelectItem key={item.id} value={String(item.id)}>{item.name} · {item.supplier || item.kind}</SelectItem>)}
         </AppSelect>
         <AppSelect aria-label="状态" className="w-24" contentClassName="min-w-56" valueLabel={code || '全部'} value={code} onValueChange={value => { setCode(value); setPage(1) }}>
           <SelectItem value="">全部</SelectItem>

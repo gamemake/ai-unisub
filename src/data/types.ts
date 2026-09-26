@@ -1,81 +1,107 @@
-import type { Quota } from './quota'
-export type * from './quota'
+import type { components } from './openapi.gen'
 
-export interface User { id: number; name: string; role: 'admin' | 'user'; enabled?: boolean; labels?: string[]; server_version?: string; created_at?: string; updated_at?: string }
+type Schemas = components['schemas']
+type WithoutSchema<T> = Omit<T, '$schema'>
+
+// Public DTOs are aliases or small ergonomic refinements of the types generated
+// from the Go/Huma contract. Keep UI-only unions here; do not duplicate server
+// response shapes by hand.
+export type User = WithoutSchema<Schemas['UserResponse']>
 export type ClientType = 'claude' | 'codex' | 'grok'
 export type CCSwitchClient = 'claude_code' | 'claude_desktop' | 'codex' | 'grok_build'
-export interface CCSwitchModelConfig { model: string; supports_1m: boolean }
-export interface CCSwitchClientConfig { supplier_name: string; remark: string; models?: Record<string, CCSwitchModelConfig>; default_model?: string }
-export interface GroupMember { id: number; weight: number }
-// Only fixed, non-authentication header overrides; request defaults live in Go.
-// claude_url / openai_url / supported_clients are code-owned; models/name are configurable.
-export interface ModelMapping {
-  from: string
-  to: string
-}
-export interface Supplier {
-  id: string
-  name: string
-  claude_url: string
-  openai_url: string
+export type CCSwitchModelConfig = Schemas['CCSwitchModelConfig']
+export type CCSwitchClientConfig = WithoutSchema<Schemas['CCSwitchClientConfig']>
+export type GroupMember = Schemas['GroupMember']
+export type ModelMapping = Schemas['ModelMappingResponse']
+
+type GeneratedSupplier = WithoutSchema<Schemas['SupplierResponse']>
+export type Supplier = Omit<GeneratedSupplier, 'models' | 'model_mappings' | 'supported_clients'> & {
   models: string[]
-  /** Client model → upstream model; `from` allows one `*` wildcard. */
-  model_mappings?: ModelMapping[]
+  model_mappings: ModelMapping[]
   supported_clients: ClientType[]
-  /** Flat plan_id → usage weight for same-tier load balancing. */
-  subscription_plan_weights?: Record<string, number>
-  subscription_usage_header_overrides?: Record<string, string>
-  api_usage_header_overrides?: Record<string, string>
 }
-export interface AICatalog { suppliers: Supplier[] }
-export interface AICatalogResponse { catalog: AICatalog; builtin_suppliers: Supplier[] }
-/** Highest subscription tier for kind=subscription; config-only, adapter-prefixed IDs. */
+export interface SupplierListResponse { suppliers: Supplier[]; builtin_suppliers: Supplier[] }
+
+/** Highest configured subscription tier. The server accepts adapter-defined IDs. */
 export type SubscriptionPlan =
   | 'codex_plus' | 'codex_pro_5x' | 'codex_pro_20x'
   | 'claude_pro' | 'claude_max_5x' | 'claude_max_20x'
   | 'super_grok' | 'super_grok_plus' | 'super_grok_heavy'
 
-export interface AIProviderConfig {
+type GeneratedAccountConfig = WithoutSchema<Schemas['AccountConfig']>
+export type AccountConfig = Partial<GeneratedAccountConfig> & {
   kind?: 'subscription' | 'api' | 'group'
   supplier?: string
   subscription_plan?: SubscriptionPlan | string
   client_type?: ClientType
-  official_only?: boolean
   members?: GroupMember[]
-  auth_type?: string
-  api_endpoint?: string
-  api_key?: string
-  credential_id?: string
   credential?: unknown
+  // Legacy fields remain accepted by the editor so it can remove them while
+  // normalizing an older response before saving.
+  auth_type?: string
+  credential_id?: string
   oauth?: { credential_id?: string }
-  proxy_group_id?: number
-  enabled?: boolean
-  max_concurrent_connections?: number
-  queue_timeout_seconds?: number
+  client_types?: ClientType[]
+  proxy?: unknown
   [key: string]: unknown
 }
-// Wire DTO: provider/provider_type retain their serialized names for existing clients and data.
-export interface Account { id: number; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown; quota?: Quota; created_at?: string; updated_at?: string }
-export interface ProviderOption { id: number; name: string; provider: string; enabled: boolean; client_types: ClientType[] }
-export interface APIKey { id: number; name: string; account_id: number; key: string; valid_seconds: number; created_at: string; updated_at?: string; expires_at?: string; client_types?: ClientType[] }
-/** Health observed from real requests; network health is shared, application health is per caller (e.g. oauth:openai). */
-export interface ProxyHealth { healthy: boolean; last_success?: string; last_failure?: string }
-export interface ProxyState extends ProxyHealth { applications?: Record<string, ProxyHealth> }
-/** Proxies are ordered by priority; URLs are normalized by the server. */
-export interface ProxyGroupConfig { name: string; proxies: string[] }
-/** state.proxies is keyed by proxy URL; a proxy without an entry has not been used yet. */
-export interface ProxyGroup { id: number; config: ProxyGroupConfig; state: { proxies?: Record<string, ProxyState> } }
-export interface Call { id: number; session_id: string; source_ip: string; username?: string; request_id: string; account_id: number; provider_type: string; url: string; outbound_url?: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; cache_creation_tokens?: number; cache_read_tokens?: number; queue_duration_ms?: number; request_duration_ms?: number; finished_at: string }
-/** Full call trace from GET /api/calls/:day/:id. Header maps follow Go http.Header JSON (name → string[]). Bodies are base64. */
-export type CallHeaders = Record<string, string[] | string>
-export interface CallDetail extends Call {
+
+export type QuotaItem = Schemas['QuotaItem']
+export type SubscriptionQuotaItem = Schemas['SubscriptionQuotaItem']
+export type QuotaCacheStatus = 'missing' | 'fresh' | 'stale'
+export type Quota = Omit<WithoutSchema<Schemas['AccountQuota']>, 'cache_status' | 'items' | 'subscription'> & {
+  cache_status: QuotaCacheStatus
+  items?: QuotaItem[]
+  subscription?: SubscriptionQuotaItem[]
+}
+
+type GeneratedAccount = WithoutSchema<Schemas['AccountResponse']>
+export type Account = Omit<GeneratedAccount, 'config' | 'quota'> & {
+  config: AccountConfig
+  quota?: Quota
+}
+
+type GeneratedAccountOption = Schemas['AccountOption']
+export type AccountOption = Omit<GeneratedAccountOption, 'client_types'> & { client_types: ClientType[] }
+
+type GeneratedAPIKey = WithoutSchema<Schemas['APIKeyResponse']>
+export type APIKey = Omit<GeneratedAPIKey, 'client_types'> & { client_types?: ClientType[] }
+
+export type ProxyHealth = Schemas['ProxyApplicationState']
+type GeneratedProxyState = Schemas['ProxyState']
+export type ProxyState = Omit<GeneratedProxyState, 'applications'> & { applications?: Record<string, ProxyHealth> }
+type GeneratedProxyGroupConfig = WithoutSchema<Schemas['ProxyGroupConfig']>
+export type ProxyGroupConfig = Omit<GeneratedProxyGroupConfig, 'proxies'> & { proxies: string[] }
+type GeneratedProxyGroup = WithoutSchema<Schemas['ProxyGroup']>
+export type ProxyGroup = Omit<GeneratedProxyGroup, 'config' | 'state'> & {
+  config: ProxyGroupConfig
+  state: { proxies?: Record<string, ProxyState> }
+}
+
+type GeneratedCall = Schemas['PersistedCallTraceSummary']
+type OptionalCallFields = 'apikey' | 'user_id' | 'request_method' | 'cache_creation_tokens' | 'cache_read_tokens' | 'username'
+export type Call = Omit<GeneratedCall, OptionalCallFields> & Partial<Pick<GeneratedCall, OptionalCallFields>>
+export type CallHeaders = Record<string, string[] | string | null>
+type GeneratedCallDetail = WithoutSchema<Schemas['PersistedCallTrace']>
+type OptionalCallDetailFields = 'apikey' | 'user_id' | 'request_method'
+export type CallDetail = Omit<GeneratedCallDetail, 'original_request_headers' | 'outbound_request_headers' | 'request_body' | 'response_headers' | 'response_body' | OptionalCallDetailFields> & Partial<Pick<GeneratedCallDetail, OptionalCallDetailFields>> & {
   original_request_headers?: CallHeaders | null
   outbound_request_headers?: CallHeaders | null
   request_body?: string | null
   response_headers?: CallHeaders | null
   response_body?: string | null
 }
+
 export interface List<T> { items: T[]; total: number; page?: number; page_size?: number }
-export interface UsageTotals { requests?: number; input_tokens?: number; output_tokens?: number; cache_creation_tokens?: number; cache_read_tokens?: number; total_tokens?: number }
-export interface Usage { data: { subscription_id?: number; subscription_name?: string; provider?: string; user_id?: number; username?: string; role?: string; usage: UsageTotals }[]; totals: UsageTotals; has_records?: boolean }
-export interface OAuthStart { session_id: string; auth_url?: string; authorization_url?: string; verification_uri?: string; user_code?: string; interval_seconds?: number; expires_at?: string; state?: string }
+export type UsageTotals = Schemas['UsageTotals']
+type GeneratedUsage = WithoutSchema<Schemas['UsageResponse']>
+export type Usage = Omit<GeneratedUsage, 'data'> & { data: Schemas['UsageItem'][] }
+
+export type OAuthStart = WithoutSchema<Schemas['StartResult']>
+export type OAuthStatus = WithoutSchema<Schemas['OAuthStatusResponse']>
+export type OAuthResult = WithoutSchema<Schemas['OAuthResultResponse']>
+
+export type LoginRequest = WithoutSchema<Schemas['LoginRequest']>
+export type CreateUserRequest = WithoutSchema<Schemas['CreateUserRequest']>
+export type UpdateUserRequest = WithoutSchema<Schemas['UpdateUserRequest']>
+export type CreateAPIKeyRequest = WithoutSchema<Schemas['CreateAPIKeyRequest']>

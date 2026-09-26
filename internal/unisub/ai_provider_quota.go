@@ -9,7 +9,7 @@ import (
 	framework "ai-unisub/internal/service"
 )
 
-func (m *APIModule) refreshAIProviderQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+func (m *APIModule) refreshAccountQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if !isAdmin(r) {
 		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
 		return

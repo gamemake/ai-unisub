@@ -6,6 +6,7 @@ import (
 	"ai-unisub/internal/database"
 	proxy "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -30,6 +31,16 @@ func (m *APIModule) Name() string { return "api" }
 func (m *APIModule) Close() error { return nil }
 
 func (m *APIModule) Init(ctx framework.ModuleContext) error {
+	apiMux := http.NewServeMux()
+	newManagementAPI(apiMux, func(w http.ResponseWriter, r *http.Request) {
+		m.handle(ctx, w, r)
+	})
+	// Keep the legacy dispatcher as a fallback while operations move to typed
+	// Huma handlers. Registered method-aware routes win over this prefix.
+	apiMux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		m.handle(ctx, w, r)
+	})
+
 	for _, path := range []string{"/api/login", "/api/logout"} {
 		ctx.HandleFunc(path, framework.RouteOptions{Auth: framework.AuthNone, Name: "api"}, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
@@ -52,9 +63,17 @@ func (m *APIModule) Init(ctx framework.ModuleContext) error {
 	}
 
 	ctx.HandleFunc("/api/", framework.RouteOptions{Auth: framework.AuthSession, Name: "api"}, func(w http.ResponseWriter, r *http.Request) {
-		m.handle(ctx, w, r)
+		if isManagementDocumentationPath(r.URL.Path) && !isAdmin(r) {
+			common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+			return
+		}
+		apiMux.ServeHTTP(w, r)
 	})
 	return nil
+}
+
+func isManagementDocumentationPath(path string) bool {
+	return path == managementDocsPath || strings.HasPrefix(path, managementOpenAPIPath)
 }
 
 func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
@@ -87,22 +106,22 @@ func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r
 	case "users":
 		m.users(ctx, w, r, parts)
 		return
-	case "ai-providers", "providers": // Keep the old URL as a compatibility alias.
-		m.aiProviders(ctx, w, r, parts)
+	case "accounts":
+		m.accounts(ctx, w, r, parts)
 		return
-	case "ai-catalog":
-		m.aiCatalog(ctx, w, r, parts)
+	case "suppliers":
+		m.suppliers(ctx, w, r, parts)
 		return
 	case "proxy-groups":
 		m.proxyGroups(ctx, w, r, parts[1:])
 		return
 	case "keys":
-		if len(parts) == 2 && parts[1] == "providers" {
+		if len(parts) == 2 && parts[1] == "accounts" {
 			if r.Method != http.MethodGet {
 				methodNotAllowed(w)
 				return
 			}
-			m.providerOptions(ctx, w)
+			m.accountOptions(ctx, w)
 			return
 		}
 		m.keys(ctx, w, r, parts)
@@ -140,7 +159,11 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 		id, _ = strconv.Atoi(parts[0])
 	}
 	if id == 0 && r.Method == http.MethodGet {
-		writeJSON(w, http.StatusOK, ctx.Proxy().List())
+		groups := ctx.Proxy().List()
+		if groups == nil {
+			groups = []proxy.ProxyGroup{}
+		}
+		writeJSON(w, http.StatusOK, groups)
 		return
 	}
 	if id == 0 && r.Method == http.MethodPost {
@@ -546,20 +569,20 @@ func (m *APIModule) deleteUser(ctx framework.ModuleContext, w http.ResponseWrite
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
+func (m *APIModule) accounts(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) == 3 && parts[2] == "refresh-quota" {
 		id, _ := strconv.Atoi(parts[1])
-		m.refreshAIProviderQuota(ctx, w, r, id)
+		m.refreshAccountQuota(ctx, w, r, id)
 		return
 	}
 	if len(parts) == 3 && parts[2] == "fetch-models" {
 		id, _ := strconv.Atoi(parts[1])
-		m.fetchAIProviderModels(ctx, w, r, id)
+		m.fetchAccountModels(ctx, w, r, id)
 		return
 	}
 	if len(parts) == 3 && parts[2] == "models" {
 		id, _ := strconv.Atoi(parts[1])
-		m.listAIProviderModels(ctx, w, r, id)
+		m.listAccountModels(ctx, w, r, id)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -570,7 +593,7 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 		accounts := ctx.AIProviders().ListAccounts()
 		items := make([]map[string]any, 0, len(accounts))
 		for _, account := range accounts {
-			items = append(items, publicProviderAccount(account, isAdmin(r)))
+			items = append(items, publicAccount(account, isAdmin(r)))
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 		return
@@ -580,40 +603,24 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodPost {
-		m.createAIProvider(ctx, w, r)
+		m.createAccount(ctx, w, r)
 		return
 	}
 	id, _ := strconv.Atoi(parts[1])
 	if len(parts) == 2 && r.Method == http.MethodDelete {
-		m.deleteAIProvider(ctx, w, r, id)
+		m.deleteAccount(ctx, w, r, id)
 		return
 	}
 	if len(parts) == 2 && r.Method == http.MethodPut {
-		m.updateAIProvider(ctx, w, r, id)
+		m.updateAccount(ctx, w, r, id)
 		return
 	}
 	http.NotFound(w, r)
 }
 
-// accountProvider is the wire "provider": the supplier ID, or "group" for group accounts.
-func accountProvider(config aiprovider.AccountConfig) string {
-	if config.Kind == aiprovider.AccountGroup {
-		return string(aiprovider.AccountGroup)
-	}
-	return config.Supplier
-}
-
-func accountAuthType(config aiprovider.AccountConfig) string {
-	if config.Kind == aiprovider.AccountAPI {
-		return "api_key"
-	}
-	return "oauth"
-}
-
-func publicProviderAccount(account *aiprovider.Account, admin bool) map[string]any {
+func publicAccount(account *aiprovider.Account, admin bool) map[string]any {
 	item := map[string]any{
-		"id": account.ID, "name": account.Config.Name, "provider": accountProvider(account.Config),
-		"auth_type": accountAuthType(account.Config), "enabled": account.Config.Enabled,
+		"id": account.ID, "name": account.Config.Name, "enabled": account.Config.Enabled,
 	}
 	if admin {
 		// Secrets never leave the server; updates treat an empty secret as "keep the stored one".
@@ -634,11 +641,10 @@ func publicProviderAccount(account *aiprovider.Account, admin bool) map[string]a
 	return item
 }
 
-func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
+func (m *APIModule) createAccount(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Name       string          `json:"name"`
-		AIProvider string          `json:"provider"`
-		Config     json.RawMessage `json:"config"`
+		Name   string          `json:"name"`
+		Config json.RawMessage `json:"config"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
@@ -652,17 +658,6 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-	// "provider" is either an account kind or a supplier ID; config fields take precedence.
-	switch kind := aiprovider.AccountKind(input.AIProvider); kind {
-	case aiprovider.AccountSubscription, aiprovider.AccountAPI, aiprovider.AccountGroup:
-		if config.Kind == "" {
-			config.Kind = kind
-		}
-	default:
-		if config.Supplier == "" && config.Kind != aiprovider.AccountGroup {
-			config.Supplier = input.AIProvider
-		}
-	}
 	raw, err := json.Marshal(config)
 	if err != nil {
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
@@ -673,10 +668,10 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-	writeJSON(w, http.StatusCreated, publicProviderAccount(account, true))
+	writeJSON(w, http.StatusCreated, publicAccount(account, true))
 }
 
-func (m *APIModule) deleteAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+func (m *APIModule) deleteAccount(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if providerAccount(ctx, id) == nil {
 		common.WriteError(w, 404, common.MessageAIProviderNotFound)
 		return
@@ -710,7 +705,7 @@ func (m *APIModule) deleteAIProvider(ctx framework.ModuleContext, w http.Respons
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
+func (m *APIModule) updateAccount(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	var input struct {
 		Name   string          `json:"name"`
 		Config json.RawMessage `json:"config"`
@@ -751,12 +746,14 @@ func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.Respons
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-	writeJSON(w, http.StatusOK, publicProviderAccount(providerAccount(ctx, id), true))
+	writeJSON(w, http.StatusOK, publicAccount(providerAccount(ctx, id), true))
 }
 
 func decodeAccountConfig(name string, raw json.RawMessage) (aiprovider.AccountConfig, error) {
 	var config aiprovider.AccountConfig
-	if err := json.Unmarshal(raw, &config); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&config); err != nil {
 		return aiprovider.AccountConfig{}, err
 	}
 	if name != "" {
@@ -1069,7 +1066,12 @@ func apiKeyBelongsToUser(ctx framework.ModuleContext, userID int, value string) 
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
+	dec.DisallowUnknownFields()
 	if err := dec.Decode(value); err != nil {
+		common.WriteError(w, 400, common.MessageInvalidJSONBody)
+		return false
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		common.WriteError(w, 400, common.MessageInvalidJSONBody)
 		return false
 	}

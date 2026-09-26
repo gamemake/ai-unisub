@@ -12,7 +12,7 @@ import (
 	"ai-unisub/internal/service"
 )
 
-// supplierView is the catalog shape the admin pages consume. Mappings use
+// supplierView is the supplier shape the admin pages consume. Mappings use
 // from/to and plan weights are a plan ID → weight map.
 type supplierView struct {
 	ID                      string                  `json:"id"`
@@ -30,7 +30,7 @@ type modelMappingView struct {
 	To   string `json:"to"`
 }
 
-func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
+func (m *APIModule) suppliers(ctx service.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) < 1 || len(parts) > 2 {
 		http.NotFound(w, r)
 		return
@@ -52,7 +52,7 @@ func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, 
 			items = append(items, supplierResponse(supplier, supplier.GetConfig()))
 			builtins = append(builtins, supplierResponse(supplier, supplier.GetBuiltinConfig()))
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"catalog": map[string]any{"suppliers": items}, "builtin_suppliers": builtins})
+		writeJSON(w, http.StatusOK, map[string]any{"suppliers": items, "builtin_suppliers": builtins})
 		return
 	}
 	if !isAdmin(r) {

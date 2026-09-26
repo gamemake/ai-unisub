@@ -5,13 +5,13 @@ import (
 	"net/http"
 )
 
-func (m *APIModule) providerOptions(ctx service.ModuleContext, w http.ResponseWriter) {
+func (m *APIModule) accountOptions(ctx service.ModuleContext, w http.ResponseWriter) {
 	accounts := ctx.AIProviders().ListAccounts()
 	items := make([]map[string]any, 0, len(accounts))
 	for _, account := range accounts {
 		clients, _ := account.SupportedClients()
 		items = append(items, map[string]any{
-			"id": account.ID, "name": account.Config.Name, "provider": accountProvider(account.Config),
+			"id": account.ID, "name": account.Config.Name, "kind": account.Config.Kind, "supplier": account.Config.Supplier,
 			"enabled": account.Config.Enabled, "client_types": clientTypesJSON(clients),
 		})
 	}

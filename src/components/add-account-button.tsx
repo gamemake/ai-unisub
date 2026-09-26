@@ -3,9 +3,9 @@ import { ChevronDown, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 
-export type ProviderKind = 'subscription' | 'api' | 'group'
+export type AccountKind = 'subscription' | 'api' | 'group'
 
-export function AddAIProviderButton({ onSelect }: { onSelect: (kind: ProviderKind) => void }) {
+export function AddAccountButton({ onSelect }: { onSelect: (kind: AccountKind) => void }) {
   const [open, setOpen] = useState(false)
   return <Popover open={open} onOpenChange={setOpen}>
     <PopoverTrigger render={<Button />}><Plus />添加账号<ChevronDown /></PopoverTrigger>
