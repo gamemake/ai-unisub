@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -307,6 +309,74 @@ func (*SupplierData) PostResponse(account *Account, response *http.Response, _ [
 	account.Dirty = true
 	account.mu.Unlock()
 	return nil
+}
+
+// subscriptionQuotaStatus reports whether a response carries usable
+// subscription quota headers: successful responses and rate-limit rejections.
+func subscriptionQuotaStatus(statusCode int) bool {
+	return statusCode >= 200 && statusCode < 300 || statusCode == http.StatusTooManyRequests
+}
+
+// singleHeader returns the trimmed header value only when it appears exactly
+// once; missing, duplicated or blank values are rejected.
+func singleHeader(header http.Header, name string) (string, bool) {
+	values := header.Values(name)
+	if len(values) != 1 {
+		return "", false
+	}
+	value := strings.TrimSpace(values[0])
+	return value, value != ""
+}
+
+func headerFloat(header http.Header, name string) (float64, bool) {
+	value, ok := singleHeader(header, name)
+	if !ok {
+		return 0, false
+	}
+	number, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(number) || math.IsInf(number, 0) || number < 0 {
+		return 0, false
+	}
+	return number, true
+}
+
+func headerInt(header http.Header, name string) (int64, bool) {
+	value, ok := singleHeader(header, name)
+	if !ok {
+		return 0, false
+	}
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || number < 0 {
+		return 0, false
+	}
+	return number, true
+}
+
+// mergeSubscriptionQuota merges passively observed windows into the cached
+// subscription quota by time dimension. Windows not observed are kept as is,
+// and an observed window without a reset time keeps its cached reset time.
+func mergeSubscriptionQuota(account *Account, windows []SubscriptionQuotaItem, observedAt time.Time) {
+	if len(windows) == 0 {
+		return
+	}
+	account.mu.Lock()
+	defer account.mu.Unlock()
+	merged := slices.Clone(account.Quota.Subscription)
+	for _, window := range windows {
+		index := slices.IndexFunc(merged, func(item SubscriptionQuotaItem) bool { return item.TimeDimension == window.TimeDimension })
+		if index < 0 {
+			merged = append(merged, window)
+			continue
+		}
+		if window.ResetAt.IsZero() {
+			window.ResetAt = merged[index].ResetAt
+		}
+		merged[index] = window
+	}
+	account.Quota.Subscription = merged
+	account.Quota.CacheStatus = QuotaCacheFresh
+	account.Quota.UpdatedAt = observedAt
+	account.Dirty = true
 }
 
 func (s *SupplierData) GetID() string {

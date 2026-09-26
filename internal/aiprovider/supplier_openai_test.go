@@ -1,6 +1,7 @@
 package aiprovider
 
 import (
+	"net/http"
 	"testing"
 	"time"
 )
@@ -47,5 +48,46 @@ func TestCodexWindowDimension(t *testing.T) {
 		if got := codexWindowDimension(seconds); got != want {
 			t.Errorf("codexWindowDimension(%d) = %q, want %q", seconds, got, want)
 		}
+	}
+}
+
+func TestOpenAIPostResponseMergesCodexHeaders(t *testing.T) {
+	account := &Account{
+		Config: AccountConfig{Kind: AccountSubscription},
+		Quota: AccountQuota{Subscription: []SubscriptionQuotaItem{
+			{TimeDimension: "5h", Usage: 1},
+			{TimeDimension: "weekly_spark", Usage: 2},
+		}},
+	}
+	header := http.Header{}
+	header.Set("X-Codex-Primary-Used-Percent", "12.5")
+	header.Set("X-Codex-Primary-Window-Minutes", "300")
+	header.Set("X-Codex-Primary-Reset-After-Seconds", "600")
+	header.Set("X-Codex-Secondary-Used-Percent", "40")
+	header.Set("X-Codex-Secondary-Window-Minutes", "10080")
+	header.Set("X-Codex-Primary-Over-Secondary-Limit-Percent", "30")
+
+	before := time.Now().UTC()
+	if err := (&SupplierOpenAI{}).PostResponse(account, &http.Response{StatusCode: http.StatusTooManyRequests, Header: header}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := account.Quota.Subscription
+	if len(got) != 3 || got[0].TimeDimension != "5h" || got[0].Usage != 12.5 ||
+		got[1].TimeDimension != "weekly_spark" || got[1].Usage != 2 ||
+		got[2].TimeDimension != "weekly" || got[2].Usage != 40 || !got[2].ResetAt.IsZero() {
+		t.Fatalf("windows = %+v", got)
+	}
+	if reset := got[0].ResetAt.Sub(before); reset < 600*time.Second || reset > 610*time.Second {
+		t.Fatalf("5h reset = %v", got[0].ResetAt)
+	}
+}
+
+func TestOpenAIParseSubscriptionHeadersSkipsUnnamedWindow(t *testing.T) {
+	header := http.Header{}
+	header.Set("X-Codex-Primary-Used-Percent", "12.5")
+	header.Set("X-Codex-Secondary-Used-Percent", "bad")
+	header.Set("X-Codex-Secondary-Window-Minutes", "10080")
+	if windows := (&SupplierOpenAI{}).parseSubscriptionHeaders(header, time.Now()); len(windows) != 0 {
+		t.Fatalf("windows = %+v", windows)
 	}
 }

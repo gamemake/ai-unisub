@@ -202,6 +202,83 @@ func (*SupplierAnthropic) parseSubscriptionQuota(body []byte) ([]SubscriptionQuo
 	return windows, nil
 }
 
+const anthropicUnifiedHeaderPrefix = "anthropic-ratelimit-unified-"
+
+// PostResponse refreshes subscription windows from the unified rate-limit
+// headers of a model response; API accounts keep the generic header capture.
+func (s *SupplierAnthropic) PostResponse(account *Account, response *http.Response, body []byte) error {
+	if account == nil || response == nil {
+		return errAccountAndResponseRequired
+	}
+	if s.accountConfig(account).Kind != AccountSubscription {
+		return s.SupplierData.PostResponse(account, response, body)
+	}
+	if !subscriptionQuotaStatus(response.StatusCode) {
+		return nil
+	}
+	mergeSubscriptionQuota(account, s.parseSubscriptionHeaders(response.Header), time.Now().UTC())
+	return nil
+}
+
+// parseSubscriptionHeaders projects anthropic-ratelimit-unified-<claim>-utilization
+// and -reset headers into subscription items. Header utilization is a ratio
+// (0.25 = 25%) and reset is a Unix timestamp; unknown claims are skipped.
+func (*SupplierAnthropic) parseSubscriptionHeaders(header http.Header) []SubscriptionQuotaItem {
+	var windows []SubscriptionQuotaItem
+	for name := range header {
+		lower := strings.ToLower(name)
+		claim, ok := strings.CutPrefix(lower, anthropicUnifiedHeaderPrefix)
+		if !ok {
+			continue
+		}
+		claim, ok = strings.CutSuffix(claim, "-utilization")
+		if !ok {
+			continue
+		}
+		dimension := anthropicClaimDimension(claim)
+		if dimension == "" {
+			continue
+		}
+		utilization, ok := headerFloat(header, name)
+		if !ok {
+			continue
+		}
+		item := SubscriptionQuotaItem{TimeDimension: dimension, Usage: utilization * 100}
+		if reset, ok := headerInt(header, anthropicUnifiedHeaderPrefix+claim+"-reset"); ok && reset > 0 {
+			if reset > 1e12 {
+				item.ResetAt = time.UnixMilli(reset).UTC()
+			} else {
+				item.ResetAt = time.Unix(reset, 0).UTC()
+			}
+		}
+		windows = append(windows, item)
+	}
+	slices.SortFunc(windows, func(a, b SubscriptionQuotaItem) int {
+		if rank := anthropicWindowRank(a.TimeDimension) - anthropicWindowRank(b.TimeDimension); rank != 0 {
+			return rank
+		}
+		return strings.Compare(a.TimeDimension, b.TimeDimension)
+	})
+	return windows
+}
+
+// anthropicClaimDimension maps a unified header claim to the time dimension
+// used by the OAuth usage body, so passive and active results merge.
+func anthropicClaimDimension(claim string) string {
+	switch claim {
+	case "5h":
+		return "5h"
+	case "7d":
+		return "weekly"
+	case "7d_oi":
+		return "weekly_overage_included"
+	}
+	if scope, ok := strings.CutPrefix(claim, "7d_"); ok && scope != "" {
+		return "weekly_" + scope
+	}
+	return ""
+}
+
 func anthropicWindowRank(dimension string) int {
 	switch dimension {
 	case "5h":

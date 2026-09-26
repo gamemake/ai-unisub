@@ -222,6 +222,51 @@ func (*SupplierOpenAI) parseSubscriptionQuota(body []byte, observedAt time.Time)
 	return windows, nil
 }
 
+// PostResponse refreshes subscription windows from the x-codex-* headers of a
+// model response; API accounts keep the generic header capture.
+func (s *SupplierOpenAI) PostResponse(account *Account, response *http.Response, body []byte) error {
+	if account == nil || response == nil {
+		return errAccountAndResponseRequired
+	}
+	if s.accountConfig(account).Kind != AccountSubscription {
+		return s.SupplierData.PostResponse(account, response, body)
+	}
+	if !subscriptionQuotaStatus(response.StatusCode) {
+		return nil
+	}
+	observedAt := time.Now().UTC()
+	mergeSubscriptionQuota(account, s.parseSubscriptionHeaders(response.Header, observedAt), observedAt)
+	return nil
+}
+
+// parseSubscriptionHeaders projects the primary and secondary x-codex-* headers
+// into subscription items. Used percent is already a percentage, the window
+// length is in minutes and reset-after-seconds is relative to observedAt. A
+// window without its length cannot be named and is skipped; the
+// primary-over-secondary ratio is not a window of its own.
+func (*SupplierOpenAI) parseSubscriptionHeaders(header http.Header, observedAt time.Time) []SubscriptionQuotaItem {
+	var windows []SubscriptionQuotaItem
+	for _, slot := range []string{"primary", "secondary"} {
+		prefix := "x-codex-" + slot + "-"
+		used, ok := headerFloat(header, prefix+"used-percent")
+		if !ok {
+			continue
+		}
+		minutes, ok := headerInt(header, prefix+"window-minutes")
+		if !ok || minutes == 0 {
+			continue
+		}
+		item := SubscriptionQuotaItem{TimeDimension: codexWindowDimension(minutes * 60), Usage: used}
+		if resetAt, ok := headerInt(header, prefix+"reset-at"); ok && resetAt > 0 {
+			item.ResetAt = time.Unix(resetAt, 0).UTC()
+		} else if seconds, ok := headerInt(header, prefix+"reset-after-seconds"); ok {
+			item.ResetAt = observedAt.Add(time.Duration(seconds) * time.Second).UTC()
+		}
+		windows = append(windows, item)
+	}
+	return windows
+}
+
 func codexWindowDimension(seconds int64) string {
 	switch {
 	case seconds <= 0:
