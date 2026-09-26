@@ -26,7 +26,7 @@ type XAIAdapter struct {
 func NewXAI(config XAIConfig) *XAIAdapter {
 	config.Issuer = cmp.Or(config.Issuer, "https://auth.x.ai")
 	config.ClientID = cmp.Or(config.ClientID, "b1a00492-073a-47ea-816f-4c329264a828")
-	config.ClientVersion = cmp.Or(config.ClientVersion, "0.2.114")
+	config.ClientVersion = cmp.Or(config.ClientVersion, "1.0.41")
 	if len(config.Scopes) == 0 {
 		config.Scopes = []string{
 			"openid", "profile", "email", "offline_access", "grok-cli:access", "api:access",
@@ -44,7 +44,7 @@ func (a *XAIAdapter) StartDeviceAuthorization(ctx context.Context, input DeviceS
 	values := url.Values{
 		"client_id": {a.config.ClientID}, "scope": {strings.Join(a.config.Scopes, " ")}, "referrer": {"ai-unisub2"},
 	}
-	request, err := a.request(ctx, strings.TrimRight(a.config.Issuer, "/")+"/oauth/device/code", values)
+	request, err := a.request(ctx, strings.TrimRight(a.config.Issuer, "/")+"/oauth2/device/code", values)
 	if err != nil {
 		return DeviceAuthorizationResult{}, err
 	}
@@ -107,7 +107,7 @@ func (a *XAIAdapter) Refresh(ctx context.Context, credential *OAuthCredential, c
 }
 
 func (a *XAIAdapter) token(ctx context.Context, values url.Values, client *http.Client) (*OAuthCredential, error) {
-	request, err := a.request(ctx, strings.TrimRight(a.config.Issuer, "/")+"/oauth/token", values)
+	request, err := a.request(ctx, strings.TrimRight(a.config.Issuer, "/")+"/oauth2/token", values)
 	if err != nil {
 		return nil, err
 	}

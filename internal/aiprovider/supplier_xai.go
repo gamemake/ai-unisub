@@ -116,7 +116,7 @@ func (s *SupplierXAI) authHeaders(config AccountConfig) (http.Header, error) {
 	}
 	headers.Set("Authorization", "Bearer "+token)
 	headers.Set("X-Xai-Token-Auth", "xai-grok-cli")
-	headers.Set("User-Agent", "grok-shell/0.2.114")
+	headers.Set("User-Agent", "grok-shell/1.0.41")
 	return headers, nil
 }
 

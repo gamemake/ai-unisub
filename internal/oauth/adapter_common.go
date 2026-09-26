@@ -26,11 +26,17 @@ type oauthRequestError struct {
 	Code        string
 	Description string
 	StatusCode  int
+	// BodySnippet keeps the start of a non-OAuth error body, such as a WAF page,
+	// so the failure can be diagnosed from logs.
+	BodySnippet string
 }
 
 func (e *oauthRequestError) Error() string {
 	if e.Code != "" {
-		return fmt.Sprintf("oauth request failed: %s", e.Code)
+		return fmt.Sprintf("oauth request failed with status %d: %s", e.StatusCode, e.Code)
+	}
+	if e.BodySnippet != "" {
+		return fmt.Sprintf("oauth request failed with status %d: %s", e.StatusCode, e.BodySnippet)
 	}
 	return fmt.Sprintf("oauth request failed with status %d", e.StatusCode)
 }
@@ -66,12 +72,25 @@ func doOAuthRequest(client *http.Client, request *http.Request, output any) erro
 			Description string `json:"error_description"`
 		})
 		_ = json.Unmarshal(body, failure)
-		return &oauthRequestError{Code: failure.Code, Description: failure.Description, StatusCode: response.StatusCode}
+		requestErr := &oauthRequestError{Code: failure.Code, Description: failure.Description, StatusCode: response.StatusCode}
+		if requestErr.Code == "" {
+			requestErr.BodySnippet = oauthBodySnippet(body)
+		}
+		return requestErr
 	}
 	if output == nil || len(body) == 0 {
 		return nil
 	}
 	return json.Unmarshal(body, output)
+}
+
+func oauthBodySnippet(body []byte) string {
+	const maxSnippetBytes = 200
+	snippet := strings.Join(strings.Fields(string(body)), " ")
+	if len(snippet) > maxSnippetBytes {
+		snippet = strings.ToValidUTF8(snippet[:maxSnippetBytes], "") + "..."
+	}
+	return snippet
 }
 
 func credentialFromToken(token tokenResponse) (*OAuthCredential, error) {

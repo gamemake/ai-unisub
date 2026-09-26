@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 )
+
+var oauthFlowLogger = common.ModuleLogger("oauthflow")
 
 // OAuthFlowModule exposes the Web OAuth API and upstream callback endpoints.
 // The OAuth protocol itself remains implemented by internal/oauth adapters.
@@ -304,6 +307,7 @@ func oauthAPIError(w http.ResponseWriter, err error) {
 	case errors.Is(err, oauth.ErrUnsupportedFlow):
 		common.WriteError(w, http.StatusBadRequest, common.MessageUnsupportedOAuthFlow)
 	default:
+		oauthFlowLogger.WarnAttrs("oauth_upstream_failed", slog.String("error", err.Error()))
 		common.WriteError(w, http.StatusBadGateway, common.MessageOAuthUpstreamFailed)
 	}
 }
