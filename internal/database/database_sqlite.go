@@ -320,33 +320,6 @@ func (s *SQLiteDatabase) CleanupProxyLog(days int) error {
 	return nil
 }
 
-func (s *SQLiteDatabase) LoadCredential(id string) (json.RawMessage, error) {
-	if err := s.ensureOpen(); err != nil {
-		return nil, err
-	}
-	var raw []byte
-	if err := s.db.QueryRow(`SELECT credential FROM oauth_credentials WHERE id = ?`, id).Scan(&raw); err != nil {
-		return nil, err
-	}
-	return raw, nil
-}
-
-func (s *SQLiteDatabase) SaveCredential(id string, value json.RawMessage) error {
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`INSERT INTO oauth_credentials(id, credential) VALUES(?, ?) ON CONFLICT(id) DO UPDATE SET credential=excluded.credential`, id, value)
-	return err
-}
-
-func (s *SQLiteDatabase) DeleteCredential(id string) error {
-	if err := s.ensureOpen(); err != nil {
-		return err
-	}
-	_, err := s.db.Exec(`DELETE FROM oauth_credentials WHERE id = ?`, id)
-	return err
-}
-
 func (s *SQLiteDatabase) ListAccounts() ([]PersistedAccount, error) {
 	if err := s.ensureOpen(); err != nil {
 		return nil, err
@@ -1069,8 +1042,6 @@ func valuesToAny(values []string) []any {
 }
 
 const sqliteSchema = `
-CREATE TABLE IF NOT EXISTS proxy_stats (address TEXT NOT NULL, application TEXT NOT NULL, start_at INTEGER NOT NULL, source TEXT NOT NULL, requests INTEGER NOT NULL, failures INTEGER NOT NULL, PRIMARY KEY(address,application,start_at,source));
-CREATE TABLE IF NOT EXISTS oauth_credentials (id TEXT PRIMARY KEY, credential BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, provider TEXT NOT NULL, name TEXT NOT NULL, config BLOB NOT NULL, state BLOB NOT NULL DEFAULT '{}', quota BLOB NOT NULL DEFAULT '{}', created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_accounts_name ON accounts(name);
 CREATE INDEX IF NOT EXISTS idx_accounts_provider ON accounts(provider);

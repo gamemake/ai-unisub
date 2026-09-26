@@ -15,8 +15,9 @@ import (
 	"time"
 
 	"ai-unisub/internal/common"
+	"ai-unisub/internal/database"
 	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/oauth/adapters"
+	"ai-unisub/internal/proxy"
 )
 
 var errUsage = errors.New("invalid command usage")
@@ -49,12 +50,41 @@ func main() {
 	}
 }
 
-func newManager(store oauth.CredentialStore) *oauth.OAuthManager {
-	m := oauth.NewManager(store)
-	_ = m.Register(adapters.NewGrok(adapters.GrokConfig{}))
-	_ = m.Register(adapters.NewCodex(adapters.CodexConfig{}))
-	_ = m.Register(adapters.NewClaude(adapters.ClaudeConfig{}))
-	return m
+// cliServices maps the CLI provider names to OAuth service identifiers.
+var cliServices = map[string]string{
+	"grok":   oauth.OAuthServiceXAI,
+	"codex":  oauth.OAuthServiceOpenAI,
+	"claude": oauth.OAuthServiceAnthropic,
+}
+
+// newManager creates an OAuth manager backed by an in-memory database and a
+// direct (group 0) proxy manager. The returned close function releases both.
+func newManager() (oauth.OAuthManager, func(), error) {
+	db, err := database.NewDatabase("sqlite::memory:")
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := db.Open(); err != nil {
+		return nil, nil, err
+	}
+	proxies := proxy.NewManager(db)
+	if err := proxies.Open(); err != nil {
+		_ = db.Close()
+		return nil, nil, err
+	}
+	closeAll := func() {
+		_ = proxies.Close()
+		_ = db.Close()
+	}
+	return oauth.NewManager(db, proxies), closeAll, nil
+}
+
+// resolveService accepts either a CLI provider name or an OAuth service identifier.
+func resolveService(name string) string {
+	if service, ok := cliServices[name]; ok {
+		return service
+	}
+	return name
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
@@ -103,18 +133,19 @@ func option(args []string, name string) string {
 }
 
 func login(provider, output string, stdout, stderr io.Writer) error {
-	if provider != oauth.OAuthServiceGrok && provider != oauth.OAuthServiceCodex && provider != oauth.OAuthServiceClaude {
+	service, ok := cliServices[provider]
+	if !ok {
 		return fmt.Errorf("unsupported provider %q", provider)
 	}
 	common.ModuleLogger("cmd/oauth").Info("login_started", fmt.Sprintf("starting OAuth login: provider=%s", provider))
 	callbackPath := "/callback"
-	if provider == oauth.OAuthServiceCodex {
+	if service == oauth.OAuthServiceOpenAI {
 		callbackPath = "/auth/callback"
 	}
 	var listener net.Listener
 	var err error
 	redirect := ""
-	if provider != oauth.OAuthServiceGrok {
+	if service != oauth.OAuthServiceXAI {
 		listener, err = net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			return err
@@ -123,11 +154,15 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		redirect = "http://" + listener.Addr().String() + callbackPath
 		common.ModuleLogger("cmd/oauth").Info("callback_listening", fmt.Sprintf("callback server reserved: %s", redirect))
 	}
-	manager := newManager(nil)
+	manager, closeManager, err := newManager()
+	if err != nil {
+		return err
+	}
+	defer closeManager()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	common.ModuleLogger("cmd/oauth").Info("authorization_started", fmt.Sprintf("requesting authorization from %s", provider))
-	start, err := manager.Start(ctx, provider, "", redirect, nil)
+	start, err := manager.Start(ctx, service, "", redirect, 0)
 	if err != nil {
 		common.ModuleLogger("cmd/oauth").Error("authorization_failed", fmt.Sprintf("authorization request failed: %v", err))
 		return err
@@ -141,7 +176,7 @@ func login(provider, output string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "Open the URL manually: %v\n", err)
 	}
 
-	if provider == oauth.OAuthServiceGrok {
+	if service == oauth.OAuthServiceXAI {
 		pollCount := 0
 		for {
 			pollCount++
@@ -218,7 +253,7 @@ func finishCredential(credential *oauth.OAuthCredential, provider, output string
 		if err != nil {
 			return err
 		}
-		if err := (oauth.FileCredentialStore{}).SaveCredential(output, raw); err != nil {
+		if err := (fileCredentialStore{}).SaveCredential(output, raw); err != nil {
 			return err
 		}
 		common.ModuleLogger("cmd/oauth").Info("credential_saved", fmt.Sprintf("OAuth credential saved to %s", output))
@@ -260,7 +295,7 @@ func credentialFileService(raw []byte) string {
 }
 
 func operate(command, path string, args []string, stdout, stderr io.Writer) error {
-	store := oauth.FileCredentialStore{}
+	store := fileCredentialStore{}
 	raw, err := store.LoadCredential(path)
 	if err != nil {
 		return err
@@ -288,12 +323,17 @@ func operate(command, path string, args []string, stdout, stderr io.Writer) erro
 		_, _ = fmt.Fprintf(stdout, "%s\n", state)
 		return nil
 	}
-	manager := newManager(store)
+	service = resolveService(service)
+	manager, closeManager, err := newManager()
+	if err != nil {
+		return err
+	}
+	defer closeManager()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	switch command {
 	case "refresh":
-		refreshed, err := manager.Refresh(ctx, service, &credential, nil)
+		refreshed, err := manager.Refresh(ctx, service, &credential, 0)
 		if err != nil {
 			return err
 		}

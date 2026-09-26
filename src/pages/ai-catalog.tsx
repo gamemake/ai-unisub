@@ -15,10 +15,8 @@ import { Plus, RefreshCw, RotateCcw, Trash2 } from 'lucide-react'
 import { clientTypeLabel } from '@/lib/utils'
 import { samePlanWeights, subscriptionPlanLabel, subscriptionPlansForSupplier } from '@/lib/subscription-plan'
 
-const platformSuppliers: Record<string, string> = { claude: 'anthropic', codex: 'openai', grok: 'grok' }
-
 function accountSupplier(account: Account) {
-  return account.config.supplier || platformSuppliers[account.provider] || ''
+  return account.config.supplier || ''
 }
 
 function providerKind(account: Account) {

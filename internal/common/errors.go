@@ -13,6 +13,7 @@ const (
 	MessageAIProviderQueueFull         = "provider request queue is full"
 	MessageAIProviderQueueTimeout      = "provider request queue timeout"
 	MessageGatewayTimeout              = "gateway request timeout"
+	MessageClientCanceled              = "client canceled request"
 	MessageVideoGenerationUnsupported  = "video generation is not supported"
 	MessageInvalidUpstreamEndpoint     = "invalid upstream endpoint"
 	MessageUpstreamRequestFailed       = "upstream request failed"

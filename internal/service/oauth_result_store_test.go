@@ -8,17 +8,17 @@ import (
 
 func TestOAuthSessionResultOwnershipExpiryAndConsumption(t *testing.T) {
 	store := NewOAuthResultStore()
-	id, err := store.Put(OAuthResult{SessionID: "session", SubjectID: "alice", Service: "codex", Credential: oauth.OAuthCredential{AccessToken: "token"}})
+	id, err := store.Put(OAuthResult{SessionID: "session", SubjectID: "alice", Service: "openai", Credential: oauth.OAuthCredential{AccessToken: "token"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := store.FindSession("session", "codex", "bob"); ok {
+	if _, ok := store.FindSession("session", "openai", "bob"); ok {
 		t.Fatal("result visible to another user")
 	}
 	if _, ok := store.FindSession("session", "claude", "alice"); ok {
 		t.Fatal("result visible to another service")
 	}
-	if got, ok := store.FindSession("session", "codex", "alice"); !ok || got != id {
+	if got, ok := store.FindSession("session", "openai", "alice"); !ok || got != id {
 		t.Fatal("owner could not find result")
 	}
 	if _, err := store.Take(id, "bob"); err == nil {
@@ -27,7 +27,7 @@ func TestOAuthSessionResultOwnershipExpiryAndConsumption(t *testing.T) {
 	if value, err := store.Take(id, "alice"); err != nil || value.Credential.AccessToken != "token" {
 		t.Fatal("owner could not consume result")
 	}
-	if _, ok := store.FindSession("session", "codex", "alice"); ok {
+	if _, ok := store.FindSession("session", "openai", "alice"); ok {
 		t.Fatal("consumed result remains visible")
 	}
 	store.ttl = -time.Second

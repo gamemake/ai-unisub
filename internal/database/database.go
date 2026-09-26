@@ -1,7 +1,6 @@
 package database
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -132,15 +131,6 @@ type Database interface {
 	QueryProxyLogs(filter ProxyLogFilter, page, pageSize int) ([]PersistedProxyLog, int, error)
 	// CleanupProxyLog removes proxy logs older than the specified number of days.
 	CleanupProxyLog(days int) error
-
-	// CredentialStore-compatible methods. The database stores credentials as
-	// opaque JSON; OAuth owns the domain model and its serialization.
-	// LoadCredential loads an opaque credential by ID.
-	LoadCredential(id string) (json.RawMessage, error)
-	// SaveCredential creates or replaces an opaque credential by ID.
-	SaveCredential(id string, value json.RawMessage) error
-	// DeleteCredential deletes an opaque credential by ID.
-	DeleteCredential(id string) error
 
 	// ListAccounts returns all persisted accounts.
 	ListAccounts() ([]PersistedAccount, error)

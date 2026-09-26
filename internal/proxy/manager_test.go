@@ -1,338 +1,203 @@
 package proxy
 
 import (
-	"context"
-	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
-	"sync"
+	"slices"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"ai-unisub/internal/database"
 )
 
-type testStore struct {
-	groups  []Group
-	buckets map[string]Bucket
-	fail    bool
-	next    int
-}
+func TestProxyManagerRetriesAndPersistsHealth(t *testing.T) {
+	db := openTestDatabase(t)
+	var firstCalls, secondCalls atomic.Int32
+	first := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		firstCalls.Add(1)
+		if body, _ := io.ReadAll(req.Body); string(body) != "payload" {
+			t.Errorf("first proxy received body %q", body)
+		}
+		http.Error(w, "temporary", http.StatusBadGateway)
+	}))
+	defer first.Close()
+	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		secondCalls.Add(1)
+		if body, _ := io.ReadAll(req.Body); string(body) != "payload" {
+			t.Errorf("second proxy received body %q", body)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer second.Close()
 
-func (s *testStore) ListProxyGroups() ([]Group, error) { return clone(s.groups), nil }
-func (s *testStore) SaveProxyGroup(g *Group) error {
-	if g.ID == 0 {
-		s.next++
-		g.ID = s.next
-		s.groups = append(s.groups, clone(*g))
-		return nil
-	}
-	for i := range s.groups {
-		if s.groups[i].ID == g.ID {
-			s.groups[i] = clone(*g)
-			return nil
-		}
-	}
-	return errors.New("proxy group not found")
-}
-func (s *testStore) DeleteProxyGroup(int) error { return nil }
-func (s *testStore) SaveProxyStats(v []Bucket) error {
-	if s.fail {
-		return errors.New("storage unavailable")
-	}
-	if s.buckets == nil {
-		s.buckets = map[string]Bucket{}
-	}
-	for _, b := range v {
-		s.buckets[b.Address+"|"+b.Application+"|"+b.StartAt.String()+"|"+b.Source] = b
-	}
-	return nil
-}
-func (s *testStore) ListProxyStats(address, app string, from, to time.Time) ([]Bucket, error) {
-	var out []Bucket
-	for _, b := range s.buckets {
-		if b.Address == address && b.Application == app && !b.StartAt.Before(from) && b.StartAt.Before(to) {
-			out = append(out, b)
-		}
-	}
-	return out, nil
-}
-func setup(t *testing.T) (*Manager, *testStore, *time.Time) {
-	t.Helper()
-	store := &testStore{}
-	policy := DefaultPolicy()
-	policy.FailureThreshold = 1
-	// These contract tests use immediate, single-success recovery. Dedicated
-	// policy tests exercise production cooldowns and multi-success recovery.
-	policy.ApplicationCooldown = time.Minute
-	policy.NetworkRecoverySuccesses = 1
-	policy.ApplicationRecoverySuccesses = 1
-	policy.AutoProbe = false
-	m := NewManager(store, policy)
-	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
-	m.now = func() time.Time { return now }
-	t.Cleanup(func() {
-		store.fail = false
-		if err := m.Close(); err != nil {
-			t.Error(err)
-		}
-	})
-	return m, store, &now
-}
-func saveGroup(t *testing.T, m *Manager, name string, addresses ...string) int {
-	t.Helper()
-	g := Group{Name: name, MaxRetries: 3}
-	for _, a := range addresses {
-		g.Proxies = append(g.Proxies, Entry{URL: a, Enabled: true})
-	}
-	if err := m.New(&g); err != nil {
-		t.Fatal(err)
-	}
-	return g.ID
-}
-func resolve(t *testing.T, m *Manager, group int, app string) *Endpoint {
-	t.Helper()
-	e, err := m.ResolveProxy(t.Context(), group, app, nil)
+	manager := openTestManager(t, db, 10*time.Millisecond)
+	id, err := manager.Create(ProxyGroupConfig{Name: "primary", Proxies: []string{first.URL, second.URL}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return e
-}
-func TestPrioritySharedHealthAndApplicationIsolation(t *testing.T) {
-	m, _, now := setup(t)
-	one := saveGroup(t, m, "one", "http://LOCALHOST:8001/", "http://localhost:8002")
-	two := saveGroup(t, m, "two", "http://localhost:8001")
-	first := resolve(t, m, one, "app-a")
-	if first.String() != "http://localhost:8001" {
-		t.Fatal(first)
-	}
-	if again := resolve(t, m, one, "app-a"); again.String() != first.String() {
-		t.Fatal("selection must not round robin")
-	}
-	if err := m.ReportProxy(first, "app-a", ApplicationError); err != nil {
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://upstream.invalid/resource", strings.NewReader("request body must be ignored"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.ResolveProxy(t.Context(), two, "app-a", nil); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("application failure not shared across groups")
-	}
-	if other := resolve(t, m, two, "app-b"); other.String() != first.String() {
-		t.Fatal("application failure leaked")
-	}
-	m.SetProber(func(context.Context, *Endpoint) error { return nil })
-	if _, err := m.TestURL(t.Context(), first.String()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.ResolveProxy(t.Context(), two, "app-a", nil); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("network probe cleared application failure")
-	}
-	*now = now.Add(2 * time.Minute)
-	recovered := resolve(t, m, two, "app-a")
-	if err := m.ReportProxy(recovered, "app-a", Success); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.ReportProxy(first, "app-a", NetworkError); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := m.ResolveProxy(t.Context(), two, "app-b", nil); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("network failure not global")
-	}
-	if m.Snapshot(first, "app-a").Status != "available" {
-		t.Fatal("network failure changed application health")
-	}
-	second := resolve(t, m, one, "app-b")
-	if second.String() == first.String() {
-		t.Fatal("did not fail over")
-	}
-}
-func TestHalfOpenQuotaCancellationAndNoBypass(t *testing.T) {
-	m, _, now := setup(t)
-	one := saveGroup(t, m, "one", "http://localhost:8001")
-	e := resolve(t, m, one, "a")
-	_ = m.ReportProxy(e, "a", NetworkError)
-	*now = now.Add(2 * time.Minute)
-	var admitted atomic.Int32
-	leases := make(chan *Endpoint, 20)
-	var wg sync.WaitGroup
-	for range 20 {
-		wg.Go(func() {
-			if selected, err := m.ResolveProxy(t.Context(), one, "a", nil); err == nil {
-				admitted.Add(1)
-				leases <- selected
-			}
-		})
-	}
-	wg.Wait()
-	if admitted.Load() != 1 {
-		t.Fatalf("half-open admitted %d", admitted.Load())
-	}
-	_ = m.ReportProxy(e, "a", Canceled)
-	if _, err := m.ResolveProxy(t.Context(), one, "a", nil); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("unrelated cancellation released a half-open lease")
-	}
-	_ = m.ReportProxy(<-leases, "a", Canceled)
-	e = resolve(t, m, one, "a")
-	_ = m.ReportProxy(e, "a", Success)
-	if _, err := m.ResolveProxy(t.Context(), one, "a", []string{e.String()}); !errors.Is(err, ErrUnavailable) {
-		t.Fatal("retried an attempted address")
-	}
-	if direct, err := m.ResolveProxy(t.Context(), 0, "a", nil); err != nil || direct != nil {
-		t.Fatal("empty group must leave proxy unspecified")
-	}
-	if _, err := m.ResolveProxy(t.Context(), 99, "a", nil); err == nil {
-		t.Fatal("missing group silently bypassed")
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	if _, err := m.ResolveProxy(ctx, one, "a", nil); !errors.Is(err, context.Canceled) {
-		t.Fatal(err)
-	}
-}
-func TestStatsWindowsFailureRetryAndCapacity(t *testing.T) {
-	m, store, now := setup(t)
-	m.policy.MaxBuckets = 2
-	one := saveGroup(t, m, "one", "http://localhost:8001")
-	e := resolve(t, m, one, "a")
-	_ = m.ReportProxy(e, "a", ApplicationError)
-	store.fail = true
-	if err := m.Flush(); err == nil {
-		t.Fatal("write failure swallowed")
-	}
-	if len(m.pending) != 2 {
-		t.Fatal("lost pending data")
-	}
-	*now = now.Add(11 * time.Minute)
-	if len(m.Recent(e, "a")) != 0 {
-		t.Fatal("expired minute bucket retained")
-	}
-	if err := m.ReportProxy(e, "a", Success); err == nil {
-		t.Fatal("unbounded accumulation on failed persistence")
-	}
-	if len(m.pending) > 2 {
-		t.Fatal("capacity exceeded")
-	}
-	store.fail = false
-	if err := m.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Flush(); err != nil {
-		t.Fatal(err)
-	}
-	history, err := m.History(e, "a", now.Add(-time.Hour), *now)
-	if err != nil || len(history) != 1 || history[0].Requests != 1 || history[0].Failures != 1 {
-		t.Fatalf("bad aggregate: %+v %v", history, err)
-	}
-	if err := m.ReportProxy(e, "a", Success); err != nil {
-		t.Fatal(err)
-	}
-	_ = m.Flush()
-	_ = m.Flush()
-	history, _ = m.History(e, "a", now.Add(-time.Hour), now.Add(time.Hour))
-	var total int64
-	for _, b := range history {
-		total += b.Requests
-	}
-	if total != 2 {
-		t.Fatalf("duplicate aggregate: %d", total)
-	}
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := m.Close(); err != nil {
-		t.Fatal(err)
-	}
-}
-func TestEndpointValidationAndClientIsolation(t *testing.T) {
-	for _, address := range []string{"", "localhost:80", "http://", "http://:80", "ftp://localhost", "http://localhost:0", "http://localhost:65536", "http://localhost:", "http://localhost?", "http://localhost#", "http://local host", "http:opaque"} {
-		if _, err := NewEndpoint(address); err == nil {
-			t.Errorf("accepted %q", address)
+	handle := func(response *http.Response) error {
+		if response.StatusCode == http.StatusBadGateway {
+			return errApplicationDetectedProxyFailure
 		}
+		return nil
 	}
-	a, _ := NewEndpoint(" HTTP://user:pass@LOCALHOST:80/ ")
-	b, _ := NewEndpoint("http://user:other@localhost")
-	if a.String() == b.String() {
-		t.Fatal("merged distinct credentials")
+	response, err := manager.Do(id, "openai", req, []byte("payload"), handle)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, scheme := range []string{"http", "https", "socks5", "socks5h"} {
-		if _, err := NewEndpoint(scheme + "://[::1]:8080"); err != nil {
-			t.Fatal(err)
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated || firstCalls.Load() != 1 || secondCalls.Load() != 1 {
+		t.Fatalf("unexpected retry result: status=%d first=%d second=%d", response.StatusCode, firstCalls.Load(), secondCalls.Load())
+	}
+
+	group := manager.List()[0]
+	if group.State.Proxies[first.URL].Applications["openai"].Healthy {
+		t.Fatal("failed proxy application state was not persisted")
+	}
+	logs, total, err := db.QueryProxyLogs(database.ProxyLogFilter{GroupID: id, TimeRange: database.TimeRange{Start: time.Now().Add(-time.Minute), End: time.Now().Add(time.Minute)}}, 1, 10)
+	if err != nil || total != 2 || len(logs) != 2 {
+		t.Fatalf("unexpected proxy logs: logs=%+v total=%d err=%v", logs, total, err)
+	}
+	statuses := []int{logs[0].HTTPErrorCode, logs[1].HTTPErrorCode}
+	slices.Sort(statuses)
+	if !slices.Equal(statuses, []int{http.StatusCreated, http.StatusBadGateway}) {
+		t.Fatalf("unexpected proxy log statuses: %v", statuses)
+	}
+
+	// The healthy proxy is preferred on the next request while preserving the
+	// configured order among candidates with equal health.
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, "http://upstream.invalid/resource", strings.NewReader("payload"))
+	response, err = manager.Do(id, "openai", req, []byte("payload"), handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if firstCalls.Load() != 1 || secondCalls.Load() != 2 {
+		t.Fatalf("health ordering was ignored: first=%d second=%d", firstCalls.Load(), secondCalls.Load())
+	}
+
+	// Status codes have no built-in meaning. Without a handler, the first
+	// proxy's 502 response is accepted and no retry is performed.
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodPost, "http://upstream.invalid/resource", strings.NewReader("ignored"))
+	response, err = manager.Do(id, "status-ignored", req, []byte("payload"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusBadGateway || firstCalls.Load() != 2 || secondCalls.Load() != 2 {
+		t.Fatalf("HTTP status was interpreted by the manager: status=%d first=%d second=%d", response.StatusCode, firstCalls.Load(), secondCalls.Load())
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for {
+		concrete := manager.(*proxyManager)
+		concrete.mu.RLock()
+		dirty := concrete.groups[id].dirty
+		concrete.mu.RUnlock()
+		if !dirty {
+			break
 		}
+		if time.Now().After(deadline) {
+			t.Fatal("dirty proxy state was not flushed on schedule")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
-	base := &http.Client{Timeout: 3 * time.Second, Transport: http.DefaultTransport.(*http.Transport).Clone()}
-	if Client(base, nil) != base {
-		t.Fatal("nil endpoint changed client")
-	}
-	var wg sync.WaitGroup
-	for i := range 2 {
-		wg.Go(func() {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(210 + i) }))
-			defer srv.Close()
-			e, _ := NewEndpoint(srv.URL)
-			client := Client(base, e)
-			defer client.CloseIdleConnections()
-			resp, err := client.Get("http://destination.invalid/")
-			if err != nil {
-				t.Error(err)
-				return
-			}
-			resp.Body.Close()
-			if resp.StatusCode != 210+i || client.Timeout != base.Timeout {
-				t.Error("proxy client isolation failed")
-			}
-		})
-	}
-	wg.Wait()
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	req, _ := http.NewRequestWithContext(ctx, "GET", "http://destination.invalid", nil)
-	if _, err := Client(base, a).Do(req); !errors.Is(err, context.Canceled) {
-		t.Fatal("context was not propagated", err)
+
+	reloaded := openTestManager(t, db, defaultFlushInterval)
+	if listed := reloaded.List(); len(listed) != 1 || listed[0].ID != id || listed[0].Config.Name != "primary" || listed[0].State.Proxies[first.URL].Applications["openai"].Healthy {
+		t.Fatalf("persisted group was not loaded: %+v", listed)
 	}
 }
 
-func TestCloseCancelsProbeAndCanRetryPersistence(t *testing.T) {
-	m, store, _ := setup(t)
-	started := make(chan struct{})
-	finished := make(chan error, 1)
-	m.SetProber(func(ctx context.Context, e *Endpoint) error { close(started); <-ctx.Done(); return ctx.Err() })
-	go func() { _, err := m.TestURL(t.Context(), "http://localhost:8080"); finished <- err }()
-	<-started
-	e, _ := NewEndpoint("http://localhost:8080")
-	if err := m.ReportProxy(e, "a", Success); err != nil {
+func TestProxyManagerDirectRequestUsesExplicitBody(t *testing.T) {
+	db := openTestDatabase(t)
+	manager := openTestManager(t, db, defaultFlushInterval)
+	received := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		received <- string(body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL, strings.NewReader("ignored"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	store.fail = true
-	if err := m.Close(); err == nil {
-		t.Fatal("close swallowed failed persistence")
-	}
-	if err := <-finished; !errors.Is(err, context.Canceled) {
-		t.Fatal("close did not cancel probe", err)
-	}
-	store.fail = false
-	if err := m.Close(); err != nil {
+	response, err := manager.Do(0, "", req, []byte("explicit"), nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	response.Body.Close()
+	if body := <-received; body != "explicit" {
+		t.Fatalf("request body was not ignored: %q", body)
+	}
+	logs, total, err := db.QueryProxyLogs(database.ProxyLogFilter{GroupID: 0, TimeRange: database.TimeRange{Start: time.Now().Add(-time.Minute), End: time.Now().Add(time.Minute)}}, 1, 10)
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].HTTPErrorCode != http.StatusNoContent {
+		t.Fatalf("direct call was not recorded: logs=%+v total=%d err=%v", logs, total, err)
 	}
 }
 
-func TestNewAssignsIDAndSaveUpdatesExisting(t *testing.T) {
-	m, _, _ := setup(t)
-	if err := m.Save(&Group{Name: "missing"}); err == nil {
-		t.Fatal("Save must require an ID")
-	}
-	if err := m.New(&Group{ID: 3, Name: "invalid"}); err == nil {
-		t.Fatal("New must reject a preset ID")
-	}
-	g := Group{Name: "created", Remark: "first", Proxies: []Entry{{URL: "http://127.0.0.1:1080", Enabled: true}}}
-	if err := m.New(&g); err != nil {
+func TestProxyManagerCRUD(t *testing.T) {
+	db := openTestDatabase(t)
+	manager := openTestManager(t, db, defaultFlushInterval)
+	id, err := manager.Create(ProxyGroupConfig{Name: "one", Proxies: []string{"http://127.0.0.1:8001/"}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if g.ID <= 0 || g.Proxies[0].ID == "" {
-		t.Fatalf("New must assign group and proxy IDs: %+v", g)
-	}
-	g.Remark = "updated"
-	if err := m.Save(&g); err != nil {
+	if err := manager.Update(id, ProxyGroupConfig{Name: "two", Proxies: []string{"http://127.0.0.1:8002"}}); err != nil {
 		t.Fatal(err)
 	}
-	listed, err := m.List()
-	if err != nil || len(listed) != 1 || listed[0].ID != g.ID || listed[0].Remark != "updated" {
-		t.Fatalf("saved group not loaded: %+v %v", listed, err)
+	listed := manager.List()
+	if len(listed) != 1 || listed[0].Config.Name != "two" || listed[0].Config.Proxies[0] != "http://127.0.0.1:8002" {
+		t.Fatalf("unexpected group: %+v", listed)
 	}
+	listed[0].Config.Name = "mutated"
+	if manager.List()[0].Config.Name != "two" {
+		t.Fatal("List exposed manager state")
+	}
+	if err := manager.Delete(id); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.List()) != 0 {
+		t.Fatal("deleted group is still listed")
+	}
+}
+
+func openTestManager(t *testing.T, db database.Database, flushInterval time.Duration) ProxyManager {
+	t.Helper()
+	manager := NewManager(db)
+	manager.(*proxyManager).flushInterval = flushInterval
+	if err := manager.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return manager
+}
+
+func openTestDatabase(t *testing.T) database.Database {
+	t.Helper()
+	db, err := database.NewDatabase("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return db
 }

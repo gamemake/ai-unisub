@@ -277,54 +277,6 @@ func (m *MemoryDatabase) CleanupProxyLog(days int) error {
 	return nil
 }
 
-func (m *MemoryDatabase) LoadCredential(id string) (json.RawMessage, error) {
-	if err := m.ensureOpen(); err != nil {
-		return nil, err
-	}
-	if raw := m.cachedCredential(id); raw != nil {
-		return raw, nil
-	}
-	raw, err := m.store.LoadCredential(id)
-	if err != nil {
-		m.logStoreError("load_credential", err)
-		return nil, err
-	}
-	if !json.Valid(raw) {
-		logger.Warn("invalid_credential_removed", "")
-		_ = m.DeleteCredential(id)
-		return nil, errStoredCredentialInvalidJSON
-	}
-	m.cacheCredential(id, raw)
-	return raw, nil
-}
-
-func (m *MemoryDatabase) SaveCredential(id string, value json.RawMessage) error {
-	if id == "" || len(value) == 0 || !json.Valid(value) {
-		return errCredentialAndIDRequired
-	}
-	if err := m.ensureOpen(); err != nil {
-		return err
-	}
-	if err := m.store.SaveCredential(id, value); err != nil {
-		m.logStoreError("save_credential", err)
-		return err
-	}
-	m.cacheCredential(id, value)
-	return nil
-}
-
-func (m *MemoryDatabase) DeleteCredential(id string) error {
-	if err := m.ensureOpen(); err != nil {
-		return err
-	}
-	if err := m.store.DeleteCredential(id); err != nil {
-		m.logStoreError("delete_credential", err)
-		return err
-	}
-	m.dropCredential(id)
-	return nil
-}
-
 func (m *MemoryDatabase) ListAccounts() ([]PersistedAccount, error) {
 	if err := m.ensureOpen(); err != nil {
 		return nil, err

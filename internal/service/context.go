@@ -26,9 +26,9 @@ type ModuleContext interface {
 	Handle(string, RouteOptions, http.Handler)
 	HandleFunc(string, RouteOptions, http.HandlerFunc)
 	Database() database.Database
-	OAuth() *oauth.OAuthManager
-	AIProviders() *aiprovider.AIProviderManager
-	Proxy() *proxy.Manager
+	OAuth() oauth.OAuthManager
+	AIProviders() aiprovider.ProviderManager
+	Proxy() proxy.ProxyManager
 	Auth() AuthService
 	OAuthResults() *OAuthResultStore
 }
@@ -38,8 +38,8 @@ func (c *moduleContext) Config() Config                                         
 func (c *moduleContext) Handle(p string, o RouteOptions, h http.Handler)         { c.s.router.add(p, o, h) }
 func (c *moduleContext) HandleFunc(p string, o RouteOptions, h http.HandlerFunc) { c.Handle(p, o, h) }
 func (c *moduleContext) Database() database.Database                             { return c.s.db }
-func (c *moduleContext) OAuth() *oauth.OAuthManager                              { return c.s.oauth }
-func (c *moduleContext) AIProviders() *aiprovider.AIProviderManager              { return c.s.aiProviders }
-func (c *moduleContext) Proxy() *proxy.Manager                                   { return c.s.proxy }
+func (c *moduleContext) OAuth() oauth.OAuthManager                               { return c.s.oauth }
+func (c *moduleContext) AIProviders() aiprovider.ProviderManager                 { return c.s.aiProviders }
+func (c *moduleContext) Proxy() proxy.ProxyManager                               { return c.s.proxy }
 func (c *moduleContext) Auth() AuthService                                       { return c.s.authSvc }
 func (c *moduleContext) OAuthResults() *OAuthResultStore                         { return c.s.results }

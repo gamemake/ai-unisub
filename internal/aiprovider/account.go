@@ -1,129 +1,586 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/common"
+	"ai-unisub/internal/oauth"
 	"context"
-	"errors"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 )
 
-var ErrQueueFull = errors.New(common.MessageAIProviderQueueFull)
-var ErrQueueTimeout = errors.New(common.MessageAIProviderQueueTimeout)
-var ErrUnavailable = errors.New(common.MessageAIProviderUnavailable)
+const (
+	accessTokenRefreshInterval = 17 * time.Hour
+	accessTokenRefreshAdvance  = 5 * time.Minute
+)
 
-// Account owns one provider's execution slots and FIFO queue. Waiting requests
-// keep their original context, and cancellation never starts an upstream call.
 type Account struct {
-	mu         sync.Mutex
-	aiprovider AIProvider
-	active     int
-	waiters    []*accountWaiter
-	closed     bool
-}
-type accountWaiter struct {
-	ready       chan struct{}
-	granted     bool
-	unavailable bool
+	mu        sync.RWMutex
+	accessMu  sync.Mutex
+	manager   *providerManager
+	limiter   AccountLimiter // 超过最大连接数，需要排队。只对非 Group 类型有效
+	scheduler GroupScheduler // 从子 Account 中选择一个。支队 Group 类型有效
+
+	ID     int
+	Config AccountConfig
+	State  AccountState
+	Quota  AccountQuota
+	Dirty  bool // 修改了数据之后需要设置此标志，用来外部把修改落库
 }
 
-func (a *Account) wake() {
-	if a.closed || !a.aiprovider.Config().Enabled {
-		for _, ready := range a.waiters {
-			ready.unavailable = true
-			close(ready.ready)
-		}
-		a.waiters = nil
-		return
+func parseAccountConfig(raw json.RawMessage) (AccountConfig, error) {
+	var config AccountConfig
+	if err := unmarshalObject(raw, &config); err != nil {
+		return AccountConfig{}, fmt.Errorf("parse account config: %w", err)
 	}
-	limit := max(1, a.aiprovider.Config().MaxConcurrentConnections)
-	for len(a.waiters) > 0 && a.active < limit {
-		next := a.waiters[0]
-		a.waiters = a.waiters[1:]
-		a.active++
-		next.granted = true
-		close(next.ready)
-	}
+	config.Name = strings.TrimSpace(config.Name)
+	config.Supplier = strings.ToLower(strings.TrimSpace(config.Supplier))
+	config.APIEndpoint = strings.TrimSpace(config.APIEndpoint)
+	config.APIKey = strings.TrimSpace(config.APIKey)
+	config.Credential.AccessToken = strings.TrimSpace(config.Credential.AccessToken)
+	config.Credential.RefreshToken = strings.TrimSpace(config.Credential.RefreshToken)
+	return config, nil
 }
-func (a *Account) acquire(ctx context.Context, queueLimit int) (func(), error) {
-	a.mu.Lock()
-	if err := ctx.Err(); err != nil {
-		a.mu.Unlock()
+
+func parseAccountState(raw json.RawMessage) (AccountState, error) {
+	var state AccountState
+	if err := unmarshalObject(raw, &state); err != nil {
+		return AccountState{}, fmt.Errorf("parse account state: %w", err)
+	}
+	return state, nil
+}
+
+func parseAccountQuota(raw json.RawMessage) (AccountQuota, error) {
+	var quota AccountQuota
+	if err := unmarshalObject(raw, &quota); err != nil {
+		return AccountQuota{}, fmt.Errorf("parse account quota: %w", err)
+	}
+	quota.Subscription = slices.Clone(quota.Subscription)
+	quota.Items = slices.Clone(quota.Items)
+	return quota, nil
+}
+
+func unmarshalObject(raw json.RawMessage, dst any) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return json.Unmarshal(raw, dst)
+}
+
+func NewAccount(manager *providerManager, id int, configJson json.RawMessage) (*Account, error) {
+	config, err := parseAccountConfig(configJson)
+	if err != nil {
 		return nil, err
 	}
-	config := a.aiprovider.Config()
-	if a.closed || !config.Enabled {
-		a.mu.Unlock()
-		return nil, ErrUnavailable
+
+	account := &Account{
+		manager: manager,
+		ID:      id,
+		Config:  config,
+		State:   AccountState{},
+		Quota:   AccountQuota{},
+		Dirty:   true,
 	}
-	if a.active < max(1, config.MaxConcurrentConnections) && len(a.waiters) == 0 {
-		a.active++
-		a.mu.Unlock()
-		return a.release, nil
+
+	if err := account.checkAccountConfig(config); err != nil {
+		return nil, err
 	}
-	if queueLimit <= 0 {
-		queueLimit = 100
+	if err := account.checkGroupNesting(config); err != nil {
+		return nil, err
 	}
-	if len(a.waiters) >= queueLimit {
-		a.mu.Unlock()
-		return nil, ErrQueueFull
-	}
-	ready := &accountWaiter{ready: make(chan struct{})}
-	a.waiters = append(a.waiters, ready)
-	timeout := config.QueueTimeoutSeconds
-	if timeout <= 0 {
-		timeout = 180
-	}
-	a.mu.Unlock()
-	timer := time.NewTimer(time.Duration(timeout) * time.Second)
-	defer timer.Stop()
-	var err error
-	select {
-	case <-ready.ready:
-		a.mu.Lock()
-		unavailable := ready.unavailable || a.closed || !a.aiprovider.Config().Enabled
-		if unavailable && ready.granted {
-			a.active--
-			a.wake()
-		}
-		a.mu.Unlock()
-		if unavailable {
-			return nil, ErrUnavailable
-		}
-		if err := ctx.Err(); err != nil {
-			a.release()
-			return nil, err
-		}
-		return a.release, nil
-	case <-ctx.Done():
-		err = ctx.Err()
-	case <-timer.C:
-		err = ErrQueueTimeout
-	}
-	a.mu.Lock()
-	if i := slices.Index(a.waiters, ready); i >= 0 {
-		a.waiters = append(a.waiters[:i], a.waiters[i+1:]...)
-	}
-	// A release may have granted a slot concurrently with cancellation.
-	if ready.granted {
-		a.active--
-	}
-	a.wake()
-	a.mu.Unlock()
-	return nil, err
+	account.initializeRuntime()
+
+	return account, nil
 }
-func (a *Account) release() { a.mu.Lock(); a.active--; a.wake(); a.mu.Unlock() }
-func (a *Account) Handle(r *http.Request, recorder APICallRecorder, queueLimit int) error {
-	release, err := a.acquire(r.Context(), queueLimit)
+
+func NewAccountFromDatabase(manager *providerManager, id int, configJson json.RawMessage, stateJson json.RawMessage, quotaJson json.RawMessage) (*Account, error) {
+	config, err := parseAccountConfig(configJson)
+	if err != nil {
+		return nil, err
+	}
+	state, err := parseAccountState(stateJson)
+	if err != nil {
+		return nil, err
+	}
+	state.ActiveConnections = 0
+	state.QueuedConnections = 0
+	quota, err := parseAccountQuota(quotaJson)
+	if err != nil {
+		return nil, err
+	}
+
+	account := &Account{
+		manager: manager,
+		ID:      id,
+		Config:  config,
+		State:   state,
+		Quota:   quota,
+		Dirty:   false,
+	}
+	if err := account.checkAccountConfig(config); err != nil {
+		return nil, err
+	}
+	account.initializeRuntime()
+
+	return account, nil
+}
+
+func (a *Account) initializeRuntime() {
+	if a.Config.Kind == AccountGroup {
+		newGroupScheduler(a)
+		return
+	}
+	newAccountLimiter(a)
+}
+
+func (a *Account) checkAccountConfig(config AccountConfig) error {
+	if a == nil || a.manager == nil {
+		return errAccountManagerRequired
+	}
+	if config.Name == "" {
+		return errAccountNameRequired
+	}
+	if config.ProxyGroupID < 0 || config.MaxConcurrentConnections < 0 || config.QueueTimeoutSeconds < 0 {
+		return errAccountLimitsOrProxyGroupNegative
+	}
+	switch config.ClientType {
+	case "", ClientClaude, ClientCodex, ClientGrok:
+	default:
+		return errInvalidClientType
+	}
+	if config.APIEndpoint != "" {
+		endpoint, err := url.Parse(config.APIEndpoint)
+		if err != nil || endpoint.Host == "" || endpoint.User != nil || endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+			return errInvalidAPIEndpoint
+		}
+	}
+
+	switch config.Kind {
+	case AccountGroup:
+		if len(config.Members) == 0 {
+			return errGroupAccountRequiresMembers
+		}
+		if config.Supplier != "" || config.APIKey != "" || config.Credential != (oauth.OAuthCredential{}) || config.APIEndpoint != "" || config.OfficialOnly {
+			return errGroupAccountHasSupplierConfiguration
+		}
+		seen := make(map[int]struct{}, len(config.Members))
+		for _, member := range config.Members {
+			if member.ID <= 0 || member.ID == a.ID || member.Weight <= 0 {
+				return errGroupMemberIDOrWeightInvalid
+			}
+			if _, ok := seen[member.ID]; ok {
+				return errDuplicateGroupMember
+			}
+			seen[member.ID] = struct{}{}
+		}
+		return nil
+	case AccountSubscription:
+		if config.Credential.AccessToken == "" {
+			return errOAuthAccountAccessTokenRequired
+		}
+		if config.APIKey != "" {
+			return errOAuthAccountHasAPIKey
+		}
+	case AccountAPI:
+		if config.APIKey == "" {
+			return errAPIAccountAPIKeyRequired
+		}
+		if config.Credential != (oauth.OAuthCredential{}) || config.OfficialOnly || config.SubscriptionPlan != "" {
+			return errAPIAccountHasSubscriptionFields
+		}
+	default:
+		return errInvalidAccountKind
+	}
+	if len(config.Members) != 0 {
+		return errOnlyGroupAccountsMayHaveMembers
+	}
+	if config.Supplier == "" || a.manager.getSupplier(config.Supplier) == nil {
+		return errUnknownSupplier
+	}
+	return nil
+}
+
+// checkGroupNesting keeps groups one level deep: a group's members must be
+// existing non-group accounts, and an account that is already a member of a
+// group cannot itself become a group. It needs the live account set, so it is
+// not applied when loading accounts from the database.
+func (a *Account) checkGroupNesting(config AccountConfig) error {
+	if config.Kind != AccountGroup {
+		return nil
+	}
+	for _, member := range config.Members {
+		account := a.manager.getAccount(member.ID)
+		if account == nil {
+			return fmt.Errorf("%w: group member %d", ErrAccountNotFound, member.ID)
+		}
+		account.mu.RLock()
+		kind := account.Config.Kind
+		account.mu.RUnlock()
+		if kind == AccountGroup {
+			return errNestedGroupMember
+		}
+	}
+	for _, account := range a.manager.ListAccounts() {
+		if account == a {
+			continue
+		}
+		account.mu.RLock()
+		isMember := account.Config.Kind == AccountGroup && slices.ContainsFunc(account.Config.Members, func(m GroupMember) bool { return m.ID == a.ID })
+		account.mu.RUnlock()
+		if isMember {
+			return errGroupMemberCannotBeGroup
+		}
+	}
+	return nil
+}
+
+func (a *Account) UpdateConfig(raw json.RawMessage) error {
+	config, err := parseAccountConfig(raw)
 	if err != nil {
 		return err
 	}
-	defer release()
-	if !AllowsClient(a.aiprovider.Config(), DetectClient(r.Header)) {
-		return ErrClientDenied
+
+	a.accessMu.Lock()
+	defer a.accessMu.Unlock()
+	a.mu.RLock()
+	currentCredential := a.Config.Credential
+	a.mu.RUnlock()
+	if config.Kind == AccountSubscription && config.Credential.RefreshToken != "" && config.Credential.RefreshToken == currentCredential.RefreshToken {
+		config.Credential = currentCredential
 	}
-	a.aiprovider.Handle(r, recorder)
+	if err := a.checkAccountConfig(config); err != nil {
+		return err
+	}
+	if err := a.checkGroupNesting(config); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	a.Config = config
+	a.Dirty = true
+	if a.limiter != nil {
+		a.limiter.NotifyConfigChangedLocked()
+	}
+	if a.scheduler != nil {
+		a.scheduler.NotifyConfigChangedLocked()
+	}
+	a.mu.Unlock()
 	return nil
+}
+
+func (a *Account) close() {
+	newAccountLimiter(a).Close()
+}
+
+// GetAccess resolves one concrete account for req and returns both values
+// needed to forward it. API accounts use their API key as the access token;
+// OAuth accounts refresh an expiring credential using ctx.
+func (a *Account) GetAccess(ctx context.Context, req *http.Request) (accessToken, apiBaseURL string, err error) {
+	if ctx == nil {
+		return "", "", errContextRequired
+	}
+	if err := ctx.Err(); err != nil {
+		return "", "", err
+	}
+
+	account, err := a.accountForRequest(req)
+	if err != nil {
+		return "", "", err
+	}
+
+	account.mu.RLock()
+	config := account.Config
+	manager := account.manager
+	account.mu.RUnlock()
+
+	switch config.Kind {
+	case AccountAPI:
+		apiBaseURL, err = resolveAPIBaseURL(config, manager, req)
+		if err != nil {
+			return "", "", err
+		}
+		if config.APIKey == "" {
+			return "", "", errAccountAPIKeyEmpty
+		}
+		return config.APIKey, apiBaseURL, nil
+	case AccountSubscription:
+	default:
+		return "", "", errAccountDoesNotProvideAccessToken
+	}
+
+	account.accessMu.Lock()
+	defer account.accessMu.Unlock()
+
+	account.mu.RLock()
+	config = account.Config
+	manager = account.manager
+	refreshAt := account.State.RefreshAt
+	account.mu.RUnlock()
+	apiBaseURL, err = resolveAPIBaseURL(config, manager, req)
+	if err != nil {
+		return "", "", err
+	}
+	credential := config.Credential
+	if credential.AccessToken == "" {
+		return "", "", errOAuthCredentialNoAccessToken
+	}
+	if !accessTokenNeedsRefresh(time.Now(), refreshAt, credential.ExpiresAt) {
+		return credential.AccessToken, apiBaseURL, nil
+	}
+	if manager == nil || manager.oauth == nil {
+		return "", "", errOAuthManagerNotConfigured
+	}
+
+	refreshed, err := manager.oauth.Refresh(ctx, config.Supplier, &credential, config.ProxyGroupID)
+	if err != nil {
+		return "", "", fmt.Errorf("refresh OAuth credential: %w", err)
+	}
+	account.mu.Lock()
+	account.Config.Credential = *refreshed
+	account.State.RefreshAt = time.Now().UTC()
+	account.Dirty = true
+	account.mu.Unlock()
+	return refreshed.AccessToken, apiBaseURL, nil
+}
+
+func accessTokenNeedsRefresh(now, refreshAt, expiresAt time.Time) bool {
+	if refreshAt.IsZero() || now.Sub(refreshAt) >= accessTokenRefreshInterval {
+		return true
+	}
+	return !expiresAt.IsZero() && !expiresAt.After(now.Add(accessTokenRefreshAdvance))
+}
+
+func resolveAPIBaseURL(config AccountConfig, manager *providerManager, req *http.Request) (string, error) {
+	if config.APIEndpoint != "" {
+		return config.APIEndpoint, nil
+	}
+	if config.Kind == AccountSubscription && config.Supplier == "openai" && !isClaudeRequest(req) {
+		return "https://chatgpt.com/backend-api/codex", nil
+	}
+	if manager == nil {
+		return "", errAccountManagerNotConfigured
+	}
+	supplier := manager.getSupplier(config.Supplier)
+	if supplier == nil {
+		return "", errUnknownSupplier
+	}
+
+	supplierConfig := supplier.GetConfig()
+	baseURL := supplierConfig.OpenAIURL
+	if isClaudeRequest(req) {
+		baseURL = supplierConfig.ClaudeURL
+	}
+	if baseURL == "" {
+		return "", errSupplierNoAPIBaseURL
+	}
+	return baseURL, nil
+}
+
+func (a *Account) accountForRequest(req *http.Request) (*Account, error) {
+	if a == nil {
+		return nil, errAccountRequired
+	}
+	if req == nil {
+		return nil, errRequestRequired
+	}
+
+	a.mu.RLock()
+	kind := a.Config.Kind
+	scheduler := a.scheduler
+	a.mu.RUnlock()
+	if kind != AccountGroup {
+		return a, nil
+	}
+	if scheduler == nil {
+		return nil, errAccountGroupSchedulerNotConfigured
+	}
+	// Group members are never groups, so one scheduling step yields a concrete account.
+	account := scheduler.GetAccount(req)
+	if account == nil {
+		return nil, ErrUnavailable
+	}
+	return account, nil
+}
+
+func isClaudeRequest(req *http.Request) bool {
+	return req.URL != nil && (strings.HasSuffix(req.URL.Path, "/messages") || strings.HasSuffix(req.URL.Path, "/messages/count_tokens"))
+}
+
+func (a *Account) FetchQuota(ctx context.Context) (AccountQuota, error) {
+	a.mu.RLock()
+	config := a.Config
+	a.mu.RUnlock()
+	if config.Kind == AccountGroup {
+		return AccountQuota{}, ErrQuotaUnsupported
+	}
+
+	supplier := a.manager.getSupplier(config.Supplier)
+	if supplier == nil {
+		return AccountQuota{}, errUnknownSupplier
+	}
+
+	quota, err := supplier.FetchQuota(ctx, a)
+	if err != nil {
+		return AccountQuota{}, err
+	}
+
+	a.mu.Lock()
+	a.Quota = cloneQuota(quota)
+	a.Dirty = true
+	a.mu.Unlock()
+	return cloneQuota(quota), nil
+}
+
+func (a *Account) ResetQuota(ctx context.Context, resetType string) error {
+	a.mu.RLock()
+	config := a.Config
+	a.mu.RUnlock()
+	if config.Kind == AccountGroup {
+		return ErrQuotaUnsupported
+	}
+
+	supplier := a.manager.getSupplier(config.Supplier)
+	if supplier == nil {
+		return errUnknownSupplier
+	}
+
+	if err := supplier.ResetQuota(ctx, a, resetType); err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	a.Quota = AccountQuota{CacheStatus: QuotaCacheMissing}
+	a.Dirty = true
+	a.mu.Unlock()
+	return nil
+}
+
+func (a *Account) GetModels() []string {
+	if a == nil || a.manager == nil {
+		return nil
+	}
+
+	a.mu.RLock()
+	config := a.Config
+	a.mu.RUnlock()
+	if config.Kind == AccountGroup {
+		memberModels := make([][]string, 0, len(config.Members))
+		memberMappings := make([][]ModelMapping, 0, len(config.Members))
+		for _, member := range config.Members {
+			account := a.manager.getAccount(member.ID)
+			if account == nil {
+				return nil
+			}
+			account.mu.RLock()
+			memberConfig := account.Config
+			account.mu.RUnlock()
+			supplier := a.manager.getSupplier(memberConfig.Supplier)
+			if supplier == nil {
+				return nil
+			}
+			supplierConfig := supplier.GetConfig()
+			memberModels = append(memberModels, supplierConfig.Models)
+			memberMappings = append(memberMappings, supplierConfig.Mappings)
+		}
+		return intersectMappedModels(memberModels, memberMappings)
+	}
+	supplier := a.manager.getSupplier(config.Supplier)
+	if supplier == nil {
+		return []string{}
+	}
+	return slices.Clone(supplier.GetConfig().Models)
+}
+
+func intersectMappedModels(memberModels [][]string, memberMappings [][]ModelMapping) []string {
+	if len(memberModels) == 0 || len(memberModels) != len(memberMappings) {
+		return nil
+	}
+	candidates := make(map[string]struct{})
+	for _, models := range memberModels {
+		for _, model := range models {
+			candidates[model] = struct{}{}
+		}
+	}
+	for _, mappings := range memberMappings {
+		for _, mapping := range mappings {
+			if !strings.Contains(mapping.Pattern, "*") {
+				candidates[mapping.Pattern] = struct{}{}
+			}
+		}
+	}
+
+	models := make([]string, 0, len(candidates))
+	for candidate := range candidates {
+		supported := true
+		for index, available := range memberModels {
+			mapped := MapModel(memberMappings[index], candidate)
+			if !slices.Contains(available, mapped) {
+				supported = false
+				break
+			}
+		}
+		if supported {
+			models = append(models, candidate)
+		}
+	}
+	slices.Sort(models)
+	return models
+}
+
+func cloneQuota(quota AccountQuota) AccountQuota {
+	quota.Subscription = slices.Clone(quota.Subscription)
+	quota.Items = slices.Clone(quota.Items)
+	return quota
+}
+
+// SupportedClients returns the client protocols this account can serve, for
+// CC Switch export and key display. Capabilities come from the supplier's
+// URLs (a Claude URL serves Claude; an OpenAI-compatible URL serves Codex and
+// Grok); a group serves the intersection of its members. An account-level
+// client_type further narrows the result.
+func (a *Account) SupportedClients() ([]ClientType, error) {
+	if a == nil || a.manager == nil {
+		return nil, errAccountManagerNotConfigured
+	}
+
+	a.mu.RLock()
+	config := a.Config
+	a.mu.RUnlock()
+
+	clients := make([]ClientType, 0)
+	if config.Kind == AccountGroup {
+		for i, member := range config.Members {
+			account := a.manager.getAccount(member.ID)
+			if account == nil {
+				return nil, ErrAccountNotFound
+			}
+			part, err := account.SupportedClients()
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				clients = part
+				continue
+			}
+			clients = slices.DeleteFunc(clients, func(c ClientType) bool { return !slices.Contains(part, c) })
+		}
+	} else {
+		supplier := a.manager.getSupplier(config.Supplier)
+		if supplier == nil {
+			return nil, ErrSupplierNotFound
+		}
+		clients = slices.Clone(supplier.SupportClients())
+	}
+
+	if config.ClientType != "" {
+		clients = slices.DeleteFunc(clients, func(c ClientType) bool { return c != config.ClientType })
+	}
+	if len(clients) == 0 {
+		return nil, errNoSupportedClients
+	}
+
+	return clients, nil
 }

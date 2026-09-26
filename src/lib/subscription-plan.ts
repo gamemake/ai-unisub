@@ -23,29 +23,15 @@ const grokPlans: SubscriptionPlanOption[] = [
   { id: 'super_grok_heavy', label: 'SuperGrok Heavy' },
 ]
 
-/** Dummy uses the same catalog as Claude. */
-export function subscriptionPlansForProvider(provider: string): SubscriptionPlanOption[] {
-  switch (provider) {
-    case 'codex':
-      return codexPlans
-    case 'claude':
-    case 'dummy':
-      return claudePlans
-    case 'grok':
-      return grokPlans
-    default:
-      return []
-  }
-}
-
-/** Plans owned by a model-supplier id (openai / anthropic / grok). */
+/** Plans owned by a subscription supplier id (openai / anthropic / xai). Dummy uses Claude plans. */
 export function subscriptionPlansForSupplier(supplierID: string): SubscriptionPlanOption[] {
   switch (supplierID) {
     case 'openai':
       return codexPlans
     case 'anthropic':
+    case 'dummy':
       return claudePlans
-    case 'grok':
+    case 'xai':
       return grokPlans
     default:
       return []
@@ -60,18 +46,8 @@ export function samePlanWeights(a: Record<string, number> = {}, b: Record<string
   return true
 }
 
-export function defaultSubscriptionPlan(provider: string): SubscriptionPlan | '' {
-  switch (provider) {
-    case 'codex':
-      return 'codex_plus'
-    case 'claude':
-    case 'dummy':
-      return 'claude_pro'
-    case 'grok':
-      return 'super_grok'
-    default:
-      return ''
-  }
+export function defaultSubscriptionPlan(supplierID: string): SubscriptionPlan | '' {
+  return subscriptionPlansForSupplier(supplierID)[0]?.id || ''
 }
 
 export function subscriptionPlanLabel(id: string | undefined): string {

@@ -139,8 +139,12 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 			if account == nil {
 				return nil, nil, fmt.Errorf("API key %q references missing account %d", value, keys[i].AccountID)
 			}
-			if account.AIProvider != "dummy" {
-				return nil, nil, fmt.Errorf("API key %q is bound to provider %q, not dummy", value, account.AIProvider)
+			supplier, err := accountSupplier(account)
+			if err != nil {
+				return nil, nil, err
+			}
+			if supplier != "dummy" {
+				return nil, nil, fmt.Errorf("API key %q is bound to supplier %q, not dummy", value, supplier)
 			}
 			if foundKey != nil {
 				return nil, nil, fmt.Errorf("API key %q is ambiguous", value)
@@ -153,6 +157,18 @@ func findDummyAPIKey(db database.Database, value string) (*database.PersistedAPI
 		return nil, nil, fmt.Errorf("API key %q not found", value)
 	}
 	return foundKey, foundAccount, nil
+}
+
+func accountSupplier(account *database.PersistedAccount) (string, error) {
+	var config struct {
+		Supplier string `json:"supplier"`
+	}
+	if len(account.Config) > 0 {
+		if err := json.Unmarshal(account.Config, &config); err != nil {
+			return "", fmt.Errorf("parse config of account %d: %w", account.ID, err)
+		}
+	}
+	return strings.ToLower(strings.TrimSpace(config.Supplier)), nil
 }
 
 func recordDummyCall(db database.Database, key *database.PersistedAPIKey, account *database.PersistedAccount, index int, rng *mathrand.Rand) error {
@@ -194,8 +210,9 @@ func recordDummyCall(db database.Database, key *database.PersistedAPIKey, accoun
 	responseBody := fmt.Sprintf(`{"id":"dummy-%s","model":"%s","choices":[{"message":{"content":"dummy response sample %d"}}]}`, requestID[:10], model, 1+rng.Intn(999))
 	trace := &database.PersistedCallTrace{
 		ID:                     0,
+		UserID:                 key.UserID,
 		APIKey:                 key.Key,
-		AIProviderType:         "dummy",
+		AIProviderType:         account.AIProvider,
 		AccountID:              account.ID,
 		RequestID:              requestID,
 		SourceIP:               "127.0.0.1",

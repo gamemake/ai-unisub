@@ -1,11 +1,10 @@
 package unisub
 
 import (
-	"ai-unisub/internal/aiprovider"
+	aiprovider "ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
-	"ai-unisub/internal/proxy"
-	proxyconfig "ai-unisub/internal/proxy"
+	proxy "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
 	"crypto/rand"
 	"encoding/hex"
@@ -13,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"strconv"
 	"strings"
@@ -133,151 +131,55 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
 		return
 	}
-	id := 0
-	if len(parts) == 1 {
-		id, _ = strconv.Atoi(parts[0])
-	}
-	if len(parts) == 1 && parts[0] == "errors" && r.Method == http.MethodGet {
-		groupID, _ := strconv.Atoi(r.URL.Query().Get("group_id"))
-		proxyID := strings.TrimSpace(r.URL.Query().Get("proxy_id"))
-		if groupID == 0 || proxyID == "" {
-			common.WriteError(w, http.StatusBadRequest, "group_id and proxy_id are required")
-			return
-		}
-		value, err := ctx.Proxy().ErrorRecords(groupID, proxyID)
-		if err != nil {
-			common.WriteError(w, http.StatusNotFound, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-		return
-	}
-	if len(parts) == 1 && parts[0] == "test" && r.Method == http.MethodPost {
-		var input struct {
-			GroupID int    `json:"group_id"`
-			ProxyID string `json:"proxy_id"`
-			URL     string `json:"url"`
-		}
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil {
-			common.WriteError(w, http.StatusBadRequest, "invalid proxy test request")
-			return
-		}
-		var value *proxy.Entry
-		var err error
-		if input.GroupID != 0 && strings.TrimSpace(input.ProxyID) != "" {
-			value, err = ctx.Proxy().Test(r.Context(), input.GroupID, input.ProxyID)
-		} else if strings.TrimSpace(input.URL) != "" {
-			if _, err := proxyconfig.NewEndpoint(input.URL); err != nil {
-				common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
-				return
-			}
-			value, err = ctx.Proxy().TestURL(r.Context(), input.URL)
-		} else {
-			common.WriteError(w, http.StatusBadRequest, "group_id and proxy_id or url are required")
-			return
-		}
-		if err != nil {
-			common.WriteError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-		return
-	}
-	if len(parts) == 2 && parts[1] == "test" && r.Method == http.MethodPost {
-		var input struct {
-			ProxyID string `json:"proxy_id"`
-		}
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input) != nil || input.ProxyID == "" {
-			common.WriteError(w, http.StatusBadRequest, "proxy_id is required")
-			return
-		}
-		value, err := ctx.Proxy().Test(r.Context(), id, input.ProxyID)
-		if err != nil {
-			common.WriteError(w, http.StatusBadGateway, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, value)
-		return
-	}
 	if len(parts) > 1 {
 		http.NotFound(w, r)
 		return
 	}
+	id := 0
+	if len(parts) == 1 {
+		id, _ = strconv.Atoi(parts[0])
+	}
 	if id == 0 && r.Method == http.MethodGet {
-		value, err := ctx.Proxy().List()
-		if err != nil {
-			common.WriteError(w, http.StatusInternalServerError, "could not list proxy groups")
-			return
-		}
-		stripProxyErrors(value)
-		writeJSON(w, http.StatusOK, value)
+		writeJSON(w, http.StatusOK, ctx.Proxy().List())
 		return
 	}
 	if id == 0 && r.Method == http.MethodPost {
-		var value proxy.Group
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&value) != nil {
+		var config proxy.ProxyGroupConfig
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&config) != nil {
 			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
 			return
 		}
-		if err := validateProxyGroupURLs(&value); err != nil {
+		createdID, err := ctx.Proxy().Create(config)
+		if err != nil {
 			common.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		value.ID = 0
-		now := time.Now().UTC()
-		value.CreatedAt = now
-		value.UpdatedAt = now
-		if err := ctx.Proxy().New(&value); err != nil {
-			common.WriteError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		stripProxyErrors([]proxy.Group{value})
-		writeJSON(w, http.StatusCreated, value)
+		writeJSON(w, http.StatusCreated, findProxyGroup(ctx.Proxy().List(), createdID))
 		return
 	}
 	if id == 0 {
 		http.NotFound(w, r)
 		return
 	}
-	groups, err := ctx.Proxy().List()
-	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, "could not list proxy groups")
-		return
-	}
-	var current *proxy.Group
-	for i := range groups {
-		if groups[i].ID == id {
-			current = &groups[i]
-			break
-		}
-	}
+	current := findProxyGroup(ctx.Proxy().List(), id)
 	if current == nil {
 		http.NotFound(w, r)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		stripProxyErrors([]proxy.Group{*current})
 		writeJSON(w, http.StatusOK, current)
 	case http.MethodPut:
-		var value proxy.Group
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&value) != nil {
+		var config proxy.ProxyGroupConfig
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&config) != nil {
 			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
 			return
 		}
-		if err := validateProxyGroupURLs(&value); err != nil {
+		if err := ctx.Proxy().Update(id, config); err != nil {
 			common.WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		value.ID = id
-		value.CreatedAt = current.CreatedAt
-		value.UpdatedAt = time.Now().UTC()
-		if err := ctx.Proxy().Save(&value); err != nil {
-			common.WriteError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		stripProxyErrors([]proxy.Group{value})
-		writeJSON(w, http.StatusOK, value)
+		writeJSON(w, http.StatusOK, findProxyGroup(ctx.Proxy().List(), id))
 	case http.MethodDelete:
 		if err := ctx.Proxy().Delete(id); err != nil {
 			common.WriteError(w, http.StatusInternalServerError, "could not delete proxy group")
@@ -289,22 +191,13 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 	}
 }
 
-func validateProxyGroupURLs(group *proxy.Group) error {
-	for _, proxy := range group.Proxies {
-		if _, err := proxyconfig.NewEndpoint(proxy.URL); err != nil || strings.TrimSpace(proxy.URL) == "" {
-			return errors.New(common.MessageInvalidProxy)
+func findProxyGroup(groups []proxy.ProxyGroup, id int) *proxy.ProxyGroup {
+	for i := range groups {
+		if groups[i].ID == id {
+			return &groups[i]
 		}
 	}
 	return nil
-}
-
-func stripProxyErrors(groups []proxy.Group) {
-	for gi := range groups {
-		for pi := range groups[gi].Proxies {
-			groups[gi].Proxies[pi].LastErrorAt = nil
-			groups[gi].Proxies[pi].ErrorRecords = nil
-		}
-	}
 }
 
 func usageTimeRange(r *http.Request) (database.TimeRange, error) {
@@ -674,31 +567,12 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 		defer m.mutations.Unlock()
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
-		accounts, err := ctx.Database().ListAccounts()
-		if err != nil {
-			common.WriteError(w, 500, common.MessageCouldNotListAIProviders)
-			return
-		}
+		accounts := ctx.AIProviders().ListAccounts()
 		items := make([]map[string]any, 0, len(accounts))
-		for _, a := range accounts {
-			item := publicAccount(nil, a)
-			if isAdmin(r) {
-				item = publicAccount(ctx.Database(), a)
-				if provider, ok := ctx.AIProviders().Get(a.ID); ok {
-					// Runtime config includes load-time defaults (e.g. subscription_plan).
-					item["config"] = sanitizeJSON(canonicalProviderConfig(a.Config, provider.Config()))
-					if a.AIProvider != "group" {
-						if quota := provider.GetCachedQuota(); quota != nil {
-							item["quota"] = quota
-						}
-					}
-				} else if a.AIProvider != "group" {
-					item["quota"] = &aiprovider.Quota{CacheStatus: aiprovider.QuotaCacheMissing}
-				}
-			}
-			items = append(items, item)
+		for _, account := range accounts {
+			items = append(items, publicProviderAccount(account, isAdmin(r)))
 		}
-		writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
+		writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 		return
 	}
 	if !isAdmin(r) {
@@ -721,46 +595,43 @@ func (m *APIModule) aiProviders(ctx framework.ModuleContext, w http.ResponseWrit
 	http.NotFound(w, r)
 }
 
-func publicAccount(db database.Database, a database.PersistedAccount) map[string]any {
-	item := map[string]any{"id": a.ID, "name": a.Name, "provider": a.AIProvider, "auth_type": aiProviderAuthType(a.Config), "enabled": accountEnabled(a.Config), "config": sanitizeJSON(a.Config), "created_at": a.CreatedAt, "updated_at": a.UpdatedAt}
-	if db != nil {
-		if id := credentialIDFromConfig(a.Config); id != "" {
-			if raw, err := db.LoadCredential(id); err == nil {
-				var credential any
-				if json.Unmarshal(raw, &credential) == nil {
-					item["credential"] = credential
-				}
-			}
-		}
+// accountProvider is the wire "provider": the supplier ID, or "group" for group accounts.
+func accountProvider(config aiprovider.AccountConfig) string {
+	if config.Kind == aiprovider.AccountGroup {
+		return string(aiprovider.AccountGroup)
 	}
-	return item
+	return config.Supplier
 }
 
-func aiProviderAuthType(raw json.RawMessage) string {
-	var fields map[string]any
-	if json.Unmarshal(raw, &fields) != nil {
-		return "oauth"
-	}
-	if value, ok := fields["auth_type"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.ToLower(strings.TrimSpace(value))
+func accountAuthType(config aiprovider.AccountConfig) string {
+	if config.Kind == aiprovider.AccountAPI {
+		return "api_key"
 	}
 	return "oauth"
 }
 
-func accountEnabled(raw json.RawMessage) bool {
-	var fields map[string]any
-	if json.Unmarshal(raw, &fields) != nil {
-		return true
+func publicProviderAccount(account *aiprovider.Account, admin bool) map[string]any {
+	item := map[string]any{
+		"id": account.ID, "name": account.Config.Name, "provider": accountProvider(account.Config),
+		"auth_type": accountAuthType(account.Config), "enabled": account.Config.Enabled,
 	}
-	value, ok := fields["enabled"]
-	if !ok {
-		return true
+	if admin {
+		// Secrets never leave the server; updates treat an empty secret as "keep the stored one".
+		config := account.Config
+		config.APIKey = ""
+		config.Credential.AccessToken = ""
+		config.Credential.RefreshToken = ""
+		item["config"] = config
+		if account.Config.Kind != aiprovider.AccountGroup {
+			quota := account.Quota
+			if quota.CacheStatus == "" {
+				// Never queried: the pages show "unknown" for missing.
+				quota.CacheStatus = aiprovider.QuotaCacheMissing
+			}
+			item["quota"] = quota
+		}
 	}
-	enabled, ok := value.(bool)
-	if !ok {
-		return true
-	}
-	return enabled
+	return item
 }
 
 func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
@@ -772,84 +643,41 @@ func (m *APIModule) createAIProvider(ctx framework.ModuleContext, w http.Respons
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	if input.AIProvider == "" || len(input.Config) == 0 || string(input.Config) == "null" {
+	if len(input.Config) == 0 || string(input.Config) == "null" {
 		common.WriteError(w, 400, common.MessageAIProviderAndConfigRequired)
 		return
 	}
-	if !json.Valid(input.Config) {
-		common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
-		return
-	}
-	config, credentialID, credentialRaw, err := normalizeAIProviderConfig(input.Config)
+	config, err := decodeAccountConfig(input.Name, input.Config)
 	if err != nil {
-		common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-	if credentialID != "" {
-		if _, err := ctx.Database().LoadCredential(credentialID); err != nil {
-			common.WriteError(w, 400, common.MessageCredentialNotFound)
-			return
+	// "provider" is either an account kind or a supplier ID; config fields take precedence.
+	switch kind := aiprovider.AccountKind(input.AIProvider); kind {
+	case aiprovider.AccountSubscription, aiprovider.AccountAPI, aiprovider.AccountGroup:
+		if config.Kind == "" {
+			config.Kind = kind
+		}
+	default:
+		if config.Supplier == "" && config.Kind != aiprovider.AccountGroup {
+			config.Supplier = input.AIProvider
 		}
 	}
-	if credentialRaw != nil {
-		credentialID, err = randomID(16)
-		if err != nil {
-			common.WriteError(w, 500, common.MessageCouldNotGenerateCredentialID)
-			return
-		}
-		if err = ctx.Database().SaveCredential(credentialID, credentialRaw); err != nil {
-			common.WriteError(w, 500, common.MessageCouldNotSaveCredential)
-			return
-		}
-		config, _, _, _ = normalizeAIProviderConfigWithID(input.Config, credentialID)
-	}
-	account := &database.PersistedAccount{ID: 0, Name: input.Name, AIProvider: input.AIProvider, Config: config}
-	if err := ctx.Database().SaveAccount(account); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotSaveAIProvider)
+	raw, err := json.Marshal(config)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-
-	if _, err = ctx.AIProviders().Create(account.ID, input.AIProvider, config, nil); err != nil {
-		if credentialID != "" && credentialRaw != nil {
-			_ = ctx.Database().DeleteCredential(credentialID)
-		}
-		_ = ctx.Database().DeleteAccount(account.ID)
-		common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
+	account, err := ctx.AIProviders().NewAccount(raw)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-
-	if p, ok := ctx.AIProviders().Get(account.ID); ok {
-		account.Config = canonicalProviderConfig(config, p.Config())
-	}
-	applyExportedState(ctx, account)
-	if err = ctx.Database().SaveAccount(account); err != nil {
-		ctx.AIProviders().Remove(account.ID)
-		if credentialID != "" && credentialRaw != nil {
-			_ = ctx.Database().DeleteCredential(credentialID)
-		}
-		return
-	}
-	writeJSON(w, 201, publicAccount(ctx.Database(), *account))
+	writeJSON(w, http.StatusCreated, publicProviderAccount(account, true))
 }
 
 func (m *APIModule) deleteAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
-	if ctx.AIProviders().Referenced(id) {
-		common.WriteError(w, 400, common.MessageAIProviderStillReferenced)
-		return
-	}
-	accounts, err := ctx.Database().ListAccounts()
-	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListAIProviders)
-		return
-	}
-	var account *database.PersistedAccount
-	for i := range accounts {
-		if accounts[i].ID == id {
-			account = &accounts[i]
-			break
-		}
-	}
-	if account == nil {
+	if providerAccount(ctx, id) == nil {
 		common.WriteError(w, 404, common.MessageAIProviderNotFound)
 		return
 	}
@@ -864,157 +692,77 @@ func (m *APIModule) deleteAIProvider(ctx framework.ModuleContext, w http.Respons
 			return
 		}
 	}
-	if err := ctx.Database().DeleteAccount(id); err != nil {
+	for _, account := range ctx.AIProviders().ListAccounts() {
+		if account.Config.Kind != aiprovider.AccountGroup {
+			continue
+		}
+		for _, member := range account.Config.Members {
+			if member.ID == id {
+				common.WriteError(w, http.StatusBadRequest, common.MessageAIProviderStillReferenced)
+				return
+			}
+		}
+	}
+	if err := ctx.AIProviders().DelAccount(id); err != nil {
 		common.WriteError(w, 500, common.MessageCouldNotDeleteAIProvider)
 		return
-	}
-	ctx.AIProviders().Remove(id)
-	if credentialID := credentialIDFromConfig(account.Config); credentialID != "" && !credentialReferenced(accounts, id, credentialID) {
-		_ = ctx.Database().DeleteCredential(credentialID)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (m *APIModule) updateAIProvider(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	var input struct {
-		Name       string          `json:"name"`
-		AIProvider string          `json:"provider"`
-		Config     json.RawMessage `json:"config"`
+		Name   string          `json:"name"`
+		Config json.RawMessage `json:"config"`
 	}
 	if !decodeJSON(w, r, &input) {
 		return
 	}
-	accounts, err := ctx.Database().ListAccounts()
-	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListAIProviders)
-		return
-	}
-	var account *database.PersistedAccount
-	for i := range accounts {
-		if accounts[i].ID == id {
-			account = &accounts[i]
-			break
-		}
-	}
+	account := providerAccount(ctx, id)
 	if account == nil {
 		common.WriteError(w, 404, common.MessageAIProviderNotFound)
 		return
 	}
-	previousConfig := append(json.RawMessage(nil), account.Config...)
-	var createdCredential, retiredCredential string
-	if input.Name != "" {
-		account.Name = input.Name
+	current := account.Config
+	if len(input.Config) == 0 || string(input.Config) == "null" {
+		input.Config, _ = json.Marshal(current)
 	}
-	if input.AIProvider != "" && input.AIProvider != account.AIProvider {
+	config, err := decodeAccountConfig(input.Name, input.Config)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		return
+	}
+	if config.Kind == "" {
+		config.Kind = current.Kind
+	}
+	if config.Kind != current.Kind {
 		common.WriteError(w, 400, common.MessageAIProviderTypeCannotChange)
 		return
 	}
-	if len(input.Config) != 0 && string(input.Config) != "null" {
-		if !json.Valid(input.Config) {
-			common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
-			return
-		}
-		// An omitted API key in an edit retains the stored secret. Never send it
-		// back to the browser just to round-trip an otherwise public config.
-		var next, previous map[string]any
-		if json.Unmarshal(input.Config, &next) == nil && next != nil && json.Unmarshal(account.Config, &previous) == nil {
-			if next["auth_type"] == "api_key" && previous["auth_type"] == "api_key" {
-				if _, supplied := next["api_key"]; !supplied {
-					next["api_key"] = previous["api_key"]
-				}
-			}
-			input.Config, _ = json.Marshal(next)
-		}
-		config, credentialID, credentialRaw, err := normalizeAIProviderConfig(input.Config)
-		if err != nil {
-			common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
-			return
-		}
-		if credentialID != "" {
-			if _, err := ctx.Database().LoadCredential(credentialID); err != nil {
-				common.WriteError(w, 400, common.MessageCredentialNotFound)
-				return
-			}
-		}
-		if credentialRaw != nil {
-			credentialID, err = randomID(16)
-			if err != nil {
-				common.WriteError(w, 500, common.MessageCouldNotGenerateCredentialID)
-				return
-			}
-			if err = ctx.Database().SaveCredential(credentialID, credentialRaw); err != nil {
-				common.WriteError(w, 500, common.MessageCouldNotSaveCredential)
-				return
-			}
-			config, _, _, _ = normalizeAIProviderConfigWithID(input.Config, credentialID)
-			createdCredential = credentialID
-		}
-		if p, ok := ctx.AIProviders().Get(id); ok {
-			_ = p
-			if err := ctx.AIProviders().UpdateConfig(id, config); err != nil {
-				if credentialRaw != nil {
-					_ = ctx.Database().DeleteCredential(credentialID)
-				}
-				common.WriteError(w, 400, common.MessageInvalidAIProviderConfig)
-				return
-			}
-		}
-		oldCredentialID := credentialIDFromConfig(account.Config)
-		account.Config = config
-		if p, ok := ctx.AIProviders().Get(id); ok {
-			account.Config = canonicalProviderConfig(config, p.Config())
-		}
-		if oldCredentialID != "" && oldCredentialID != credentialID && !credentialReferenced(accounts, id, oldCredentialID) {
-			retiredCredential = oldCredentialID
-		}
+	// Responses mask secrets, so an empty secret keeps the stored one.
+	if config.Kind == aiprovider.AccountAPI && config.APIKey == "" {
+		config.APIKey = current.APIKey
 	}
-	account.UpdatedAt = time.Now().UTC()
-	applyExportedState(ctx, account)
-	if err := ctx.Database().SaveAccount(account); err != nil {
-		_ = ctx.AIProviders().UpdateConfig(id, previousConfig)
-		if createdCredential != "" {
-			_ = ctx.Database().DeleteCredential(createdCredential)
-		}
-		common.WriteError(w, 500, common.MessageCouldNotSaveAIProvider)
+	if config.Kind == aiprovider.AccountSubscription && config.Credential.AccessToken == "" {
+		config.Credential = current.Credential
+	}
+	raw, err := json.Marshal(config)
+	if err != nil || ctx.AIProviders().SetAccountConfig(r.Context(), id, raw) != nil {
+		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
 		return
 	}
-	if retiredCredential != "" {
-		_ = ctx.Database().DeleteCredential(retiredCredential)
-	}
-	writeJSON(w, 200, publicAccount(ctx.Database(), *account))
+	writeJSON(w, http.StatusOK, publicProviderAccount(providerAccount(ctx, id), true))
 }
 
-func applyExportedState(ctx framework.ModuleContext, account *database.PersistedAccount) {
-	if account == nil {
-		return
+func decodeAccountConfig(name string, raw json.RawMessage) (aiprovider.AccountConfig, error) {
+	var config aiprovider.AccountConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return aiprovider.AccountConfig{}, err
 	}
-	if data, ok := ctx.AIProviders().Export(account.ID); ok {
-		account.State = data.State
+	if name != "" {
+		config.Name = name
 	}
-}
-
-func canonicalProviderConfig(raw json.RawMessage, c aiprovider.AIProviderConfig) json.RawMessage {
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &fields)
-	delete(fields, "client_types")
-	if fields == nil {
-		fields = map[string]json.RawMessage{}
-	}
-	normalized, _ := json.Marshal(c)
-	var values map[string]json.RawMessage
-	_ = json.Unmarshal(normalized, &values)
-	maps.Copy(fields, values)
-	out, _ := json.Marshal(fields)
-	return out
-}
-
-func credentialReferenced(accounts []database.PersistedAccount, deletedID int, credentialID string) bool {
-	for _, a := range accounts {
-		if a.ID != deletedID && credentialIDFromConfig(a.Config) == credentialID {
-			return true
-		}
-	}
-	return false
+	return config, nil
 }
 
 func (m *APIModule) keys(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
@@ -1096,7 +844,7 @@ func (m *APIModule) listKeys(ctx framework.ModuleContext, w http.ResponseWriter,
 	}
 	items := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
-		items = append(items, publicAPIKeyWithClients(k, ctx.AIProviders().SupportedClientsForProvider(k.AccountID)))
+		items = append(items, publicAPIKeyWithClients(k, accountClients(ctx, k.AccountID)))
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "total": len(items)})
 }
@@ -1150,7 +898,7 @@ func (m *APIModule) createKey(ctx framework.ModuleContext, w http.ResponseWriter
 		common.WriteError(w, 500, common.MessageCouldNotSaveAPIKey)
 		return
 	}
-	writeJSON(w, 201, publicAPIKeyWithClients(*key, ctx.AIProviders().SupportedClientsForProvider(key.AccountID)))
+	writeJSON(w, 201, publicAPIKeyWithClients(*key, accountClients(ctx, key.AccountID)))
 }
 
 func (m *APIModule) getKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int) {
@@ -1158,7 +906,7 @@ func (m *APIModule) getKey(ctx framework.ModuleContext, w http.ResponseWriter, u
 	if !ok {
 		return
 	}
-	writeJSON(w, 200, publicAPIKeyWithClients(*key, ctx.AIProviders().SupportedClientsForProvider(key.AccountID)))
+	writeJSON(w, 200, publicAPIKeyWithClients(*key, accountClients(ctx, key.AccountID)))
 }
 
 func (m *APIModule) deleteKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int) {
@@ -1200,6 +948,26 @@ func publicAPIKeyWithClients(k database.PersistedAPIKey, clients []aiprovider.Cl
 	item := publicAPIKey(k)
 	item["client_types"] = clientTypesJSON(clients)
 	return item
+}
+
+func accountClients(ctx framework.ModuleContext, accountID int) []aiprovider.ClientType {
+	account := providerAccount(ctx, accountID)
+	if account == nil {
+		return nil
+	}
+	clients, err := account.SupportedClients()
+	if err != nil {
+		return nil
+	}
+	return clients
+}
+
+func clientTypesJSON(clients []aiprovider.ClientType) []string {
+	result := make([]string, len(clients))
+	for i, client := range clients {
+		result[i] = string(client)
+	}
+	return result
 }
 
 func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
@@ -1316,31 +1084,6 @@ func randomID(bytes int) (string, error) {
 	return hex.EncodeToString(raw), nil
 }
 
-func sanitizeJSON(raw json.RawMessage) any {
-	var value any
-	if json.Unmarshal(raw, &value) != nil {
-		return nil
-	}
-	sanitizeValue(value)
-	return value
-}
-func sanitizeValue(value any) {
-	switch v := value.(type) {
-	case map[string]any:
-		for key := range v {
-			lower := strings.ToLower(key)
-			if lower == "access_token" || lower == "refresh_token" || lower == "api_key" || lower == "raw" || lower == "credential" {
-				delete(v, key)
-			} else {
-				sanitizeValue(v[key])
-			}
-		}
-	case []any:
-		for _, item := range v {
-			sanitizeValue(item)
-		}
-	}
-}
 func normalizeAIProviderConfig(raw json.RawMessage) (json.RawMessage, string, json.RawMessage, error) {
 	return normalizeAIProviderConfigWithID(raw, "")
 }
@@ -1380,14 +1123,6 @@ func normalizeAIProviderConfigWithID(raw json.RawMessage, credentialID string) (
 		return nil, "", nil, err
 	}
 	return result, credentialID, nil, nil
-}
-func credentialIDFromConfig(raw json.RawMessage) string {
-	var value map[string]any
-	if json.Unmarshal(raw, &value) != nil {
-		return ""
-	}
-	id, _ := value["credential_id"].(string)
-	return id
 }
 
 func (m *APIModule) login(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {

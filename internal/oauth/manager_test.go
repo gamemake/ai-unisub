@@ -2,133 +2,150 @@ package oauth
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"sync"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"ai-unisub/internal/database"
+	"ai-unisub/internal/proxy"
 )
 
-type testAdapter struct {
-	mu      sync.Mutex
-	refresh int
-	service string
-	expires time.Duration
-}
+func TestManagerPKCEFlowRecordsOutboundCall(t *testing.T) {
+	db, proxyManager := openTestDependencies(t)
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		response.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
 
-func (a *testAdapter) Service() string { return a.service }
-func (a *testAdapter) BuildAuthorizationURL(_ context.Context, in AuthorizationInput) (AuthorizationResult, error) {
-	return AuthorizationResult{AuthorizationURL: "https://example.test/authorize?state=" + in.State}, nil
-}
-func (a *testAdapter) Exchange(_ context.Context, _, _, _, _ string, _ *http.Client) (*OAuthCredential, error) {
-	return &OAuthCredential{AccessToken: "access", RefreshToken: "refresh", ExpiresAt: time.Now().Add(time.Hour)}, nil
-}
-func (a *testAdapter) Refresh(_ context.Context, old *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
-	a.mu.Lock()
-	a.refresh++
-	a.mu.Unlock()
-	return &OAuthCredential{AccessToken: "refreshed", RefreshToken: old.RefreshToken, ExpiresAt: time.Now().Add(a.expires)}, nil
-}
-
-type testStore struct {
-	mu    sync.Mutex
-	value json.RawMessage
-}
-
-func (s *testStore) LoadCredential(string) (json.RawMessage, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.value) == 0 {
-		return nil, errors.New("missing")
-	}
-	return append(json.RawMessage(nil), s.value...), nil
-}
-func (s *testStore) SaveCredential(_ string, v json.RawMessage) error {
-	s.mu.Lock()
-	s.value = append(json.RawMessage(nil), v...)
-	s.mu.Unlock()
-	return nil
-}
-func (s *testStore) DeleteCredential(string) error { return nil }
-
-func TestManagerPKCEStateAndOneTimeSession(t *testing.T) {
-	m := NewManager(nil)
-	adapter := &testAdapter{service: OAuthServiceClaude}
-	if err := m.Register(adapter); err != nil {
+	manager := NewManager(db, proxyManager)
+	adapter := &testPKCEAdapter{service: "test-pkce", endpoint: server.URL}
+	if err := manager.Register(adapter); err != nil {
 		t.Fatal(err)
 	}
-	client := &http.Client{}
-	start, err := m.Start(t.Context(), OAuthServiceClaude, "subject", "http://127.0.0.1/callback", client)
+	started, err := manager.Start(t.Context(), adapter.service, "subject", "http://127.0.0.1/callback", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := m.session(start.SessionID, false)
-	if err != nil || session.HTTPClient != client {
-		t.Fatalf("session client=%p err=%v", session.HTTPClient, err)
-	}
-	if _, err := m.Complete(t.Context(), start.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
-		t.Fatalf("state error=%v", err)
-	}
-	s, err := m.session(start.SessionID, false)
+	session, err := manager.SessionForSubject(started.SessionID, adapter.service, "subject")
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential, err := m.Complete(t.Context(), start.SessionID, "code", s.State)
+	if _, err := manager.Complete(t.Context(), started.SessionID, "code", "wrong"); !errors.Is(err, ErrStateMismatch) {
+		t.Fatalf("expected state mismatch, got %v", err)
+	}
+	credential, err := manager.Complete(t.Context(), started.SessionID, "code", session.State)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if credential.AccessToken != "access" {
-		t.Fatalf("credential=%+v", credential)
+		t.Fatalf("unexpected credential: %+v", credential)
 	}
-	if _, err := m.Complete(t.Context(), start.SessionID, "code", s.State); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("replay error=%v", err)
+	if _, err := manager.SessionForState(session.State); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("completed session was not consumed: %v", err)
+	}
+
+	logs, total, err := db.QueryProxyLogs(database.ProxyLogFilter{
+		GroupID: 0, AppType: "oauth:" + adapter.service,
+		TimeRange: database.TimeRange{Start: time.Now().Add(-time.Minute), End: time.Now().Add(time.Minute)},
+	}, 1, 10)
+	if err != nil || total != 1 || len(logs) != 1 || logs[0].HTTPErrorCode != http.StatusCreated {
+		t.Fatalf("outbound OAuth call was not recorded: logs=%+v total=%d err=%v", logs, total, err)
 	}
 }
 
-func TestManagerSessionLookupBindsStateAndSubject(t *testing.T) {
-	m := NewManager(nil)
-	if err := m.Register(&testAdapter{service: OAuthServiceClaude}); err != nil {
-		t.Fatal(err)
-	}
-	start, err := m.Start(t.Context(), OAuthServiceClaude, "user-1", "http://127.0.0.1/callback", nil)
+func TestManagerDummyDeviceFlow(t *testing.T) {
+	_, proxyManager := openTestDependencies(t)
+	manager := NewManager(nil, proxyManager)
+	started, err := manager.Start(t.Context(), OAuthServiceDummy, "subject", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stored, err := m.session(start.SessionID, false)
+	if started.UserCode == "" || started.VerificationURI == "" {
+		t.Fatalf("missing device authorization fields: %+v", started)
+	}
+	if _, err := manager.Poll(t.Context(), started.SessionID); !errors.Is(err, ErrAuthorizationPending) {
+		t.Fatalf("expected pending result, got %v", err)
+	}
+	credential, err := manager.Poll(t.Context(), started.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	session, err := m.SessionForState(stored.State)
-	if err != nil || session.ID != start.SessionID || session.SubjectID != "user-1" {
-		t.Fatalf("session=%+v err=%v", session, err)
+	if credential.AccessToken == "" {
+		t.Fatal("device flow returned an empty access token")
 	}
-	if _, err := m.SessionForSubject(start.SessionID, OAuthServiceClaude, "user-2"); !errors.Is(err, ErrSessionNotFound) {
-		t.Fatalf("cross-subject lookup error=%v", err)
+	if _, err := manager.Poll(t.Context(), started.SessionID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("successful device session was not consumed: %v", err)
 	}
 }
 
-func TestManagerRefreshesCredentialOnceConcurrently(t *testing.T) {
-	store := &testStore{}
-	encoded, _ := json.Marshal(&OAuthCredential{AccessToken: "old", RefreshToken: "refresh", ExpiresAt: time.Now().Add(-time.Minute)})
-	_ = store.SaveCredential("id", encoded)
-	adapter := &testAdapter{service: OAuthServiceClaude, expires: time.Hour}
-	m := NewManager(store)
-	_ = m.Register(adapter)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			token, err := m.GetValidAccessToken(t.Context(), OAuthServiceClaude, "id", nil)
-			if err != nil || token != "refreshed" {
-				t.Errorf("token=%q err=%v", token, err)
-			}
-		})
+func TestManagerRefreshPreservesCredentialMetadata(t *testing.T) {
+	_, proxyManager := openTestDependencies(t)
+	manager := NewManager(nil, proxyManager)
+	adapter := &testPKCEAdapter{service: "test-refresh", refresh: &OAuthCredential{AccessToken: "new"}}
+	if err := manager.Register(adapter); err != nil {
+		t.Fatal(err)
 	}
-	wg.Wait()
-	adapter.mu.Lock()
-	calls := adapter.refresh
-	adapter.mu.Unlock()
-	if calls != 1 {
-		t.Fatalf("refresh calls=%d", calls)
+	old := &OAuthCredential{AccessToken: "old", RefreshToken: "refresh", TokenType: "Bearer", AccountID: "account", AccountName: "name", Email: "mail@example.test"}
+	refreshed, err := manager.Refresh(t.Context(), adapter.service, old, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if refreshed.RefreshToken != old.RefreshToken || refreshed.AccountID != old.AccountID || refreshed.AccountName != old.AccountName || refreshed.Email != old.Email {
+		t.Fatalf("refresh metadata was not preserved: %+v", refreshed)
+	}
+}
+
+type testPKCEAdapter struct {
+	service  string
+	endpoint string
+	refresh  *OAuthCredential
+}
+
+func (a *testPKCEAdapter) Service() string { return a.service }
+
+func (a *testPKCEAdapter) BuildAuthorizationURL(_ context.Context, _ AuthorizationInput) (AuthorizationResult, error) {
+	return AuthorizationResult{AuthorizationURL: "https://example.test/authorize"}, nil
+}
+
+func (a *testPKCEAdapter) Exchange(ctx context.Context, _, _, _, _ string, client *http.Client) (*OAuthCredential, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, err
+	}
+	defer response.Body.Close()
+	return &OAuthCredential{AccessToken: "access"}, nil
+}
+
+func (a *testPKCEAdapter) Refresh(_ context.Context, _ *OAuthCredential, _ *http.Client) (*OAuthCredential, error) {
+	return a.refresh, nil
+}
+
+func openTestDependencies(t *testing.T) (database.Database, proxy.ProxyManager) {
+	t.Helper()
+	db, err := database.NewDatabase("sqlite::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Open(); err != nil {
+		t.Fatal(err)
+	}
+	manager := proxy.NewManager(db)
+	if err := manager.Open(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return db, manager
 }

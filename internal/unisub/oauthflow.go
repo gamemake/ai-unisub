@@ -2,8 +2,7 @@ package unisub
 
 import (
 	"ai-unisub/internal/common"
-	"ai-unisub/internal/oauth"
-	"ai-unisub/internal/proxy"
+	oauth "ai-unisub/internal/oauth"
 	framework "ai-unisub/internal/service"
 	"encoding/json"
 	"errors"
@@ -149,44 +148,13 @@ func (m *OAuthFlowModule) start(ctx framework.ModuleContext, w http.ResponseWrit
 	}
 	redirect := callbackURL(ctx.Config(), r, service)
 	var input struct {
-		Proxy        string `json:"proxy"`
-		ProxyGroupID int    `json:"proxy_group_id"`
+		ProxyGroupID int `json:"proxy_group_id"`
 	}
 	if err := decodeOptionalJSON(r, &input); err != nil {
 		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidJSONBody)
 		return
 	}
-	reqCtx := r.Context()
-	var endpoint *proxy.Endpoint
-	if input.ProxyGroupID != 0 {
-		if input.Proxy != "" {
-			common.WriteError(w, 400, "choose proxy_group_id or proxy, not both")
-			return
-		}
-		var err error
-		endpoint, err = ctx.Proxy().ResolveProxy(reqCtx, input.ProxyGroupID, service, nil)
-		if err != nil {
-			common.WriteError(w, 503, common.MessageInvalidProxy)
-			return
-		}
-		// Authorization may be interactive and outlive a probe lease. Selection
-		// does not prove health; release admission without reporting success.
-		defer func() { _ = ctx.Proxy().ReportProxy(endpoint, service, proxy.Canceled) }()
-	}
-	if strings.TrimSpace(input.Proxy) != "" {
-		var err error
-		endpoint, err = proxy.NewEndpoint(input.Proxy)
-		if err != nil {
-			common.WriteError(w, http.StatusBadRequest, common.MessageInvalidProxy)
-			return
-		}
-	}
-
-	var client *http.Client
-	if endpoint != nil {
-		client = proxy.Client(http.DefaultClient, endpoint)
-	}
-	result, err := ctx.OAuth().Start(reqCtx, service, strconv.Itoa(p.User.ID), redirect, client)
+	result, err := ctx.OAuth().Start(r.Context(), service, strconv.Itoa(p.User.ID), redirect, input.ProxyGroupID)
 	if err != nil {
 		oauthAPIError(w, err)
 		return
@@ -317,14 +285,14 @@ func callbackURL(cfg framework.Config, r *http.Request, service string) string {
 		base = scheme + "://" + r.Host
 	}
 	path := "/callback"
-	if service == oauth.OAuthServiceCodex {
+	if service == oauth.OAuthServiceOpenAI {
 		path = "/auth/callback"
 	}
 	return base + path
 }
 
 func validOAuthService(service string) bool {
-	return service == oauth.OAuthServiceGrok || service == oauth.OAuthServiceCodex || service == oauth.OAuthServiceClaude || service == oauth.OAuthServiceDummy
+	return service == oauth.OAuthServiceXAI || service == oauth.OAuthServiceOpenAI || service == oauth.OAuthServiceAnthropic || service == oauth.OAuthServiceDummy
 }
 
 func oauthAPIError(w http.ResponseWriter, err error) {

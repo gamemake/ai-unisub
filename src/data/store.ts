@@ -1,7 +1,7 @@
 // Server-state boundary: components observe queries and invoke actions; no view fetches directly.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { clearSession, json, queryClient, request } from './client'
-import type { Account, AICatalogResponse, APIKey, CCSwitchClientConfig, Call, CallDetail, List, OAuthStart, ProviderOption, Proxy, ProxyGroup, Supplier, Usage, Quota, User } from './types'
+import type { Account, AICatalogResponse, APIKey, CCSwitchClientConfig, Call, CallDetail, List, OAuthStart, ProviderOption, ProxyGroup, ProxyGroupConfig, Supplier, Usage, Quota, User } from './types'
 const id = (value: string | number) => encodeURIComponent(String(value))
 export const useMe = () => useQuery({ queryKey: ['me'], queryFn: ({ signal }) => request<User | null>('/api/me', { signal }) })
 export const useAIProviders = () => useQuery({ queryKey: ['ai-providers'], queryFn: ({ signal }) => request<List<Account>>('/api/ai-providers', { signal }) })
@@ -17,7 +17,7 @@ export const useKeys = () => useQuery({ queryKey: ['keys'], queryFn: ({ signal }
 export const useKeyConfig = (keyID?: number, client?: string) => useQuery({ queryKey: ['key-config', keyID, client], enabled: !!keyID && !!client, queryFn: ({ signal }) => request<CCSwitchClientConfig>(`/api/keys/${id(keyID!)}/config/${id(client!)}`, { signal }) })
 export const useProviderModels = (providerID?: number) => useQuery({ queryKey: ['provider-models', providerID], enabled: !!providerID, queryFn: ({ signal }) => request<{ models: { id: string }[] }>(`/api/ai-providers/${id(providerID!)}/models`, { signal }) })
 export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: ({ signal }) => request<List<User>>('/api/users', { signal }) })
-export const useProxies = (enabled = true) => useQuery({ queryKey: ['proxies'], enabled, queryFn: ({ signal }) => request<ProxyGroup[] | null>('/api/proxy-groups', { signal }) })
+export const useProxies = (enabled = true) => useQuery({ queryKey: ['proxies'], enabled, queryFn: ({ signal }) => request<ProxyGroup[]>('/api/proxy-groups', { signal }) })
 export const useCalls = (params: Record<string, string> = {}) => useQuery({ queryKey: ['calls', params], staleTime: 0, refetchInterval: 15_000, queryFn: ({ signal }) => request<List<Call>>('/api/calls?' + new URLSearchParams(params), { signal }) })
 export const useUsage = (kind: 'subscriptions' | 'users', params: Record<string, string>) => useQuery({ queryKey: ['usage', kind, params], queryFn: ({ signal }) => request<Usage>(`/api/usage/${kind}?` + new URLSearchParams(params), { signal }) })
 export function useAction<T, R = unknown>(action: (input: T) => Promise<R>, invalidate: string[] = []) {
@@ -40,10 +40,8 @@ export const actions = {
   resetPassword: (input: { id: number; password: string }) => request('/api/users/' + id(input.id) + '/password', json('POST', input)),
   deleteUser: (key: number) => request('/api/users/' + id(key), json('DELETE')),
   password: (input: { old_password: string; new_password: string }) => request('/api/password', json('POST', input)),
-  saveProxy: (input: Partial<ProxyGroup>) => request<ProxyGroup>('/api/proxy-groups' + (input.id ? '/' + id(input.id) : ''), json(input.id ? 'PUT' : 'POST', input)),
+  saveProxy: ({ id: groupID, ...config }: ProxyGroupConfig & { id?: number }) => request<ProxyGroup>('/api/proxy-groups' + (groupID ? '/' + id(groupID) : ''), json(groupID ? 'PUT' : 'POST', config)),
   deleteProxy: (key: number) => request('/api/proxy-groups/' + id(key), json('DELETE')),
-  testProxy: (input: { group_id?: number; proxy_id?: string; url?: string }) => request<Proxy>('/api/proxy-groups/test', json('POST', input)),
-  proxyErrors: (input: { group_id: number; proxy_id: string }) => request<Proxy>('/api/proxy-groups/errors?' + new URLSearchParams({ group_id: String(input.group_id), proxy_id: input.proxy_id })),
   callDetail: (call: Call) => request<CallDetail>('/api/calls/' + id(call.finished_at.slice(0, 10).replaceAll('-', '')) + '/' + id(call.id)),
   oauthStart: (input: { aiProvider: string; proxy_group_id?: number }) => request<OAuthStart>(`/api/oauth/${id(input.aiProvider)}/start`, json('POST', input.proxy_group_id ? { proxy_group_id: input.proxy_group_id } : {})),
   oauthPoll: (input: { aiProvider: string; session_id: string }) => request<{ status: string; result_id?: string; interval_seconds?: number }>(`/api/oauth/${id(input.aiProvider)}/poll/${id(input.session_id)}`, json('POST', {})),

@@ -58,9 +58,13 @@ export interface AIProviderConfig {
 export interface Account { id: number; name: string; provider: string; auth_type: string; enabled: boolean; config: AIProviderConfig; credential?: unknown; quota?: Quota; created_at?: string; updated_at?: string }
 export interface ProviderOption { id: number; name: string; provider: string; enabled: boolean; client_types: ClientType[] }
 export interface APIKey { id: number; name: string; account_id: number; key: string; valid_seconds: number; created_at: string; updated_at?: string; expires_at?: string; client_types?: ClientType[] }
-export interface ProxyHealth { status: string; requests: number; failures: number; consecutive_failures: number; cooldown_until?: string; probe_requests: number; probe_failures: number }
-export interface Proxy { id?: string; url: string; enabled: boolean; status?: string; last_available?: string; network?: ProxyHealth; applications?: Record<string, ProxyHealth>; error_records?: { start_at: string; count: number }[] }
-export interface ProxyGroup { id: number; name: string; remark: string; max_retries: number; proxies: Proxy[]; created_at?: string; updated_at?: string }
+/** Health observed from real requests; network health is shared, application health is per caller (e.g. oauth:openai). */
+export interface ProxyHealth { healthy: boolean; last_success?: string; last_failure?: string }
+export interface ProxyState extends ProxyHealth { applications?: Record<string, ProxyHealth> }
+/** Proxies are ordered by priority; URLs are normalized by the server. */
+export interface ProxyGroupConfig { name: string; proxies: string[] }
+/** state.proxies is keyed by proxy URL; a proxy without an entry has not been used yet. */
+export interface ProxyGroup { id: number; config: ProxyGroupConfig; state: { proxies?: Record<string, ProxyState> } }
 export interface Call { id: number; session_id: string; source_ip: string; username?: string; request_id: string; account_id: number; provider_type: string; url: string; outbound_url?: string; model: string; http_error_code: number; http_error_info?: string; input_tokens: number; output_tokens: number; cache_creation_tokens?: number; cache_read_tokens?: number; queue_duration_ms?: number; request_duration_ms?: number; finished_at: string }
 /** Full call trace from GET /api/calls/:day/:id. Header maps follow Go http.Header JSON (name → string[]). Bodies are base64. */
 export type CallHeaders = Record<string, string[] | string>

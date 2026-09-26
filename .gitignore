@@ -6,6 +6,8 @@
 coverage.out
 coverage.html
 /.gocache/
+cmd/oauth/oauth
+cmd/unisub/unisub
 
 # User build
 /dummy*

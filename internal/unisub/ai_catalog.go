@@ -1,13 +1,34 @@
 package unisub
 
 import (
-	"ai-unisub/internal/aiprovider"
+	"encoding/json"
+	"maps"
+	"net/http"
+	"slices"
+	"strings"
+
+	aiprovider "ai-unisub/internal/aiprovider"
 	"ai-unisub/internal/common"
 	"ai-unisub/internal/service"
-	"encoding/json"
-	"net/http"
-	"strings"
 )
+
+// supplierView is the catalog shape the admin pages consume. Mappings use
+// from/to and plan weights are a plan ID → weight map.
+type supplierView struct {
+	ID                      string                  `json:"id"`
+	Name                    string                  `json:"name"`
+	ClaudeURL               string                  `json:"claude_url"`
+	OpenAIURL               string                  `json:"openai_url"`
+	Models                  []string                `json:"models"`
+	ModelMappings           []modelMappingView      `json:"model_mappings"`
+	SupportedClients        []aiprovider.ClientType `json:"supported_clients"`
+	SubscriptionPlanWeights map[string]int          `json:"subscription_plan_weights,omitempty"`
+}
+
+type modelMappingView struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
 
 func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) < 1 || len(parts) > 2 {
@@ -16,100 +37,133 @@ func (m *APIModule) aiCatalog(ctx service.ModuleContext, w http.ResponseWriter, 
 	}
 	if r.Method == http.MethodGet {
 		if len(parts) == 2 {
-			supplier, ok := ctx.AIProviders().Supplier(parts[1])
-			if !ok {
+			supplier := findSupplier(ctx, parts[1])
+			if supplier == nil {
 				http.NotFound(w, r)
 				return
 			}
-			writeJSON(w, 200, supplier)
+			writeJSON(w, http.StatusOK, supplierResponse(supplier, supplier.GetConfig()))
 			return
 		}
-		writeJSON(w, 200, map[string]any{"catalog": ctx.AIProviders().Catalog(), "builtin_suppliers": aiprovider.BuiltinSuppliers()})
+		suppliers := ctx.AIProviders().ListSuppliers()
+		items := make([]supplierView, 0, len(suppliers))
+		builtins := make([]supplierView, 0, len(suppliers))
+		for _, supplier := range suppliers {
+			items = append(items, supplierResponse(supplier, supplier.GetConfig()))
+			builtins = append(builtins, supplierResponse(supplier, supplier.GetBuiltinConfig()))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"catalog": map[string]any{"suppliers": items}, "builtin_suppliers": builtins})
 		return
 	}
 	if !isAdmin(r) {
-		common.WriteError(w, 403, common.MessageForbidden)
+		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
 		return
 	}
-	// Batch catalog PUT is not supported; only per-supplier updates.
-	if len(parts) != 2 {
-		w.Header().Set("Allow", "GET")
-		w.WriteHeader(405)
+	if len(parts) != 2 || r.Method != http.MethodPut {
+		methodNotAllowed(w)
 		return
 	}
-	if r.Method != http.MethodPut {
-		w.Header().Set("Allow", "GET, PUT")
-		w.WriteHeader(405)
+	supplier := findSupplier(ctx, parts[1])
+	if supplier == nil {
+		http.NotFound(w, r)
 		return
 	}
-	var body struct {
-		ID                               string                     `json:"id"`
-		Name                             string                     `json:"name"`
-		Models                           []string                   `json:"models"`
-		ModelMappings                    *[]aiprovider.ModelMapping `json:"model_mappings"`
-		SubscriptionPlanWeights          map[string]int             `json:"subscription_plan_weights"`
-		SubscriptionPlanWeightsSet       bool                       `json:"-"`
-		SubscriptionUsageHeaderOverrides map[string]string          `json:"subscription_usage_header_overrides"`
-		APIUsageHeaderOverrides          map[string]string          `json:"api_usage_header_overrides"`
-		ClaudeURL                        *string                    `json:"claude_url"`
-		OpenAIURL                        *string                    `json:"openai_url"`
-		CodexURL                         *string                    `json:"codex_url"`
+	var input struct {
+		ID                      string             `json:"id"`
+		Models                  []string           `json:"models"`
+		ModelMappings           []modelMappingView `json:"model_mappings"`
+		SubscriptionPlanWeights map[string]int     `json:"subscription_plan_weights"`
 	}
-	// Distinguish omitted weights from explicit {} via raw presence.
-	var raw map[string]json.RawMessage
-	if !decodeJSON(w, r, &raw) {
+	if !decodeJSON(w, r, &input) {
 		return
 	}
-	rawBody, _ := json.Marshal(raw)
-	if err := json.Unmarshal(rawBody, &body); err != nil {
-		common.WriteError(w, 400, common.MessageInvalidJSONBody)
+	if input.ID != "" && !strings.EqualFold(input.ID, parts[1]) {
+		common.WriteError(w, http.StatusBadRequest, "supplier ID must match the URL")
 		return
 	}
-	if _, ok := raw["subscription_plan_weights"]; ok {
-		body.SubscriptionPlanWeightsSet = true
-		if body.SubscriptionPlanWeights == nil {
-			body.SubscriptionPlanWeights = map[string]int{}
+	// Omitted fields keep the current effective value; the stored overlay is
+	// the difference from the built-in config.
+	config := supplier.GetConfig()
+	if input.Models != nil {
+		config.Models = input.Models
+	}
+	if input.ModelMappings != nil {
+		config.Mappings = make([]aiprovider.ModelMapping, len(input.ModelMappings))
+		for i, mapping := range input.ModelMappings {
+			config.Mappings[i] = aiprovider.ModelMapping{Pattern: mapping.From, Target: mapping.To}
 		}
 	}
-	if body.ID != "" && body.ID != parts[1] {
-		common.WriteError(w, 400, "supplier ID must match the URL")
+	if input.SubscriptionPlanWeights != nil {
+		config.Weights = planWeightsFromMap(input.SubscriptionPlanWeights, supplier.GetBuiltinConfig().Weights)
+	}
+	overlay, err := supplier.DiffConfig(config)
+	if err != nil {
+		common.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if body.ClaudeURL != nil || body.OpenAIURL != nil || body.CodexURL != nil {
-		common.WriteError(w, 400, "built-in supplier URLs cannot be modified")
+	raw, err := json.Marshal(overlay)
+	if err != nil {
+		common.WriteError(w, http.StatusInternalServerError, common.MessageInternalServerError)
 		return
-	}
-	desired := aiprovider.SupplierConfigurable{
-		Name:                             strings.TrimSpace(body.Name),
-		Models:                           body.Models,
-		SubscriptionUsageHeaderOverrides: body.SubscriptionUsageHeaderOverrides,
-		APIUsageHeaderOverrides:          body.APIUsageHeaderOverrides,
-	}
-	if desired.Models == nil {
-		// Missing models key: keep current effective models so name-only edits work.
-		if current, ok := ctx.AIProviders().Supplier(parts[1]); ok {
-			desired.Models = current.Models
-		}
-	}
-	if body.ModelMappings != nil {
-		desired.ModelMappings = *body.ModelMappings
-	} else if current, ok := ctx.AIProviders().Supplier(parts[1]); ok {
-		// Missing model_mappings key: keep current mappings.
-		desired.ModelMappings = current.ModelMappings
-	}
-	if body.SubscriptionPlanWeightsSet {
-		desired.SubscriptionPlanWeights = body.SubscriptionPlanWeights
 	}
 	m.mutations.Lock()
-	defer m.mutations.Unlock()
-	supplier, err := ctx.AIProviders().UpdateSupplier(parts[1], desired)
+	err = ctx.AIProviders().SetOverlayConfig(r.Context(), parts[1], raw)
+	m.mutations.Unlock()
 	if err != nil {
-		if err.Error() == "unknown supplier" {
-			http.NotFound(w, r)
-			return
-		}
-		common.WriteError(w, 400, err.Error())
+		common.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, 200, supplier)
+	writeJSON(w, http.StatusOK, supplierResponse(supplier, supplier.GetConfig()))
+}
+
+// planWeightsFromMap orders weights like the built-in list so an unchanged
+// map produces no overlay; unknown plans follow in name order.
+func planWeightsFromMap(weights map[string]int, builtin []aiprovider.SubscriptionPlanWeight) []aiprovider.SubscriptionPlanWeight {
+	result := make([]aiprovider.SubscriptionPlanWeight, 0, len(weights))
+	for _, plan := range builtin {
+		if weight, ok := weights[plan.Name]; ok {
+			result = append(result, aiprovider.SubscriptionPlanWeight{Name: plan.Name, Weight: weight})
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(weights)) {
+		if !slices.ContainsFunc(builtin, func(plan aiprovider.SubscriptionPlanWeight) bool { return plan.Name == name }) {
+			result = append(result, aiprovider.SubscriptionPlanWeight{Name: name, Weight: weights[name]})
+		}
+	}
+	return result
+}
+
+func findSupplier(ctx service.ModuleContext, id string) aiprovider.Supplier {
+	for _, supplier := range ctx.AIProviders().ListSuppliers() {
+		if strings.EqualFold(supplier.GetID(), id) {
+			return supplier
+		}
+	}
+	return nil
+}
+
+func supplierResponse(supplier aiprovider.Supplier, config aiprovider.SupplierConfig) supplierView {
+	mappings := make([]modelMappingView, len(config.Mappings))
+	for i, mapping := range config.Mappings {
+		mappings[i] = modelMappingView{From: mapping.Pattern, To: mapping.Target}
+	}
+	var weights map[string]int
+	if len(config.Weights) > 0 {
+		weights = make(map[string]int, len(config.Weights))
+		for _, plan := range config.Weights {
+			weights[plan.Name] = plan.Weight
+		}
+	}
+	clients := supplier.SupportClients()
+	if clients == nil {
+		clients = []aiprovider.ClientType{}
+	}
+	models := config.Models
+	if models == nil {
+		models = []string{}
+	}
+	return supplierView{
+		ID: supplier.GetID(), Name: supplier.GetName(), ClaudeURL: config.ClaudeURL, OpenAIURL: config.OpenAIURL,
+		Models: models, ModelMappings: mappings, SupportedClients: clients, SubscriptionPlanWeights: weights,
+	}
 }

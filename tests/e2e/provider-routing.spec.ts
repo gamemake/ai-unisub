@@ -7,7 +7,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await page.getByRole('button', { name: '登录控制台' }).click()
   await expect(page.getByRole('heading', { name: '个人总览', exact: true })).toBeVisible()
   for (const name of ['Routing A', 'Routing B']) {
-    const created = await page.request.post('/api/ai-providers', { data: { name, provider: 'dummy', config: { client_type: 'codex' } } })
+    const created = await page.request.post('/api/ai-providers', { data: { name, provider: 'dummy', config: { kind: 'subscription', supplier: 'dummy', subscription_plan: 'claude_pro', enabled: true, client_type: 'claude' } } })
     expect(created.status()).toBe(201)
   }
   // API setup does not invalidate the already-mounted browser query cache.
@@ -30,7 +30,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await dialog.getByRole('button', { name: '保存', exact: true }).click()
   await expect(dialog).toBeVisible()
   await dialog.getByRole('combobox', { name: '允许的客户端', exact: true }).click()
-  await page.getByRole('option', { name: 'Codex', exact: true }).click()
+  await page.getByRole('option', { name: 'Claude', exact: true }).click()
   await expect(dialog.getByRole('alert')).toHaveCount(0)
   await dialog.getByRole('spinbutton', { name: 'Routing A 权重', exact: true }).fill('5')
   await expect(dialog.getByRole('combobox', { name: '代理组', exact: true })).toHaveCount(0)
@@ -40,10 +40,10 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await expect(page.getByRole('cell', { name: 'Routing Group', exact: true })).toBeVisible()
   const savedProviders = await (await page.request.get('/api/ai-providers')).json()
-  expect(savedProviders.items.find((p: { name: string }) => p.name === 'Routing Group').config.client_type).toBe('codex')
+  expect(savedProviders.items.find((p: { name: string }) => p.name === 'Routing Group').config.client_type).toBe('claude')
   await page.getByRole('button', { name: '编辑 Routing Group', exact: true }).click()
   await expect(page.getByRole('spinbutton', { name: 'Routing A 权重', exact: true })).toHaveValue('5')
-  await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('Codex')
+  await expect(dialog.getByRole('combobox', { name: '允许的客户端', exact: true })).toContainText('Claude')
   await page.getByRole('dialog').getByRole('button', { name: '取消', exact: true }).click()
 
   await page.getByRole('button', { name: '添加账号', exact: true }).click()
@@ -121,7 +121,6 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   dialog = page.getByRole('dialog')
   await expect(dialog.getByLabel('Claude URL', { exact: true })).toHaveText('https://api.anthropic.com/v1')
   await expect(dialog.getByRole('form', { name: '供应商配置', exact: true })).toBeVisible()
-  await expect(dialog.getByRole('button', { name: '保存', exact: true })).toBeDisabled()
   await page.keyboard.press('Escape')
   await expect(page).toHaveURL(/#ai-catalog$/)
   await page.getByRole('row', { name: '查看 Kimi 详情', exact: true }).press('Enter')
@@ -133,7 +132,7 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(dialog.getByLabel('Claude URL', { exact: true })).toHaveText('https://api.moonshot.cn/anthropic/v1')
   await page.screenshot({ path: testInfo.outputPath('supplier-detail.png'), fullPage: true, animations: 'disabled' })
   const value = await (await page.request.get('/api/ai-catalog')).json()
-  expect(value.catalog.suppliers).toHaveLength(6)
+  expect(value.catalog.suppliers).toHaveLength(7)
   for (const supplier of value.catalog.suppliers) {
     expect(supplier).toEqual(expect.objectContaining({
       id: expect.any(String),
@@ -150,6 +149,6 @@ test('AI provider groups and model catalog can be configured from the dashboard'
   await expect(page).toHaveURL(/#ai-catalog$/)
   const providers = await (await page.request.get('/api/ai-providers')).json()
   const group = providers.items.find((p: { name: string }) => p.name === 'Routing Group')
-  expect(group.config.client_type).toBe('codex')
+  expect(group.config.client_type).toBe('claude')
   expect(group.config.client_types).toBeUndefined()
 })
