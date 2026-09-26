@@ -3,6 +3,7 @@ package aiprovider
 import (
 	"ai-unisub/internal/database"
 	"context"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"maps"
@@ -71,11 +72,11 @@ func (s *SupplierAnthropic) FetchQuota(ctx context.Context, account *Account) (A
 	if err != nil {
 		return AccountQuota{}, err
 	}
-	items, err := s.parseQuotaItems(body)
+	windows, err := s.parseSubscriptionQuota(body)
 	if err != nil {
 		return AccountQuota{}, err
 	}
-	return AccountQuota{Items: items, CacheStatus: QuotaCacheFresh, UpdatedAt: time.Now().UTC()}, nil
+	return AccountQuota{Subscription: windows, CacheStatus: QuotaCacheFresh, UpdatedAt: time.Now().UTC()}, nil
 }
 
 func (s *SupplierAnthropic) ResetQuota(ctx context.Context, account *Account, _ string) error {
@@ -103,12 +104,12 @@ func (s *SupplierAnthropic) accountConfig(account *Account) AccountConfig {
 func (s *SupplierAnthropic) authHeaders(config AccountConfig) (http.Header, error) {
 	headers := make(http.Header)
 	headers.Set("Accept", "application/json")
+	headers.Set("Anthropic-Version", "2023-06-01")
 	if config.Kind == AccountAPI {
 		if config.APIKey == "" {
 			return nil, ErrQuotaNotConfigured
 		}
 		headers.Set("X-Api-Key", config.APIKey)
-		headers.Set("Anthropic-Version", "2023-06-01")
 		return headers, nil
 	}
 	token := config.Credential.AccessToken
@@ -156,44 +157,59 @@ func (*SupplierAnthropic) parseModels(body []byte) ([]string, error) {
 	return models, nil
 }
 
-func (s *SupplierAnthropic) parseQuotaItems(body []byte) ([]QuotaItem, error) {
-	var value any
-	if err := json.Unmarshal(body, &value); err != nil {
+// parseSubscriptionQuota projects the OAuth usage windows (five_hour, seven_day and
+// seven_day_<scope>) into standard subscription items. Windows whose utilization is
+// null are skipped; utilization is already a percentage.
+func (*SupplierAnthropic) parseSubscriptionQuota(body []byte) ([]SubscriptionQuotaItem, error) {
+	var response map[string]jsontext.Value
+	if err := json.Unmarshal(body, &response); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidResponse, err)
 	}
-	items := make([]QuotaItem, 0)
-	s.flattenQuota("", value, &items)
-	if len(items) == 0 || len(items) > 128 {
+	windows := make([]SubscriptionQuotaItem, 0, 2)
+	for _, key := range slices.Sorted(maps.Keys(response)) {
+		var dimension string
+		switch {
+		case key == "five_hour":
+			dimension = "5h"
+		case key == "seven_day":
+			dimension = "weekly"
+		case strings.HasPrefix(key, "seven_day_"):
+			dimension = "weekly_" + strings.TrimPrefix(key, "seven_day_")
+		default:
+			continue
+		}
+		var window struct {
+			Utilization *float64 `json:"utilization"`
+			ResetsAt    *string  `json:"resets_at"`
+		}
+		if err := json.Unmarshal(response[key], &window); err != nil || window.Utilization == nil {
+			continue
+		}
+		item := SubscriptionQuotaItem{TimeDimension: dimension, Usage: *window.Utilization}
+		if window.ResetsAt != nil {
+			if resetAt, err := time.Parse(time.RFC3339Nano, *window.ResetsAt); err == nil {
+				item.ResetAt = resetAt.UTC()
+			}
+		}
+		windows = append(windows, item)
+	}
+	if len(windows) == 0 {
 		return nil, ErrInvalidResponse
 	}
-	slices.SortFunc(items, func(a, b QuotaItem) int { return strings.Compare(a.Name, b.Name) })
-	return items, nil
+	slices.SortStableFunc(windows, func(a, b SubscriptionQuotaItem) int {
+		return anthropicWindowRank(a.TimeDimension) - anthropicWindowRank(b.TimeDimension)
+	})
+	return windows, nil
 }
 
-func (s *SupplierAnthropic) flattenQuota(path string, value any, items *[]QuotaItem) {
-	if len(*items) > 128 {
-		return
+func anthropicWindowRank(dimension string) int {
+	switch dimension {
+	case "5h":
+		return 0
+	case "weekly":
+		return 1
 	}
-	switch value := value.(type) {
-	case map[string]any:
-		for _, key := range slices.Sorted(maps.Keys(value)) {
-			next := key
-			if path != "" {
-				next = path + "." + key
-			}
-			s.flattenQuota(next, value[key], items)
-		}
-	case []any:
-		for index, nested := range value {
-			s.flattenQuota(fmt.Sprintf("%s[%d]", path, index), nested, items)
-		}
-	case nil:
-	default:
-		encoded, err := json.Marshal(value)
-		if err == nil && path != "" {
-			*items = append(*items, QuotaItem{Name: path, Value: string(encoded)})
-		}
-	}
+	return 2
 }
 
 func (s *SupplierAnthropic) recordCall(account *Account, req *http.Request, resp *http.Response, body []byte, requestErr error, started time.Time) error {

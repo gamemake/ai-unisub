@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -71,11 +70,12 @@ func (s *SupplierOpenAI) FetchQuota(ctx context.Context, account *Account) (Acco
 	if err != nil {
 		return AccountQuota{}, err
 	}
-	items, err := s.parseQuotaItems(body)
+	observedAt := time.Now().UTC()
+	windows, err := s.parseSubscriptionQuota(body, observedAt)
 	if err != nil {
 		return AccountQuota{}, err
 	}
-	return AccountQuota{Items: items, CacheStatus: QuotaCacheFresh, UpdatedAt: time.Now().UTC()}, nil
+	return AccountQuota{Subscription: windows, CacheStatus: QuotaCacheFresh, UpdatedAt: observedAt}, nil
 }
 
 func (s *SupplierOpenAI) ResetQuota(ctx context.Context, account *Account, _ string) error {
@@ -158,44 +158,86 @@ func (*SupplierOpenAI) parseModels(body []byte) ([]string, error) {
 	return models, nil
 }
 
-func (s *SupplierOpenAI) parseQuotaItems(body []byte) ([]QuotaItem, error) {
-	var value any
-	if err := json.Unmarshal(body, &value); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidResponse, err)
-	}
-	items := make([]QuotaItem, 0)
-	s.flattenQuota("", value, &items)
-	if len(items) == 0 || len(items) > 128 {
-		return nil, ErrInvalidResponse
-	}
-	slices.SortFunc(items, func(a, b QuotaItem) int { return strings.Compare(a.Name, b.Name) })
-	return items, nil
+type codexRateLimitWindow struct {
+	UsedPercent        *float64 `json:"used_percent"`
+	LimitWindowSeconds int64    `json:"limit_window_seconds"`
+	ResetAfterSeconds  *int64   `json:"reset_after_seconds"`
+	ResetAt            int64    `json:"reset_at"`
 }
 
-func (s *SupplierOpenAI) flattenQuota(path string, value any, items *[]QuotaItem) {
-	if len(*items) > 128 {
-		return
+type codexRateLimit struct {
+	PrimaryWindow   *codexRateLimitWindow `json:"primary_window"`
+	SecondaryWindow *codexRateLimitWindow `json:"secondary_window"`
+}
+
+// parseSubscriptionQuota projects the wham usage rate limits into standard subscription
+// items. Windows are named by their actual duration rather than assuming primary is 5h;
+// additional rate limits keep their limit name as a suffix.
+func (*SupplierOpenAI) parseSubscriptionQuota(body []byte, observedAt time.Time) ([]SubscriptionQuotaItem, error) {
+	var response struct {
+		RateLimit            *codexRateLimit `json:"rate_limit"`
+		AdditionalRateLimits []struct {
+			LimitName      string          `json:"limit_name"`
+			MeteredFeature string          `json:"metered_feature"`
+			RateLimit      *codexRateLimit `json:"rate_limit"`
+		} `json:"additional_rate_limits"`
 	}
-	switch value := value.(type) {
-	case map[string]any:
-		for _, key := range slices.Sorted(maps.Keys(value)) {
-			next := key
-			if path != "" {
-				next = path + "." + key
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidResponse, err)
+	}
+	windows := make([]SubscriptionQuotaItem, 0, 2)
+	appendLimit := func(limit *codexRateLimit, suffix string) {
+		if limit == nil {
+			return
+		}
+		for _, window := range []*codexRateLimitWindow{limit.PrimaryWindow, limit.SecondaryWindow} {
+			if window == nil || window.UsedPercent == nil {
+				continue
 			}
-			s.flattenQuota(next, value[key], items)
-		}
-	case []any:
-		for index, nested := range value {
-			s.flattenQuota(fmt.Sprintf("%s[%d]", path, index), nested, items)
-		}
-	case nil:
-	default:
-		encoded, err := json.Marshal(value)
-		if err == nil && path != "" {
-			*items = append(*items, QuotaItem{Name: path, Value: string(encoded)})
+			item := SubscriptionQuotaItem{TimeDimension: codexWindowDimension(window.LimitWindowSeconds) + suffix, Usage: *window.UsedPercent}
+			switch {
+			case window.ResetAt > 0:
+				item.ResetAt = time.Unix(window.ResetAt, 0).UTC()
+			case window.ResetAfterSeconds != nil:
+				item.ResetAt = observedAt.Add(time.Duration(*window.ResetAfterSeconds) * time.Second).UTC()
+			}
+			windows = append(windows, item)
 		}
 	}
+	appendLimit(response.RateLimit, "")
+	for _, additional := range response.AdditionalRateLimits {
+		name := strings.TrimSpace(additional.LimitName)
+		if name == "" {
+			name = strings.TrimSpace(additional.MeteredFeature)
+		}
+		suffix := ""
+		if name != "" {
+			suffix = "_" + name
+		}
+		appendLimit(additional.RateLimit, suffix)
+	}
+	if len(windows) == 0 {
+		return nil, ErrInvalidResponse
+	}
+	return windows, nil
+}
+
+func codexWindowDimension(seconds int64) string {
+	switch {
+	case seconds <= 0:
+		return "unknown"
+	case seconds == 7*24*3600:
+		return "weekly"
+	case seconds >= 28*24*3600 && seconds <= 31*24*3600:
+		return "monthly"
+	case seconds%(24*3600) == 0:
+		return fmt.Sprintf("%dd", seconds/(24*3600))
+	case seconds%3600 == 0:
+		return fmt.Sprintf("%dh", seconds/3600)
+	case seconds%60 == 0:
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	return fmt.Sprintf("%ds", seconds)
 }
 
 func (s *SupplierOpenAI) recordCall(account *Account, req *http.Request, resp *http.Response, body []byte, requestErr error, started time.Time) error {
