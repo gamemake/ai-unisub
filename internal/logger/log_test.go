@@ -1,4 +1,4 @@
-package common
+package logger
 
 import (
 	"bytes"
@@ -136,7 +136,7 @@ func TestDefaultLoggingBeforeInitialization(t *testing.T) {
 }
 
 func TestConcurrentModulesAndReconfiguration(t *testing.T) {
-	var output bytes.Buffer // Intentionally not thread safe; Common must serialize writes.
+	var output bytes.Buffer // Intentionally not thread safe; Logger must serialize writes.
 	configureTestLog(t, LogConfig{Output: &output})
 	var wg sync.WaitGroup
 	for i := range 20 {
@@ -193,7 +193,7 @@ func TestOutputFailureDoesNotInterruptCaller(t *testing.T) {
 	}
 }
 
-func TestStandardLoggerUsesCommonFormat(t *testing.T) {
+func TestStandardLoggerUsesSharedFormat(t *testing.T) {
 	var output bytes.Buffer
 	configureTestLog(t, LogConfig{Output: &output})
 	logger := ModuleLogger("http").StandardLogger(slog.LevelError, "server_error")

@@ -5,13 +5,12 @@ import (
 	"net/http"
 
 	aiprovider "ai-unisub/internal/aiprovider"
-	"ai-unisub/internal/common"
 	framework "ai-unisub/internal/service"
 )
 
 func (m *APIModule) refreshAccountQuota(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		WriteError(w, http.StatusForbidden, MessageForbidden)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -20,11 +19,11 @@ func (m *APIModule) refreshAccountQuota(ctx framework.ModuleContext, w http.Resp
 	}
 	account := providerAccount(ctx, id)
 	if account == nil {
-		common.WriteError(w, http.StatusNotFound, common.MessageAIProviderNotFound)
+		WriteError(w, http.StatusNotFound, MessageAIProviderNotFound)
 		return
 	}
 	if account.Config.Kind == aiprovider.AccountGroup {
-		common.WriteError(w, http.StatusNotImplemented, "Group providers do not support quota queries")
+		WriteError(w, http.StatusNotImplemented, "Group providers do not support quota queries")
 		return
 	}
 	quota, err := ctx.AIProviders().FetchQuota(r.Context(), id)
@@ -38,7 +37,7 @@ func (m *APIModule) refreshAccountQuota(ctx framework.ModuleContext, w http.Resp
 		case errors.Is(err, aiprovider.ErrRateLimited):
 			status = http.StatusTooManyRequests
 		}
-		common.WriteError(w, status, quotaError(err))
+		WriteError(w, status, quotaError(err))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

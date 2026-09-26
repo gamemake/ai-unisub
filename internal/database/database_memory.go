@@ -81,7 +81,7 @@ func (m *MemoryDatabase) Open() error {
 		return err
 	}
 	m.replaceCache(accounts, users, apiKeys, proxyGroups, configs)
-	logger.InfoAttrs("opened",
+	ModuleLogger.InfoAttrs("opened",
 		slog.String("backend", fmt.Sprintf("%T", m.store)),
 		slog.Int("accounts", len(accounts)),
 		slog.Int("users", len(users)),
@@ -102,12 +102,12 @@ func (m *MemoryDatabase) Close() error {
 		m.logStoreError("close", err)
 		return err
 	}
-	logger.InfoAttrs("closed", slog.String("backend", fmt.Sprintf("%T", m.store)))
+	ModuleLogger.InfoAttrs("closed", slog.String("backend", fmt.Sprintf("%T", m.store)))
 	return nil
 }
 
 func (m *MemoryDatabase) logStoreError(operation string, err error) {
-	logger.ErrorAttrs("operation_failed",
+	ModuleLogger.ErrorAttrs("operation_failed",
 		slog.String("backend", fmt.Sprintf("%T", m.store)),
 		slog.String("operation", operation),
 		slog.String("error", err.Error()),
@@ -273,7 +273,7 @@ func (m *MemoryDatabase) CleanupProxyLog(days int) error {
 		m.logStoreError("cleanup_proxy_logs", err)
 		return err
 	}
-	logger.InfoAttrs("proxy_logs_cleaned", slog.Int("retention_days", days))
+	ModuleLogger.InfoAttrs("proxy_logs_cleaned", slog.Int("retention_days", days))
 	return nil
 }
 
@@ -430,7 +430,7 @@ func (m *MemoryDatabase) CleanupCallTrace(days int) error {
 		m.logStoreError("cleanup_call_traces", err)
 		return err
 	}
-	logger.InfoAttrs("call_traces_cleaned", slog.Int("retention_days", days))
+	ModuleLogger.InfoAttrs("call_traces_cleaned", slog.Int("retention_days", days))
 	return nil
 }
 

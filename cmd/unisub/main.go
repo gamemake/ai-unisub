@@ -8,20 +8,20 @@ import (
 	"net/http"
 	"os"
 
-	"ai-unisub/internal/common"
+	"ai-unisub/internal/logger"
 	"ai-unisub/internal/service"
 	"ai-unisub/internal/unisub"
 )
 
 func main() {
 	if err := run(); err != nil {
-		common.ModuleLogger("cmd/unisub").Error("server_failed", err.Error())
+		ModuleLogger.Error("server_failed", err.Error())
 		os.Exit(1)
 	}
 }
 
 func run() error {
-	if err := common.InitLogging(common.LogConfig{}); err != nil {
+	if err := logger.InitLogging(logger.LogConfig{}); err != nil {
 		return err
 	}
 	dbURL := cmp.Or(os.Getenv("DATABASE_URL"), "sqlite://./data/ai-unisub.db")
@@ -33,13 +33,12 @@ func run() error {
 	}
 	defer func() {
 		if err := srv.Close(); err != nil {
-			common.ModuleLogger("cmd/unisub").Error("shutdown_failed", err.Error())
+			ModuleLogger.Error("shutdown_failed", err.Error())
 		}
 	}()
 	addr := cmp.Or(os.Getenv("LISTEN_ADDR"), ":8080")
-	logger := common.ModuleLogger("cmd/unisub")
-	logger.Info("server_starting", fmt.Sprintf("AI UniSub listening on %s", addr))
-	server := &http.Server{Addr: addr, Handler: srv.Handler(), ErrorLog: logger.StandardLogger(slog.LevelError, "http_server_error")}
+	ModuleLogger.Info("server_starting", fmt.Sprintf("AI UniSub listening on %s", addr))
+	server := &http.Server{Addr: addr, Handler: srv.Handler(), ErrorLog: ModuleLogger.StandardLogger(slog.LevelError, "http_server_error")}
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}

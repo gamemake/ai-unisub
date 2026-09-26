@@ -1,5 +1,5 @@
 package oauth
 
-import "ai-unisub/internal/common"
+import "ai-unisub/internal/logger"
 
-var logger = common.ModuleLogger("oauth")
+var ModuleLogger = logger.ModuleLogger("oauth")

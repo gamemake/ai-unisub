@@ -1,7 +1,6 @@
 package unisub
 
 import (
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/service"
 	"ai-unisub/internal/web"
 	"io/fs"
@@ -47,7 +46,7 @@ func (m *StaticModule) Init(ctx service.ModuleContext) error {
 func (m *StaticModule) page(w http.ResponseWriter, r *http.Request) {
 	data, err := fs.ReadFile(m.files, "index.html")
 	if err != nil {
-		common.WriteError(w, http.StatusServiceUnavailable, common.MessageWebBuildUnavailable)
+		WriteError(w, http.StatusServiceUnavailable, MessageWebBuildUnavailable)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

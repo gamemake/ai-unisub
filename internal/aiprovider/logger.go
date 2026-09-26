@@ -1,5 +1,5 @@
 package aiprovider
 
-import "ai-unisub/internal/common"
+import "ai-unisub/internal/logger"
 
-var logger = common.ModuleLogger("aiprovider")
+var ModuleLogger = logger.ModuleLogger("aiprovider")

@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	aiprovider "ai-unisub/internal/aiprovider"
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/service"
 )
 
@@ -56,7 +55,7 @@ func (m *APIModule) suppliers(ctx service.ModuleContext, w http.ResponseWriter, 
 		return
 	}
 	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		WriteError(w, http.StatusForbidden, MessageForbidden)
 		return
 	}
 	if len(parts) != 2 || r.Method != http.MethodPut {
@@ -78,7 +77,7 @@ func (m *APIModule) suppliers(ctx service.ModuleContext, w http.ResponseWriter, 
 		return
 	}
 	if input.ID != "" && !strings.EqualFold(input.ID, parts[1]) {
-		common.WriteError(w, http.StatusBadRequest, "supplier ID must match the URL")
+		WriteError(w, http.StatusBadRequest, "supplier ID must match the URL")
 		return
 	}
 	// Omitted fields keep the current effective value; the stored overlay is
@@ -98,19 +97,19 @@ func (m *APIModule) suppliers(ctx service.ModuleContext, w http.ResponseWriter, 
 	}
 	overlay, err := supplier.DiffConfig(config)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, err.Error())
+		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	raw, err := json.Marshal(overlay)
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageInternalServerError)
+		WriteError(w, http.StatusInternalServerError, MessageInternalServerError)
 		return
 	}
 	m.mutations.Lock()
 	err = ctx.AIProviders().SetOverlayConfig(r.Context(), parts[1], raw)
 	m.mutations.Unlock()
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, err.Error())
+		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, supplierResponse(supplier, supplier.GetConfig()))

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 )
@@ -13,21 +12,21 @@ type fileCredentialStore struct{}
 
 func (fileCredentialStore) LoadCredential(path string) (json.RawMessage, error) {
 	if path == "" {
-		return nil, errors.New("credential file path is empty")
+		return nil, errCredentialFilePathEmpty
 	}
 	value, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	if !json.Valid(value) {
-		return nil, errors.New("credential file is invalid JSON")
+		return nil, errCredentialFileInvalidJSON
 	}
 	return json.RawMessage(value), nil
 }
 
 func (fileCredentialStore) SaveCredential(path string, value json.RawMessage) error {
 	if path == "" || len(value) == 0 || !json.Valid(value) {
-		return errors.New("credential file path and valid JSON are required")
+		return errCredentialFileSaveInvalid
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -62,7 +61,7 @@ func (fileCredentialStore) SaveCredential(path string, value json.RawMessage) er
 
 func (fileCredentialStore) DeleteCredential(path string) error {
 	if path == "" {
-		return errors.New("credential file path is empty")
+		return errCredentialFilePathEmpty
 	}
 	err := os.Remove(path)
 	if os.IsNotExist(err) {

@@ -147,7 +147,7 @@ SetSessionCookie 只写响应 Cookie。ClearSessionCookie 在 token 非空时先
 
 - AuthAPIKey 失败或路径以 `/api/` 开头的认证失败，输出 JSON 错误，沿用 401、403 或 500 状态。
 - 当前非 API 路径的会话认证失败会 303 重定向到 `/login`；这是现有中间件行为，不是应用目标页面入口。
-- 内部 writeError 转发给 common.WriteError，使用 unauthorized、forbidden 或 internal server error 等公共消息。
+- 内部 `writeError` 与客户端安全消息由 Service 自己的 `errors.go` 持有，不依赖公共业务错误包。
 - UniSub 中的 `/` 为 AuthNone 静态页面，因此不进入会话失败重定向分支；前端通过 API 判断会话。该应用契约由 Static、API 和前端实现。
 
 框架认证验证应覆盖主体读取、Session 生命周期、Cookie、用户状态变化、Key 有效期与绑定、管理员角色限制、密码格式和失败响应；登录请求参数及页面交互属于应用层验证范围。

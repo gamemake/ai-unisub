@@ -1,5 +1,5 @@
 package database
 
-import "ai-unisub/internal/common"
+import "ai-unisub/internal/logger"
 
-var logger = common.ModuleLogger("database")
+var ModuleLogger = logger.ModuleLogger("database")

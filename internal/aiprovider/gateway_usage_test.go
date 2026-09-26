@@ -1,7 +1,6 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"bytes"
 	"compress/gzip"
@@ -68,7 +67,7 @@ func TestGatewayCanceledContextRecordsClientCanceled(t *testing.T) {
 		"upstream": gatewayUpstreamError(ctx, errors.New("read body")),
 	} {
 		typed, ok := errors.AsType[*gatewayError](err)
-		if !ok || typed.status != statusClientClosedRequest || typed.message != common.MessageClientCanceled {
+		if !ok || typed.status != statusClientClosedRequest || typed.message != MessageClientCanceled {
 			t.Errorf("%s: got %v, want client canceled", name, err)
 		}
 	}
@@ -79,10 +78,10 @@ func TestGatewayTraceRecordsClientCanceledStatus(t *testing.T) {
 	call := &gatewayCall{
 		account: &Account{ID: 1}, supplier: newSupplierDummy(nil), startedAt: time.Now(),
 		response:   &http.Response{StatusCode: http.StatusOK, Header: http.Header{}},
-		requestErr: newGatewayError(statusClientClosedRequest, common.MessageClientCanceled, errGatewayClientWrite),
+		requestErr: newGatewayError(statusClientClosedRequest, MessageClientCanceled, errGatewayClientWrite),
 	}
 	trace := call.trace(req)
-	if trace.HTTPErrorCode != statusClientClosedRequest || trace.HTTPErrorInfo != common.MessageClientCanceled {
+	if trace.HTTPErrorCode != statusClientClosedRequest || trace.HTTPErrorInfo != MessageClientCanceled {
 		t.Fatalf("trace status = %d %q, want 499 client canceled", trace.HTTPErrorCode, trace.HTTPErrorInfo)
 	}
 }

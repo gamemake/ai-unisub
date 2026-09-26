@@ -5,13 +5,12 @@ import (
 	"net/http"
 
 	aiprovider "ai-unisub/internal/aiprovider"
-	"ai-unisub/internal/common"
 	framework "ai-unisub/internal/service"
 )
 
 func (m *APIModule) fetchAccountModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		WriteError(w, http.StatusForbidden, MessageForbidden)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -20,7 +19,7 @@ func (m *APIModule) fetchAccountModels(ctx framework.ModuleContext, w http.Respo
 	}
 	account := providerAccount(ctx, id)
 	if account == nil {
-		common.WriteError(w, http.StatusNotFound, common.MessageAIProviderNotFound)
+		WriteError(w, http.StatusNotFound, MessageAIProviderNotFound)
 		return
 	}
 	if err := ctx.AIProviders().RefreshModels(r.Context(), account.Config.Supplier, id); err != nil {
@@ -28,12 +27,12 @@ func (m *APIModule) fetchAccountModels(ctx framework.ModuleContext, w http.Respo
 		if errors.Is(err, aiprovider.ErrModelsUnsupported) {
 			status = http.StatusNotImplemented
 		}
-		common.WriteError(w, status, modelsError(err))
+		WriteError(w, status, modelsError(err))
 		return
 	}
 	models, err := ctx.AIProviders().GetModels(r.Context(), id, string(account.Config.ClientType))
 	if err != nil {
-		common.WriteError(w, http.StatusBadGateway, modelsError(err))
+		WriteError(w, http.StatusBadGateway, modelsError(err))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -42,7 +41,7 @@ func (m *APIModule) fetchAccountModels(ctx framework.ModuleContext, w http.Respo
 
 func (m *APIModule) listAccountModels(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if _, ok := currentUser(r); !ok {
-		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
+		WriteError(w, http.StatusUnauthorized, MessageUnauthorized)
 		return
 	}
 	if r.Method != http.MethodGet {
@@ -51,12 +50,12 @@ func (m *APIModule) listAccountModels(ctx framework.ModuleContext, w http.Respon
 	}
 	account := providerAccount(ctx, id)
 	if account == nil {
-		common.WriteError(w, http.StatusNotFound, common.MessageAIProviderNotFound)
+		WriteError(w, http.StatusNotFound, MessageAIProviderNotFound)
 		return
 	}
 	models, err := ctx.AIProviders().GetModels(r.Context(), id, string(account.Config.ClientType))
 	if err != nil {
-		common.WriteError(w, http.StatusBadGateway, modelsError(err))
+		WriteError(w, http.StatusBadGateway, modelsError(err))
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")

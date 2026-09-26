@@ -1,7 +1,6 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"bytes"
 	"compress/gzip"
@@ -94,7 +93,10 @@ func (g *gateway) Handle(w http.ResponseWriter, req *http.Request) {
 	call.startedAt = startedAt
 	defer func() {
 		if err := g.auth.RecordCallTrace(call.trace(req)); err != nil {
-			slog.ErrorContext(req.Context(), "record gateway call", "error", err, "account_id", call.account.ID)
+			ModuleLogger.ErrorAttrs("record_gateway_call_failed",
+				slog.String("error", err.Error()),
+				slog.Int("account_id", call.account.ID),
+			)
 		}
 	}()
 
@@ -129,7 +131,7 @@ func (g *gateway) Handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if response == nil {
-		mappedErr := newGatewayError(http.StatusBadGateway, common.MessageUpstreamNoResponse, errUpstreamNilResponse)
+		mappedErr := newGatewayError(http.StatusBadGateway, MessageUpstreamNoResponse, errUpstreamNilResponse)
 		call.requestErr = mappedErr
 		writeGatewayError(w, mappedErr)
 		return
@@ -142,52 +144,58 @@ func (g *gateway) Handle(w http.ResponseWriter, req *http.Request) {
 	if streamErr != nil || closeErr != nil {
 		err := errors.Join(streamErr, closeErr)
 		if errors.Is(err, errGatewayClientWrite) {
-			call.requestErr = newGatewayError(statusClientClosedRequest, common.MessageClientCanceled, err)
+			call.requestErr = newGatewayError(statusClientClosedRequest, MessageClientCanceled, err)
 		} else {
 			call.requestErr = gatewayUpstreamError(req.Context(), err)
 		}
 		if req.Context().Err() == nil && !errors.Is(err, errGatewayClientWrite) {
-			slog.ErrorContext(req.Context(), "stream gateway response", "error", err, "account_id", call.account.ID)
+			ModuleLogger.ErrorAttrs("stream_gateway_response_failed",
+				slog.String("error", err.Error()),
+				slog.Int("account_id", call.account.ID),
+			)
 		}
 		return
 	}
 
 	if err := call.supplier.PostResponse(call.account, response, responseBody); err != nil {
-		slog.ErrorContext(req.Context(), "process completed gateway response", "error", err, "account_id", call.account.ID)
+		ModuleLogger.ErrorAttrs("process_gateway_response_failed",
+			slog.String("error", err.Error()),
+			slog.Int("account_id", call.account.ID),
+		)
 	}
 }
 
 func (g *gateway) authenticate(req *http.Request) (*gatewayCall, error) {
 	if req == nil || req.URL == nil {
-		return nil, newGatewayError(http.StatusBadRequest, common.MessageInvalidUpstreamEndpoint, errInvalidGatewayRequest)
+		return nil, newGatewayError(http.StatusBadRequest, MessageInvalidUpstreamEndpoint, errInvalidGatewayRequest)
 	}
 	apiKey := presentedGatewayAPIKey(req.Header)
 	if apiKey == "" {
-		return nil, newGatewayError(http.StatusUnauthorized, common.MessageUnauthorized, errClientAPIKeyRequired)
+		return nil, newGatewayError(http.StatusUnauthorized, MessageUnauthorized, errClientAPIKeyRequired)
 	}
 
 	userID, account, supplier, err := g.auth.OnAuthAndAccount(apiKey, req)
 	if err != nil {
 		status := http.StatusInternalServerError
-		message := common.MessageInternalServerError
+		message := MessageInternalServerError
 		switch {
 		case errors.Is(err, ErrGatewayUnauthorized):
-			status, message = http.StatusUnauthorized, common.MessageUnauthorized
+			status, message = http.StatusUnauthorized, MessageUnauthorized
 		case errors.Is(err, ErrGatewayForbidden):
-			status, message = http.StatusForbidden, common.MessageForbidden
+			status, message = http.StatusForbidden, MessageForbidden
 		case errors.Is(err, ErrUnavailable):
-			status, message = http.StatusServiceUnavailable, common.MessageAIProviderUnavailable
+			status, message = http.StatusServiceUnavailable, MessageAIProviderUnavailable
 		}
 		return nil, newGatewayError(status, message, fmt.Errorf("authenticate gateway request: %w", err))
 	}
 	if account == nil || supplier == nil {
-		return nil, newGatewayError(http.StatusServiceUnavailable, common.MessageAIProviderUnavailable, errGatewayAuthNoAccountOrSupplier)
+		return nil, newGatewayError(http.StatusServiceUnavailable, MessageAIProviderUnavailable, errGatewayAuthNoAccountOrSupplier)
 	}
 	account.mu.RLock()
 	kind := account.Config.Kind
 	account.mu.RUnlock()
 	if kind == AccountGroup {
-		return nil, newGatewayError(http.StatusServiceUnavailable, common.MessageAIProviderUnavailable, errGatewayAuthUnresolvedGroupAccount)
+		return nil, newGatewayError(http.StatusServiceUnavailable, MessageAIProviderUnavailable, errGatewayAuthUnresolvedGroupAccount)
 	}
 
 	return &gatewayCall{userID: userID, apiKey: apiKey, account: account, supplier: supplier}, nil
@@ -425,22 +433,22 @@ func parseGatewayUsage(trace *database.PersistedCallTrace, data []byte) {
 func gatewayLimiterError(err error) error {
 	switch {
 	case errors.Is(err, ErrQueueTimeout), errors.Is(err, context.DeadlineExceeded):
-		return newGatewayError(http.StatusGatewayTimeout, common.MessageGatewayTimeout, err)
+		return newGatewayError(http.StatusGatewayTimeout, MessageGatewayTimeout, err)
 	case errors.Is(err, context.Canceled):
-		return newGatewayError(statusClientClosedRequest, common.MessageClientCanceled, err)
+		return newGatewayError(statusClientClosedRequest, MessageClientCanceled, err)
 	default:
-		return newGatewayError(http.StatusServiceUnavailable, common.MessageAIProviderUnavailable, err)
+		return newGatewayError(http.StatusServiceUnavailable, MessageAIProviderUnavailable, err)
 	}
 }
 
 func gatewayUpstreamError(ctx context.Context, err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return newGatewayError(http.StatusGatewayTimeout, common.MessageGatewayTimeout, err)
+		return newGatewayError(http.StatusGatewayTimeout, MessageGatewayTimeout, err)
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-		return newGatewayError(statusClientClosedRequest, common.MessageClientCanceled, err)
+		return newGatewayError(statusClientClosedRequest, MessageClientCanceled, err)
 	}
-	return newGatewayError(http.StatusBadGateway, common.MessageUpstreamRequestFailed, err)
+	return newGatewayError(http.StatusBadGateway, MessageUpstreamRequestFailed, err)
 }
 
 func newGatewayError(status int, message string, err error) error {
@@ -449,10 +457,10 @@ func newGatewayError(status int, message string, err error) error {
 
 func writeGatewayError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
-	message := common.MessageInternalServerError
+	message := MessageInternalServerError
 	if typed, ok := errors.AsType[*gatewayError](err); ok {
 		status = typed.status
 		message = typed.message
 	}
-	common.WriteError(w, status, message)
+	writeError(w, status, message)
 }

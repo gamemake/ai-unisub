@@ -1,13 +1,11 @@
 package service
 
 import (
-	"ai-unisub/internal/common"
 	"bufio"
 	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -38,12 +36,12 @@ func (r *router) add(p string, o RouteOptions, h http.Handler) {
 		return
 	}
 	if p == "" || !strings.HasPrefix(p, "/") || h == nil {
-		r.problem = errors.New("invalid route registration")
+		r.problem = errInvalidRouteRegistration
 		return
 	}
 	for _, x := range r.routes {
 		if x.pattern == p {
-			r.problem = errors.New("duplicate route: " + p)
+			r.problem = fmt.Errorf("%w: %s", errDuplicateRoute, p)
 			return
 		}
 	}
@@ -77,13 +75,13 @@ func (r *router) handler(s *Service) http.Handler {
 			statusWriter := &responseWriter{ResponseWriter: w}
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					common.ModuleLogger("service").Error("request_panic", fmt.Sprintf("route=%s method=%s path=%s panic=%v", best.options.Name, q.Method, q.URL.Path, recovered))
+					ModuleLogger.Error("request_panic", fmt.Sprintf("route=%s method=%s path=%s panic=%v", best.options.Name, q.Method, q.URL.Path, recovered))
 					if statusWriter.status == 0 {
-						common.WriteError(statusWriter, http.StatusInternalServerError, common.MessageInternalServerError)
+						writeError(statusWriter, http.StatusInternalServerError, MessageInternalServerError)
 					}
 				}
 				statusWriter.status = cmp.Or(statusWriter.status, http.StatusOK)
-				common.ModuleLogger("service").Info("http_access", fmt.Sprintf("route=%s method=%s path=%s status=%d duration=%d ms", best.options.Name, q.Method, q.URL.Path, statusWriter.status, time.Since(started).Milliseconds()))
+				ModuleLogger.Info("http_access", fmt.Sprintf("route=%s method=%s path=%s status=%d duration=%d ms", best.options.Name, q.Method, q.URL.Path, statusWriter.status, time.Since(started).Milliseconds()))
 			}()
 			requestID := q.Header.Get("X-Request-ID")
 			if requestID == "" {

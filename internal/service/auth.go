@@ -1,14 +1,12 @@
 package service
 
 import (
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
-	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -61,7 +59,7 @@ func PrincipalFromContext(c context.Context) (Principal, bool) {
 }
 func (a *authService) EnsureAdmin(n, p string) error {
 	if n == "" || p == "" {
-		return errors.New("admin username and password are required")
+		return errAdminCredentialsRequired
 	}
 	xs, e := a.s.db.ListUsers()
 	if e != nil {
@@ -75,7 +73,7 @@ func (a *authService) EnsureAdmin(n, p string) error {
 }
 func (a *authService) CreateSession(user *database.PersistedUser) (string, error) {
 	if user == nil || user.ID <= 0 {
-		return "", errors.New("user is required")
+		return "", errUserRequired
 	}
 	users, err := a.s.db.ListUsers()
 	if err != nil {
@@ -89,7 +87,7 @@ func (a *authService) CreateSession(user *database.PersistedUser) (string, error
 		}
 	}
 	if !valid {
-		return "", errors.New("user not found")
+		return "", errUserNotFound
 	}
 	var token [32]byte
 	if _, err := rand.Read(token[:]); err != nil {
@@ -265,12 +263,12 @@ func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler 
 		}
 		if !ok {
 			if mode == AuthAPIKey || strings.HasPrefix(r.URL.Path, "/api/") {
-				message := common.MessageUnauthorized
+				message := MessageUnauthorized
 				if status == http.StatusForbidden {
-					message = common.MessageForbidden
+					message = MessageForbidden
 				}
 				if status == http.StatusInternalServerError {
-					message = common.MessageInternalServerError
+					message = MessageInternalServerError
 				}
 				writeError(w, status, message)
 			} else {
@@ -279,14 +277,11 @@ func (a *authService) middleware(mode AuthMode, next http.Handler) http.Handler 
 			return
 		}
 		if mode == AuthSessionAdmin && p.User.Role != database.UserRoleAdmin {
-			writeError(w, 403, common.MessageForbidden)
+			writeError(w, 403, MessageForbidden)
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey{}, p)))
 	})
-}
-func writeError(w http.ResponseWriter, status int, msg string) {
-	common.WriteError(w, status, msg)
 }
 
 const passwordIterations = 120000

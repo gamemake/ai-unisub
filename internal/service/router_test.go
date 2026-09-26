@@ -1,7 +1,7 @@
 package service
 
 import (
-	"ai-unisub/internal/common"
+	"ai-unisub/internal/logger"
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -11,10 +11,10 @@ import (
 
 func TestRouterPanicReturnsJSONError(t *testing.T) {
 	var logs bytes.Buffer
-	if err := common.InitLogging(common.LogConfig{Output: &logs}); err != nil {
+	if err := logger.InitLogging(logger.LogConfig{Output: &logs}); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = common.InitLogging(common.LogConfig{}) })
+	t.Cleanup(func() { _ = logger.InitLogging(logger.LogConfig{}) })
 	r := newRouter()
 	r.add("/panic", RouteOptions{Auth: AuthNone, Name: "panic"}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("test panic")
@@ -33,7 +33,7 @@ func TestRouterPanicReturnsJSONError(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode body: %v", err)
 	}
-	if body["error"] != common.MessageInternalServerError {
+	if body["error"] != MessageInternalServerError {
 		t.Fatalf("body = %v", body)
 	}
 	decoder := json.NewDecoder(&logs)

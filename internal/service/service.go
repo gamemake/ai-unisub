@@ -50,7 +50,7 @@ type Service struct {
 
 func New(cfg Config) (*Service, error) {
 	if cfg.DatabaseURL == "" {
-		return nil, errors.New("database URL is required")
+		return nil, errDatabaseURLRequired
 	}
 	db, err := database.NewDatabase(cfg.DatabaseURL)
 	if err != nil {
@@ -68,7 +68,7 @@ func New(cfg Config) (*Service, error) {
 
 func NewWithDependencies(cfg Config, db database.Database, providers aiprovider.ProviderManager) (*Service, error) {
 	if db == nil {
-		return nil, errors.New("database is required")
+		return nil, errDatabaseRequired
 	}
 	proxyManager := proxy.NewManager(db)
 	if err := proxyManager.Open(); err != nil {
@@ -99,10 +99,10 @@ func (s *Service) AddModule(m Module) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if m == nil {
-		return errors.New("service module is nil")
+		return errServiceModuleNil
 	}
 	if s.closed {
-		return errors.New("service is closed")
+		return errServiceClosed
 	}
 	n := len(s.router.routes)
 	if err := m.Init(&moduleContext{s: s}); err != nil {

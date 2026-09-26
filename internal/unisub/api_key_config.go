@@ -2,7 +2,6 @@ package unisub
 
 import (
 	"encoding/json"
-	"errors"
 )
 
 // CCSwitchClient identifies one concrete CC Switch agent application.
@@ -54,6 +53,6 @@ func parseCCSwitchClient(value string) (CCSwitchClient, error) {
 	case CCSwitchClaudeCode, CCSwitchClaudeDesktop, CCSwitchCodex, CCSwitchGrokBuild:
 		return client, nil
 	default:
-		return "", errors.New("unsupported CC Switch client")
+		return "", errUnsupportedCCSwitchClient
 	}
 }

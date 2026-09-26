@@ -1,7 +1,6 @@
 package aiprovider
 
 import (
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	"bytes"
 	"context"
@@ -49,7 +48,7 @@ func (c *gatewayCall) trace(req *http.Request) *database.PersistedCallTrace {
 		trace.ResponseBody = decodeGatewayResponseBody(trace.ResponseHeaders, trace.ResponseBody)
 	}
 	if c.requestErr != nil {
-		trace.HTTPErrorInfo = common.MessageUpstreamRequestFailed
+		trace.HTTPErrorInfo = MessageUpstreamRequestFailed
 		if typed, ok := errors.AsType[*gatewayError](c.requestErr); ok {
 			trace.HTTPErrorInfo = typed.message
 			// A client disconnect overrides the upstream status, which may be 200.
@@ -72,7 +71,7 @@ func (c *gatewayCall) readRequestBody(req *http.Request) error {
 	body, readErr := io.ReadAll(io.LimitReader(req.Body, maxGatewayRequestBodyBytes+1))
 	closeErr := req.Body.Close()
 	if readErr != nil || closeErr != nil {
-		return newGatewayError(http.StatusBadRequest, common.MessageInvalidJSONBody, errors.Join(readErr, closeErr))
+		return newGatewayError(http.StatusBadRequest, MessageInvalidJSONBody, errors.Join(readErr, closeErr))
 	}
 	if len(body) > maxGatewayRequestBodyBytes {
 		return newGatewayError(http.StatusRequestEntityTooLarge, "request body is too large", errGatewayRequestBodyExceedsLimit)
@@ -87,11 +86,11 @@ func (c *gatewayCall) prepareOutbound(ctx context.Context, original *http.Reques
 		return gatewayUpstreamError(ctx, fmt.Errorf("get supplier access: %w", err))
 	}
 	if strings.TrimSpace(accessToken) == "" {
-		return newGatewayError(http.StatusBadGateway, common.MessageUpstreamRequestFailed, errSupplierEmptyAccessToken)
+		return newGatewayError(http.StatusBadGateway, MessageUpstreamRequestFailed, errSupplierEmptyAccessToken)
 	}
 	target, err := gatewayUpstreamURL(apiBaseURL, original.URL)
 	if err != nil {
-		return newGatewayError(http.StatusBadGateway, common.MessageInvalidUpstreamEndpoint, err)
+		return newGatewayError(http.StatusBadGateway, MessageInvalidUpstreamEndpoint, err)
 	}
 
 	outbound := original.Clone(ctx)
@@ -106,7 +105,7 @@ func (c *gatewayCall) prepareOutbound(ctx context.Context, original *http.Reques
 
 	body := bytes.Clone(c.requestBody)
 	if err := c.supplier.PreRequest(c.account, outbound, &body); err != nil {
-		return newGatewayError(http.StatusBadGateway, common.MessageUpstreamRequestFailed, fmt.Errorf("prepare supplier request: %w", err))
+		return newGatewayError(http.StatusBadGateway, MessageUpstreamRequestFailed, fmt.Errorf("prepare supplier request: %w", err))
 	}
 	resetGatewayRequestBody(outbound, body)
 	c.outboundBody = bytes.Clone(body)

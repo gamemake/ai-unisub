@@ -3,7 +3,6 @@ package service
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"maps"
 	"sync"
 	"time"
@@ -41,7 +40,7 @@ func NewOAuthResultStore() *OAuthResultStore {
 
 func (s *OAuthResultStore) Put(result OAuthResult) (string, error) {
 	if result.SubjectID == "" || result.Service == "" {
-		return "", errors.New("subject and OAuth service are required")
+		return "", errOAuthResultIdentityNeeded
 	}
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -81,7 +80,7 @@ func (s *OAuthResultStore) Take(id, subjectID string) (OAuthResult, error) {
 		if ok && !value.expiresAt.After(time.Now()) {
 			delete(s.values, id)
 		}
-		return OAuthResult{}, errors.New("oauth result not found")
+		return OAuthResult{}, errOAuthResultNotFound
 	}
 	delete(s.values, id)
 	return value.result, nil

@@ -1,9 +1,8 @@
-package common
+package logger
 
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -47,7 +46,7 @@ func InitLogging(config LogConfig) error {
 	switch config.Level {
 	case slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError:
 	default:
-		return fmt.Errorf("invalid log level: %v", config.Level)
+		return fmt.Errorf("%w: %v", errInvalidLogLevel, config.Level)
 	}
 	logging.Lock()
 	defer logging.Unlock()
@@ -107,7 +106,7 @@ func (l Logger) writeAttrs(level slog.Level, event, msg string, attrs ...slog.At
 	_ = logging.handler.Handle(ctx, record)
 }
 
-// StandardLogger adapts APIs that require *log.Logger to the common output.
+// StandardLogger adapts APIs that require *log.Logger to the shared output.
 // The adapter does not own its output and follows InitLogging changes.
 func (l Logger) StandardLogger(level slog.Level, event string) *log.Logger {
 	return log.New(logWriter{logger: l, level: level, event: event}, "", 0)
@@ -123,7 +122,7 @@ func (w logWriter) Write(p []byte) (int, error) {
 	switch w.level {
 	case slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError:
 	default:
-		return 0, errors.New("invalid log level")
+		return 0, errInvalidLogLevel
 	}
 	w.logger.write(w.level, w.event, strings.TrimSuffix(string(p), "\n"))
 	return len(p), nil

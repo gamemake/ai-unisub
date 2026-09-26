@@ -52,7 +52,7 @@ func (m *oauthManager) Register(adapter OAuthAdapter) error {
 		return fmt.Errorf("oauth service %q is already registered", adapter.Service())
 	}
 	m.adapters[adapter.Service()] = adapter
-	logger.InfoAttrs("adapter_registered", slog.String("service", adapter.Service()))
+	ModuleLogger.InfoAttrs("adapter_registered", slog.String("service", adapter.Service()))
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (m *oauthManager) Start(ctx context.Context, service, subjectID, redirectUR
 	m.mu.Lock()
 	m.sessions[session.ID] = session
 	m.mu.Unlock()
-	logger.InfoAttrs("authorization_started", slog.String("service", service), slog.Time("expires_at", session.ExpiresAt.UTC()))
+	ModuleLogger.InfoAttrs("authorization_started", slog.String("service", service), slog.Time("expires_at", session.ExpiresAt.UTC()))
 	return result, nil
 }
 
@@ -154,7 +154,7 @@ func (m *oauthManager) Complete(ctx context.Context, sessionID, code, state stri
 		return nil, ErrUnsupportedFlow
 	}
 	if state != session.State {
-		logger.WarnAttrs("state_mismatch", slog.String("service", session.Service))
+		ModuleLogger.WarnAttrs("state_mismatch", slog.String("service", session.Service))
 		return nil, ErrStateMismatch
 	}
 	adapter, err := m.adapter(session.Service)
@@ -178,7 +178,7 @@ func (m *oauthManager) Complete(ctx context.Context, sessionID, code, state stri
 		logOAuthFailure("authorization_complete_failed", session.Service, err)
 		return nil, err
 	}
-	logger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
+	ModuleLogger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
 	return credential, nil
 }
 
@@ -241,7 +241,7 @@ func (m *oauthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	credential, err := flow.PollDeviceToken(ctx, session.DeviceCode, session.HTTPClient)
 	if err != nil {
 		if errors.Is(err, ErrAuthorizationPending) || errors.Is(err, ErrSlowDown) {
-			logger.DebugAttrs("authorization_pending", slog.String("service", session.Service))
+			ModuleLogger.DebugAttrs("authorization_pending", slog.String("service", session.Service))
 		} else {
 			logOAuthFailure("authorization_poll_failed", session.Service, err)
 		}
@@ -255,7 +255,7 @@ func (m *oauthManager) Poll(ctx context.Context, sessionID string) (*OAuthCreden
 	if _, err := m.session(sessionID, true); err != nil {
 		return nil, err
 	}
-	logger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
+	ModuleLogger.InfoAttrs("authorization_completed", slog.String("service", session.Service))
 	return credential, nil
 }
 
@@ -286,7 +286,7 @@ func (m *oauthManager) Refresh(ctx context.Context, service string, credential *
 	refreshed.AccountID = cmp.Or(refreshed.AccountID, credential.AccountID)
 	refreshed.AccountName = cmp.Or(refreshed.AccountName, credential.AccountName)
 	refreshed.Email = cmp.Or(refreshed.Email, credential.Email)
-	logger.InfoAttrs("credential_refreshed", slog.String("service", service))
+	ModuleLogger.InfoAttrs("credential_refreshed", slog.String("service", service))
 	return refreshed, nil
 }
 
@@ -310,12 +310,12 @@ func (m *oauthManager) Revoke(ctx context.Context, service string, credential *O
 		logOAuthFailure("credential_revoke_failed", service, err)
 		return err
 	}
-	logger.InfoAttrs("credential_revoked", slog.String("service", service))
+	ModuleLogger.InfoAttrs("credential_revoked", slog.String("service", service))
 	return nil
 }
 
 func logOAuthFailure(event, service string, err error) {
-	logger.WarnAttrs(event, slog.String("service", service), slog.String("error", err.Error()))
+	ModuleLogger.WarnAttrs(event, slog.String("service", service), slog.String("error", err.Error()))
 }
 
 func (m *oauthManager) adapter(service string) (OAuthAdapter, error) {

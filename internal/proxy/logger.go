@@ -1,5 +1,5 @@
 package proxy
 
-import "ai-unisub/internal/common"
+import "ai-unisub/internal/logger"
 
-var logger = common.ModuleLogger("proxy")
+var ModuleLogger = logger.ModuleLogger("proxy")

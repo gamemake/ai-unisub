@@ -2,7 +2,6 @@ package unisub
 
 import (
 	aiprovider "ai-unisub/internal/aiprovider"
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
 	proxy "ai-unisub/internal/proxy"
 	framework "ai-unisub/internal/service"
@@ -46,7 +45,7 @@ func (m *APIModule) Init(ctx framework.ModuleContext) error {
 			w.Header().Set("Cache-Control", "no-store")
 			if r.Method != http.MethodPost {
 				w.Header().Set("Allow", "POST")
-				common.WriteError(w, http.StatusMethodNotAllowed, common.MessageMethodNotAllowed)
+				WriteError(w, http.StatusMethodNotAllowed, MessageMethodNotAllowed)
 				return
 			}
 			if r.URL.Path == "/api/login" {
@@ -64,7 +63,7 @@ func (m *APIModule) Init(ctx framework.ModuleContext) error {
 
 	ctx.HandleFunc("/api/", framework.RouteOptions{Auth: framework.AuthSession, Name: "api"}, func(w http.ResponseWriter, r *http.Request) {
 		if isManagementDocumentationPath(r.URL.Path) && !isAdmin(r) {
-			common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+			WriteError(w, http.StatusForbidden, MessageForbidden)
 			return
 		}
 		apiMux.ServeHTTP(w, r)
@@ -88,7 +87,7 @@ func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r
 		switch parts[0] {
 		case "me", "password", "keys", "calls":
 		default:
-			common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+			WriteError(w, http.StatusForbidden, MessageForbidden)
 			return
 		}
 	}
@@ -147,7 +146,7 @@ func (m *APIModule) handle(ctx framework.ModuleContext, w http.ResponseWriter, r
 
 func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		WriteError(w, http.StatusForbidden, MessageForbidden)
 		return
 	}
 	if len(parts) > 1 {
@@ -169,12 +168,12 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 	if id == 0 && r.Method == http.MethodPost {
 		var config proxy.ProxyGroupConfig
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&config) != nil {
-			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
+			WriteError(w, http.StatusBadRequest, "invalid proxy group")
 			return
 		}
 		createdID, err := ctx.Proxy().Create(config)
 		if err != nil {
-			common.WriteError(w, http.StatusBadRequest, err.Error())
+			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusCreated, findProxyGroup(ctx.Proxy().List(), createdID))
@@ -195,17 +194,17 @@ func (m *APIModule) proxyGroups(ctx framework.ModuleContext, w http.ResponseWrit
 	case http.MethodPut:
 		var config proxy.ProxyGroupConfig
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&config) != nil {
-			common.WriteError(w, http.StatusBadRequest, "invalid proxy group")
+			WriteError(w, http.StatusBadRequest, "invalid proxy group")
 			return
 		}
 		if err := ctx.Proxy().Update(id, config); err != nil {
-			common.WriteError(w, http.StatusBadRequest, err.Error())
+			WriteError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, findProxyGroup(ctx.Proxy().List(), id))
 	case http.MethodDelete:
 		if err := ctx.Proxy().Delete(id); err != nil {
-			common.WriteError(w, http.StatusInternalServerError, "could not delete proxy group")
+			WriteError(w, http.StatusInternalServerError, "could not delete proxy group")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -237,18 +236,18 @@ func usageTimeRange(r *http.Request) (database.TimeRange, error) {
 		var err error
 		start, err = time.ParseInLocation("2006-01-02", query.Get("from"), time.UTC)
 		if err != nil {
-			return database.TimeRange{}, errors.New("invalid usage start date")
+			return database.TimeRange{}, errInvalidUsageStartDate
 		}
 		endDate, err := time.ParseInLocation("2006-01-02", query.Get("to"), time.UTC)
 		if err != nil {
-			return database.TimeRange{}, errors.New("invalid usage end date")
+			return database.TimeRange{}, errInvalidUsageEndDate
 		}
 		end = endDate.Add(24*time.Hour - time.Nanosecond)
 	default:
-		return database.TimeRange{}, errors.New("invalid usage range")
+		return database.TimeRange{}, errInvalidUsageRange
 	}
 	if start.After(end) {
-		return database.TimeRange{}, errors.New("usage start date must not be after end date")
+		return database.TimeRange{}, errUsageRangeReversed
 	}
 	return database.TimeRange{Start: start, End: end}, nil
 }
@@ -256,18 +255,18 @@ func usageTimeRange(r *http.Request) (database.TimeRange, error) {
 func (m *APIModule) usage(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, kind string) {
 	timeRange, err := usageTimeRange(r)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, err.Error())
+		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if kind == "subscriptions" {
 		rows, totals, err := ctx.Database().QueryAccountUsage(timeRange)
 		if err != nil {
-			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
+			WriteError(w, http.StatusInternalServerError, MessageCouldNotQueryCallRecords)
 			return
 		}
 		accounts, err := ctx.Database().ListAccounts()
 		if err != nil {
-			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListAIProviders)
+			WriteError(w, http.StatusInternalServerError, MessageCouldNotListAIProviders)
 			return
 		}
 		accountByID := make(map[int]database.PersistedAccount, len(accounts))
@@ -298,19 +297,19 @@ func (m *APIModule) usage(ctx framework.ModuleContext, w http.ResponseWriter, r 
 	if raw := r.URL.Query().Get("subscription_id"); raw != "" {
 		id, err := strconv.Atoi(raw)
 		if err != nil || id < 0 {
-			common.WriteError(w, http.StatusBadRequest, "invalid subscription_id")
+			WriteError(w, http.StatusBadRequest, "invalid subscription_id")
 			return
 		}
 		accountID = id
 	}
 	rows, totals, err := ctx.Database().QueryUserUsage(timeRange, accountID)
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotQueryCallRecords)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotQueryCallRecords)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListUsers)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotListUsers)
 		return
 	}
 	userByID := make(map[int]database.PersistedUser, len(users))
@@ -346,7 +345,7 @@ func isAdmin(r *http.Request) bool {
 func (m *APIModule) me(w http.ResponseWriter, r *http.Request) {
 	u, ok := currentUser(r)
 	if !ok {
-		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
+		WriteError(w, http.StatusUnauthorized, MessageUnauthorized)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"id": u.ID, "name": u.Name, "role": u.Role, "server_version": framework.Version})
@@ -355,7 +354,7 @@ func (m *APIModule) me(w http.ResponseWriter, r *http.Request) {
 func (m *APIModule) password(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
 	u, ok := currentUser(r)
 	if !ok {
-		common.WriteError(w, http.StatusUnauthorized, common.MessageUnauthorized)
+		WriteError(w, http.StatusUnauthorized, MessageUnauthorized)
 		return
 	}
 	var input struct {
@@ -366,17 +365,17 @@ func (m *APIModule) password(ctx framework.ModuleContext, w http.ResponseWriter,
 		return
 	}
 	if len(input.NewPassword) < 8 || input.OldPassword == "" {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidPassword)
+		WriteError(w, http.StatusBadRequest, MessageInvalidPassword)
 		return
 	}
 	if !framework.VerifyPassword(u.PasswordHash, input.OldPassword) {
-		common.WriteError(w, http.StatusBadRequest, common.MessageOldPasswordIncorrect)
+		WriteError(w, http.StatusBadRequest, MessageOldPasswordIncorrect)
 		return
 	}
 	u.PasswordHash = framework.HashPassword(input.NewPassword)
 	u.UpdatedAt = time.Now().UTC()
 	if err := ctx.Database().SaveUser(u); err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotSavePassword)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotSavePassword)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -384,13 +383,13 @@ func (m *APIModule) password(ctx framework.ModuleContext, w http.ResponseWriter,
 
 func (m *APIModule) users(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	if !isAdmin(r) {
-		common.WriteError(w, http.StatusForbidden, common.MessageForbidden)
+		WriteError(w, http.StatusForbidden, MessageForbidden)
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodGet {
 		users, err := ctx.Database().ListUsers()
 		if err != nil {
-			common.WriteError(w, 500, common.MessageCouldNotListUsers)
+			WriteError(w, 500, MessageCouldNotListUsers)
 			return
 		}
 		items := make([]map[string]any, 0, len(users))
@@ -433,12 +432,12 @@ func (m *APIModule) resetUserPassword(ctx framework.ModuleContext, w http.Respon
 		return
 	}
 	if len(input.Password) < 8 {
-		common.WriteError(w, http.StatusBadRequest, common.MessagePasswordTooShort)
+		WriteError(w, http.StatusBadRequest, MessagePasswordTooShort)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotListUsers)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotListUsers)
 		return
 	}
 	current, _ := currentUser(r)
@@ -447,19 +446,19 @@ func (m *APIModule) resetUserPassword(ctx framework.ModuleContext, w http.Respon
 			continue
 		}
 		if current != nil && current.ID == id {
-			common.WriteError(w, http.StatusBadRequest, common.MessageCannotResetCurrentUser)
+			WriteError(w, http.StatusBadRequest, MessageCannotResetCurrentUser)
 			return
 		}
 		users[i].PasswordHash = framework.HashPassword(input.Password)
 		users[i].UpdatedAt = time.Now().UTC()
 		if err := ctx.Database().SaveUser(&users[i]); err != nil {
-			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotSaveUser)
+			WriteError(w, http.StatusInternalServerError, MessageCouldNotSaveUser)
 			return
 		}
 		writeJSON(w, http.StatusOK, publicUser(users[i]))
 		return
 	}
-	common.WriteError(w, http.StatusNotFound, common.MessageUserNotFound)
+	WriteError(w, http.StatusNotFound, MessageUserNotFound)
 }
 
 func publicUser(u database.PersistedUser) map[string]any {
@@ -475,24 +474,24 @@ func (m *APIModule) createUser(ctx framework.ModuleContext, w http.ResponseWrite
 		return
 	}
 	if input.Name == "" || len(input.Password) < 8 || (input.Role != database.UserRoleAdmin && input.Role != database.UserRoleUser) {
-		common.WriteError(w, 400, common.MessageInvalidUser)
+		WriteError(w, 400, MessageInvalidUser)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListUsers)
+		WriteError(w, 500, MessageCouldNotListUsers)
 		return
 	}
 	for _, u := range users {
 		if u.Name == input.Name {
-			common.WriteError(w, 400, common.MessageUserNameExists)
+			WriteError(w, 400, MessageUserNameExists)
 			return
 		}
 	}
 	now := time.Now().UTC()
 	user := &database.PersistedUser{ID: 0, Name: input.Name, Role: input.Role, Enabled: true, PasswordHash: framework.HashPassword(input.Password), CreatedAt: now, UpdatedAt: now}
 	if err := ctx.Database().SaveUser(user); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotSaveUser)
+		WriteError(w, 500, MessageCouldNotSaveUser)
 		return
 	}
 	writeJSON(w, 201, publicUser(*user))
@@ -508,18 +507,18 @@ func (m *APIModule) updateUser(ctx framework.ModuleContext, w http.ResponseWrite
 		return
 	}
 	if input.Role != "" && input.Role != database.UserRoleAdmin && input.Role != database.UserRoleUser {
-		common.WriteError(w, 400, common.MessageInvalidRole)
+		WriteError(w, 400, MessageInvalidRole)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListUsers)
+		WriteError(w, 500, MessageCouldNotListUsers)
 		return
 	}
 	for i := range users {
 		if users[i].ID == id {
 			if current != nil && current.ID == id && (input.Role == database.UserRoleUser || (input.Enabled != nil && !*input.Enabled)) {
-				common.WriteError(w, 400, common.MessageCannotDemoteCurrentUser)
+				WriteError(w, 400, MessageCannotDemoteCurrentUser)
 				return
 			}
 			if input.Role != "" {
@@ -530,25 +529,25 @@ func (m *APIModule) updateUser(ctx framework.ModuleContext, w http.ResponseWrite
 			}
 			users[i].UpdatedAt = time.Now().UTC()
 			if err := ctx.Database().SaveUser(&users[i]); err != nil {
-				common.WriteError(w, 500, common.MessageCouldNotSaveUser)
+				WriteError(w, 500, MessageCouldNotSaveUser)
 				return
 			}
 			writeJSON(w, 200, publicUser(users[i]))
 			return
 		}
 	}
-	common.WriteError(w, 404, common.MessageUserNotFound)
+	WriteError(w, 404, MessageUserNotFound)
 }
 
 func (m *APIModule) deleteUser(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	current, _ := currentUser(r)
 	if current != nil && current.ID == id {
-		common.WriteError(w, 400, common.MessageCannotDeleteCurrentUser)
+		WriteError(w, 400, MessageCannotDeleteCurrentUser)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListUsers)
+		WriteError(w, 500, MessageCouldNotListUsers)
 		return
 	}
 	found := false
@@ -559,11 +558,11 @@ func (m *APIModule) deleteUser(ctx framework.ModuleContext, w http.ResponseWrite
 		}
 	}
 	if !found {
-		common.WriteError(w, 404, common.MessageUserNotFound)
+		WriteError(w, 404, MessageUserNotFound)
 		return
 	}
 	if err := ctx.Database().DeleteUser(id); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotDeleteUser)
+		WriteError(w, 500, MessageCouldNotDeleteUser)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -599,7 +598,7 @@ func (m *APIModule) accounts(ctx framework.ModuleContext, w http.ResponseWriter,
 		return
 	}
 	if !isAdmin(r) {
-		common.WriteError(w, 403, common.MessageForbidden)
+		WriteError(w, 403, MessageForbidden)
 		return
 	}
 	if len(parts) == 1 && r.Method == http.MethodPost {
@@ -650,22 +649,22 @@ func (m *APIModule) createAccount(ctx framework.ModuleContext, w http.ResponseWr
 		return
 	}
 	if len(input.Config) == 0 || string(input.Config) == "null" {
-		common.WriteError(w, 400, common.MessageAIProviderAndConfigRequired)
+		WriteError(w, 400, MessageAIProviderAndConfigRequired)
 		return
 	}
 	config, err := decodeAccountConfig(input.Name, input.Config)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		WriteError(w, http.StatusBadRequest, MessageInvalidAccountConfig)
 		return
 	}
 	raw, err := json.Marshal(config)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		WriteError(w, http.StatusBadRequest, MessageInvalidAccountConfig)
 		return
 	}
 	account, err := ctx.AIProviders().NewAccount(raw)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		WriteError(w, http.StatusBadRequest, MessageInvalidAccountConfig)
 		return
 	}
 	writeJSON(w, http.StatusCreated, publicAccount(account, true))
@@ -673,17 +672,17 @@ func (m *APIModule) createAccount(ctx framework.ModuleContext, w http.ResponseWr
 
 func (m *APIModule) deleteAccount(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, id int) {
 	if providerAccount(ctx, id) == nil {
-		common.WriteError(w, 404, common.MessageAIProviderNotFound)
+		WriteError(w, 404, MessageAIProviderNotFound)
 		return
 	}
 	keys, err := ctx.Database().ListAPIKeys(0)
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotInspectAIProviderRefs)
+		WriteError(w, 500, MessageCouldNotInspectAIProviderRefs)
 		return
 	}
 	for _, key := range keys {
 		if key.AccountID == id {
-			common.WriteError(w, 400, common.MessageAIProviderStillReferenced)
+			WriteError(w, 400, MessageAIProviderStillReferenced)
 			return
 		}
 	}
@@ -693,13 +692,13 @@ func (m *APIModule) deleteAccount(ctx framework.ModuleContext, w http.ResponseWr
 		}
 		for _, member := range account.Config.Members {
 			if member.ID == id {
-				common.WriteError(w, http.StatusBadRequest, common.MessageAIProviderStillReferenced)
+				WriteError(w, http.StatusBadRequest, MessageAIProviderStillReferenced)
 				return
 			}
 		}
 	}
 	if err := ctx.AIProviders().DelAccount(id); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotDeleteAIProvider)
+		WriteError(w, 500, MessageCouldNotDeleteAIProvider)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -715,7 +714,7 @@ func (m *APIModule) updateAccount(ctx framework.ModuleContext, w http.ResponseWr
 	}
 	account := providerAccount(ctx, id)
 	if account == nil {
-		common.WriteError(w, 404, common.MessageAIProviderNotFound)
+		WriteError(w, 404, MessageAIProviderNotFound)
 		return
 	}
 	current := account.Config
@@ -724,14 +723,14 @@ func (m *APIModule) updateAccount(ctx framework.ModuleContext, w http.ResponseWr
 	}
 	config, err := decodeAccountConfig(input.Name, input.Config)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		WriteError(w, http.StatusBadRequest, MessageInvalidAccountConfig)
 		return
 	}
 	if config.Kind == "" {
 		config.Kind = current.Kind
 	}
 	if config.Kind != current.Kind {
-		common.WriteError(w, 400, common.MessageAIProviderTypeCannotChange)
+		WriteError(w, 400, MessageAIProviderTypeCannotChange)
 		return
 	}
 	// Responses mask secrets, so an empty secret keeps the stored one.
@@ -743,7 +742,7 @@ func (m *APIModule) updateAccount(ctx framework.ModuleContext, w http.ResponseWr
 	}
 	raw, err := json.Marshal(config)
 	if err != nil || ctx.AIProviders().SetAccountConfig(r.Context(), id, raw) != nil {
-		common.WriteError(w, http.StatusBadRequest, common.MessageInvalidAccountConfig)
+		WriteError(w, http.StatusBadRequest, MessageInvalidAccountConfig)
 		return
 	}
 	writeJSON(w, http.StatusOK, publicAccount(providerAccount(ctx, id), true))
@@ -765,7 +764,7 @@ func decodeAccountConfig(name string, raw json.RawMessage) (aiprovider.AccountCo
 func (m *APIModule) keys(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, parts []string) {
 	u, ok := currentUser(r)
 	if !ok {
-		common.WriteError(w, 401, common.MessageUnauthorized)
+		WriteError(w, 401, MessageUnauthorized)
 		return
 	}
 	switch {
@@ -797,7 +796,7 @@ func (m *APIModule) getKeyConfig(ctx framework.ModuleContext, w http.ResponseWri
 	}
 	client, err := parseCCSwitchClient(clientName)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, err.Error())
+		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, parseAPIKeyConfig(key.Config).CCSwitch[client])
@@ -810,7 +809,7 @@ func (m *APIModule) updateKeyConfig(ctx framework.ModuleContext, w http.Response
 	}
 	client, err := parseCCSwitchClient(clientName)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, err.Error())
+		WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	var input CCSwitchClientConfig
@@ -821,13 +820,13 @@ func (m *APIModule) updateKeyConfig(ctx framework.ModuleContext, w http.Response
 	config.CCSwitch[client] = input
 	encoded, err := json.Marshal(config)
 	if err != nil {
-		common.WriteError(w, http.StatusBadRequest, "invalid API key config")
+		WriteError(w, http.StatusBadRequest, "invalid API key config")
 		return
 	}
 	key.Config = encoded
 	key.UpdatedAt = time.Now().UTC()
 	if err := ctx.Database().SaveAPIKey(key); err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotSaveAPIKey)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotSaveAPIKey)
 		return
 	}
 	writeJSON(w, http.StatusOK, input)
@@ -836,7 +835,7 @@ func (m *APIModule) updateKeyConfig(ctx framework.ModuleContext, w http.Response
 func (m *APIModule) listKeys(ctx framework.ModuleContext, w http.ResponseWriter, userID int) {
 	keys, err := ctx.Database().ListAPIKeys(userID)
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListAPIKeys)
+		WriteError(w, 500, MessageCouldNotListAPIKeys)
 		return
 	}
 	items := make([]map[string]any, 0, len(keys))
@@ -857,20 +856,20 @@ func (m *APIModule) createKey(ctx framework.ModuleContext, w http.ResponseWriter
 	}
 	name := strings.TrimSpace(input.Name)
 	if name == "" || utf8.RuneCountInString(name) > 64 {
-		common.WriteError(w, 400, common.MessageAPIKeyNameRequired)
+		WriteError(w, 400, MessageAPIKeyNameRequired)
 		return
 	}
 	if input.AccountID == 0 {
-		common.WriteError(w, 400, common.MessageAccountIDRequired)
+		WriteError(w, 400, MessageAccountIDRequired)
 		return
 	}
 	if input.ValidSeconds < 0 {
-		common.WriteError(w, 400, common.MessageValidSecondsNegative)
+		WriteError(w, 400, MessageValidSecondsNegative)
 		return
 	}
 	accounts, err := ctx.Database().ListAccounts()
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListAIProviders)
+		WriteError(w, 500, MessageCouldNotListAIProviders)
 		return
 	}
 	found := false
@@ -881,18 +880,18 @@ func (m *APIModule) createKey(ctx framework.ModuleContext, w http.ResponseWriter
 		}
 	}
 	if !found {
-		common.WriteError(w, 404, common.MessageAIProviderNotFound)
+		WriteError(w, 404, MessageAIProviderNotFound)
 		return
 	}
 	secret, err := randomID(32)
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotGenerateAPIKey)
+		WriteError(w, 500, MessageCouldNotGenerateAPIKey)
 		return
 	}
 	now := time.Now().UTC()
 	key := &database.PersistedAPIKey{ID: 0, Name: name, UserID: u.ID, AccountID: input.AccountID, Key: secret, ValidSeconds: input.ValidSeconds, CreatedAt: now, UpdatedAt: now}
 	if err := ctx.Database().SaveAPIKey(key); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotSaveAPIKey)
+		WriteError(w, 500, MessageCouldNotSaveAPIKey)
 		return
 	}
 	writeJSON(w, 201, publicAPIKeyWithClients(*key, accountClients(ctx, key.AccountID)))
@@ -912,7 +911,7 @@ func (m *APIModule) deleteKey(ctx framework.ModuleContext, w http.ResponseWriter
 		return
 	}
 	if err := ctx.Database().DeleteAPIKey(key.ID); err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotDeleteAPIKey)
+		WriteError(w, 500, MessageCouldNotDeleteAPIKey)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -921,7 +920,7 @@ func (m *APIModule) deleteKey(ctx framework.ModuleContext, w http.ResponseWriter
 func ownedAPIKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id int) (*database.PersistedAPIKey, bool) {
 	keys, err := ctx.Database().ListAPIKeys(userID)
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotListAPIKeys)
+		WriteError(w, 500, MessageCouldNotListAPIKeys)
 		return nil, false
 	}
 	for i := range keys {
@@ -929,7 +928,7 @@ func ownedAPIKey(ctx framework.ModuleContext, w http.ResponseWriter, userID, id 
 			return &keys[i], true
 		}
 	}
-	common.WriteError(w, 404, common.MessageAPIKeyNotFound)
+	WriteError(w, 404, MessageAPIKeyNotFound)
 	return nil, false
 }
 
@@ -970,19 +969,19 @@ func clientTypesJSON(clients []aiprovider.ClientType) []string {
 func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request) {
 	u, ok := currentUser(r)
 	if !ok {
-		common.WriteError(w, 401, common.MessageUnauthorized)
+		WriteError(w, 401, MessageUnauthorized)
 		return
 	}
 	page, pageSize := 1, 100
 	if raw := r.URL.Query().Get("page"); raw != "" {
 		if _, err := fmt.Sscan(raw, &page); err != nil || page < 1 {
-			common.WriteError(w, 400, common.MessageInvalidPage)
+			WriteError(w, 400, MessageInvalidPage)
 			return
 		}
 	}
 	if raw := r.URL.Query().Get("page_size"); raw != "" {
 		if _, err := fmt.Sscan(raw, &pageSize); err != nil || pageSize < 10 || pageSize > 100 {
-			common.WriteError(w, 400, common.MessagePageSizeRange)
+			WriteError(w, 400, MessagePageSizeRange)
 			return
 		}
 	}
@@ -1001,20 +1000,20 @@ func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r 
 	if raw := r.URL.Query().Get("code"); raw != "" {
 		code, err := strconv.Atoi(raw)
 		if err != nil || (code != 0 && (code < 100 || code > 599)) {
-			common.WriteError(w, 400, "invalid call code")
+			WriteError(w, 400, "invalid call code")
 			return
 		}
 		filter.Code = &code
 	}
 	timeRange, err := usageTimeRange(r)
 	if err != nil {
-		common.WriteError(w, 400, err.Error())
+		WriteError(w, 400, err.Error())
 		return
 	}
 	filter.TimeRange = timeRange
 	items, total, err := ctx.Database().QueryCallTraces(filter, page, pageSize)
 	if err != nil {
-		common.WriteError(w, 500, common.MessageCouldNotQueryCallRecords)
+		WriteError(w, 500, MessageCouldNotQueryCallRecords)
 		return
 	}
 	for i := range items {
@@ -1026,22 +1025,22 @@ func (m *APIModule) calls(ctx framework.ModuleContext, w http.ResponseWriter, r 
 func (m *APIModule) callDetail(ctx framework.ModuleContext, w http.ResponseWriter, r *http.Request, day string, id int) {
 	startedAt, err := time.ParseInLocation("20060102", day, time.UTC)
 	if err != nil || id == 0 {
-		common.WriteError(w, http.StatusBadRequest, "invalid call record")
+		WriteError(w, http.StatusBadRequest, "invalid call record")
 		return
 	}
 	trace, err := ctx.Database().GetCallTrace(startedAt, id)
 	if errors.Is(err, database.ErrCallTraceNotFound) {
-		common.WriteError(w, http.StatusNotFound, "call trace not found")
+		WriteError(w, http.StatusNotFound, "call trace not found")
 		return
 	}
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, "could not get call record")
+		WriteError(w, http.StatusInternalServerError, "could not get call record")
 		return
 	}
 	if !isAdmin(r) {
 		u, ok := currentUser(r)
 		if !ok || !apiKeyBelongsToUser(ctx, u.ID, trace.APIKey) {
-			common.WriteError(w, http.StatusNotFound, "call trace not found")
+			WriteError(w, http.StatusNotFound, "call trace not found")
 			return
 		}
 	}
@@ -1068,11 +1067,11 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, value any) bool {
 	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(value); err != nil {
-		common.WriteError(w, 400, common.MessageInvalidJSONBody)
+		WriteError(w, 400, MessageInvalidJSONBody)
 		return false
 	}
 	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		common.WriteError(w, 400, common.MessageInvalidJSONBody)
+		WriteError(w, 400, MessageInvalidJSONBody)
 		return false
 	}
 	return true
@@ -1097,19 +1096,19 @@ func normalizeAIProviderConfigWithID(raw json.RawMessage, credentialID string) (
 			if err := json.Unmarshal([]byte(encoded), &value); err == nil {
 				raw, _ = json.Marshal(value)
 			} else {
-				return nil, "", nil, errors.New("provider config must be a JSON object")
+				return nil, "", nil, errProviderConfigObject
 			}
 		} else {
-			return nil, "", nil, errors.New("provider config must be a JSON object")
+			return nil, "", nil, errProviderConfigObject
 		}
 	}
 	if value == nil {
-		return nil, "", nil, errors.New("provider config must be a JSON object")
+		return nil, "", nil, errProviderConfigObject
 	}
 	if nested, ok := value["credential"].(map[string]any); ok {
 		b, err := json.Marshal(nested)
 		if err != nil {
-			return nil, "", nil, errors.New("invalid credential")
+			return nil, "", nil, errInvalidCredential
 		}
 		delete(value, "credential")
 		if credentialID == "" {
@@ -1134,16 +1133,16 @@ func (m *APIModule) login(ctx framework.ModuleContext, w http.ResponseWriter, r 
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
 	if decoder.Decode(&input) != nil || strings.TrimSpace(input.Username) == "" || input.Password == "" {
-		common.WriteError(w, http.StatusBadRequest, common.MessageUsernamePasswordRequired)
+		WriteError(w, http.StatusBadRequest, MessageUsernamePasswordRequired)
 		return
 	}
 	if decoder.Decode(&struct{}{}) != io.EOF {
-		common.WriteError(w, http.StatusBadRequest, common.MessageUsernamePasswordRequired)
+		WriteError(w, http.StatusBadRequest, MessageUsernamePasswordRequired)
 		return
 	}
 	users, err := ctx.Database().ListUsers()
 	if err != nil {
-		common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotAuthenticateUser)
+		WriteError(w, http.StatusInternalServerError, MessageCouldNotAuthenticateUser)
 		return
 	}
 	for _, user := range users {
@@ -1152,7 +1151,7 @@ func (m *APIModule) login(ctx framework.ModuleContext, w http.ResponseWriter, r 
 		}
 		token, err := ctx.Auth().CreateSession(&user)
 		if err != nil {
-			common.WriteError(w, http.StatusInternalServerError, common.MessageCouldNotAuthenticateUser)
+			WriteError(w, http.StatusInternalServerError, MessageCouldNotAuthenticateUser)
 			return
 		}
 		ctx.Auth().SetSessionCookie(w, token)
@@ -1160,5 +1159,5 @@ func (m *APIModule) login(ctx framework.ModuleContext, w http.ResponseWriter, r 
 		writeJSON(w, http.StatusOK, map[string]any{"status": "ok", "user": publicUser(user)})
 		return
 	}
-	common.WriteError(w, http.StatusUnauthorized, common.MessageInvalidUsernameOrPassword)
+	WriteError(w, http.StatusUnauthorized, MessageInvalidUsernameOrPassword)
 }

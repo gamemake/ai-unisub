@@ -1,9 +1,23 @@
 package aiprovider
 
 import (
+	"encoding/json"
 	"errors"
+	"net/http"
+)
 
-	"ai-unisub/internal/common"
+const (
+	MessageAIProviderUnavailable   = "provider unavailable"
+	MessageAIProviderQueueTimeout  = "provider request queue timeout"
+	MessageGatewayTimeout          = "gateway request timeout"
+	MessageClientCanceled          = "client canceled request"
+	MessageInvalidUpstreamEndpoint = "invalid upstream endpoint"
+	MessageUpstreamRequestFailed   = "upstream request failed"
+	MessageUpstreamNoResponse      = "upstream returned no response"
+	MessageUnauthorized            = "unauthorized"
+	MessageForbidden               = "forbidden"
+	MessageInternalServerError     = "internal server error"
+	MessageInvalidJSONBody         = "invalid JSON body"
 )
 
 var (
@@ -13,12 +27,12 @@ var (
 	ErrGatewayUnauthorized = errors.New("gateway authentication failed")
 	ErrInvalidResponse     = errors.New("invalid supplier response")
 	ErrModelsUnsupported   = errors.New("supplier does not support model listing")
-	ErrQueueTimeout        = errors.New(common.MessageAIProviderQueueTimeout)
+	ErrQueueTimeout        = errors.New(MessageAIProviderQueueTimeout)
 	ErrQuotaNotConfigured  = errors.New("quota credentials or endpoint are not configured")
 	ErrQuotaUnsupported    = errors.New("supplier does not support quota queries")
 	ErrRateLimited         = errors.New("supplier request rate limited")
 	ErrSupplierNotFound    = errors.New("supplier not found")
-	ErrUnavailable         = errors.New(common.MessageAIProviderUnavailable)
+	ErrUnavailable         = errors.New(MessageAIProviderUnavailable)
 	ErrUpstream            = errors.New("supplier upstream request failed")
 
 	errAccountAPIKeyEmpty                   = errors.New("account API key is empty")
@@ -81,3 +95,11 @@ var (
 	errUnknownSupplier                      = errors.New("unknown supplier")
 	errUpstreamNilResponse                  = errors.New("upstream returned a nil response")
 )
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(struct {
+		Error string `json:"error"`
+	}{Error: message})
+}

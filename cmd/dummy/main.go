@@ -15,22 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"ai-unisub/internal/common"
 	"ai-unisub/internal/database"
+	"ai-unisub/internal/logger"
 )
 
 const defaultDatabaseURL = "sqlite://./data/ai-unisub.db"
-
-var errUsage = errors.New("invalid command usage")
-
-type usageError string
-
-func (e usageError) Error() string        { return string(e) }
-func (e usageError) Is(target error) bool { return target == errUsage }
-
-func usageErrorf(format string, values ...any) error {
-	return usageError(fmt.Sprintf(format, values...))
-}
 
 const usageText = `Usage:
   dummy <api-key> [--count <n>] [--database-url <url>]
@@ -49,7 +38,7 @@ func main() {
 			fmt.Fprint(os.Stderr, usageText)
 			return
 		}
-		common.ModuleLogger("cmd/dummy").Error("command_failed", err.Error())
+		ModuleLogger.Error("command_failed", err.Error())
 		if errors.Is(err, errUsage) {
 			fmt.Fprint(os.Stderr, usageText)
 		}
@@ -58,7 +47,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	if err := common.InitLogging(common.LogConfig{Output: stderr}); err != nil {
+	if err := logger.InitLogging(logger.LogConfig{Output: stderr}); err != nil {
 		return err
 	}
 	if len(args) < 1 || strings.TrimSpace(args[0]) == "" {
@@ -85,7 +74,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	if flags.NArg() != 0 {
 		return usageErrorf("unexpected argument %q", flags.Arg(0))
 	}
-	common.ModuleLogger("cmd/dummy").Info("generation_started", fmt.Sprintf("parameters: api_key=%q database_url=%q count=%d", apiKey, databaseURL, count))
+	ModuleLogger.Info("generation_started", fmt.Sprintf("parameters: api_key=%q database_url=%q count=%d", apiKey, databaseURL, count))
 
 	db, err := database.NewDatabase(databaseURL)
 	if err != nil {

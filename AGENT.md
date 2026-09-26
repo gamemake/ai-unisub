@@ -12,7 +12,7 @@ UniSub 是 Go + SQLite AI 网关，提供多用户管理、上游订阅凭据与
 | --- | --- |
 | `cmd/unisub/` | 服务进程配置和 HTTP 启动 |
 | `cmd/oauth/`、`cmd/dummy/` | 独立 OAuth CLI、本地模拟工具 |
-| `internal/common/` | 通用 JSON 错误与公共错误消息；不承担代理职责 |
+| `internal/logger/` | 统一日志初始化、级别过滤与结构化输出；不承载业务错误 |
 | `internal/database/` | 统一数据库契约、SQLite/PostgreSQL 持久化与内存缓存 |
 | `internal/oauth/` | OAuth Manager、Session、凭据刷新和协议适配器 |
 | `internal/aiprovider/` | AIProvider 工厂、运行时 Account、并发队列和上游调用 |
@@ -29,8 +29,15 @@ UniSub 是 Go + SQLite AI 网关，提供多用户管理、上游订阅凭据与
 - `aiprovider` 不依赖数据库或页面，持久化转换由应用层负责。
 - 模块职责：`static` 仅通过 `/` 返回静态网页并提供资源，不判断会话或重定向；`api` 负责 `/api/login`、`/api/logout` 与普通管理 API；`oauthflow` 负责全部 OAuth JSON API 与回调；`gateway` 负责 `/v1/` 转发。四者均为 UniSub 应用模块，不是 Service 框架内置模块。
 - 页面入口与登录／登出归属已对齐；前端在 `/` 中按会话状态切换登录界面和 Dashboard。
-- **代理能力位于独立的 `internal/proxy`**，统一负责代理对象构造与内部 URL 校验、HTTP 传输配置、代理组、调度、探测、状态和统计。`oauth` 显式依赖 `proxy` 并通过参数接收代理对象，不用 Context 隐式传递代理。代理包通过存储接口接入数据库，不依赖 `service`、`unisub`、`oauth` 或具体 AIProvider；`common` 下不包含 `proxy.go`。
+- **代理能力位于独立的 `internal/proxy`**，统一负责代理对象构造与内部 URL 校验、HTTP 传输配置、代理组、调度、探测、状态和统计。`oauth` 显式依赖 `proxy` 并通过参数接收代理对象，不用 Context 隐式传递代理。代理包通过存储接口接入数据库，不依赖 `service`、`unisub`、`oauth` 或具体 AIProvider；`logger` 只提供日志能力，不包含代理实现。
 - 代理管理由 `internal/proxy` 持有；接口、策略和统计存储见 [Proxy 设计](docs/proxy.md)。
+
+## 日志与错误约定
+
+- 所有 Go 模块统一使用 `internal/logger` 输出日志，不直接调用 `slog` 的包级输出函数，也不自行创建独立日志链路。
+- 每个模块包必须在本包 `logger.go` 中声明唯一的模块 Logger：`var ModuleLogger = logger.ModuleLogger("<module>")`；其他文件只使用该变量，不重复创建 Logger。
+- 每个包的 package-level error（包括导出和未导出的 sentinel error）、客户端安全错误消息及本包错误响应辅助函数统一声明在本包 `errors.go`。调用点可以包装这些 error，但不得在其他业务文件中散落声明。
+- `internal/logger` 仅包含日志基础设施及自身错误；业务 error、HTTP 错误消息和 JSON 错误响应必须由实际使用它们的包持有，禁止重新建立公共业务错误包。
 
 ## 开发与验证
 
@@ -66,6 +73,6 @@ DEV 读取本地前端构建目录；PRD 使用可执行文件中的嵌入资源
 | 持久化 | [Database](docs/database.md) |
 | OAuth 协议与 CLI | [OAuth](docs/oauth.md) |
 | AI 上游与运行时账号 | [AIProvider](docs/ai-provider.md) |
-| 公共工具 | [Common](docs/common.md) |
+| 统一日志 | [Logger](docs/logger.md) |
 | UniSub 应用模块 | [Static](docs/unisub-static.md)、[API](docs/unisub-api.md)、[OAuthFlow](docs/unisub-oauthflow.md)、[Gateway](docs/unisub-gateway.md) |
 | UI 组件 | [组件说明](src/components/ui/README.md) |

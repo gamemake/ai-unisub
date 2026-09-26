@@ -6,7 +6,7 @@
 
 **包是代码依赖边界，应用模块是 HTTP 职责与生命周期边界，两者不是一一对应。**
 
-- `internal/common`、`database`、`proxy`、`oauth`、`aiprovider` 提供基础或领域能力，不注册 UniSub 的业务路由。
+- `internal/logger`、`database`、`proxy`、`oauth`、`aiprovider` 提供基础或领域能力，不注册 UniSub 的业务路由。
 - `internal/service` 定义 Module、ModuleContext、路由、认证和共享依赖的管理方式，不导入具体 UniSub 应用模块。
 - `internal/unisub` 组装应用，在同一个 Go 包内实现 static、api、oauthflow、gateway 四个模块；它们不是四个独立 Go 包。
 - `cmd/unisub` 是进程入口，负责配置与 HTTP 监听；`internal/web` 提供构建资源，不是业务模块。
@@ -30,16 +30,22 @@ flowchart TD
     AI --> Proxy
     OAuth --> Proxy
     DB -->|Store 契约| Proxy
-    Framework --> Common[internal/common]
-    Proxy --> Common
+    Entry --> Logger[internal/logger]
+    App --> Logger
+    Framework --> Logger
+    DB --> Logger
+    AI --> Logger
+    OAuth --> Logger
+    Proxy --> Logger
     CLI[cmd/oauth] --> OAuth
+    CLI --> Logger
 ```
 
 应用层可以使用上下文返回的领域类型完成数据转换，但底层包不因此反向依赖应用。数据库对 Proxy 的依赖用于实现其 Store 契约；Proxy 不导入 Database。OAuth 的 CredentialStore 由接口结构匹配注入，不要求 OAuth 导入具体数据库包。
 
 | 包 | 职责 | 关键边界 | 文档 |
 | --- | --- | --- | --- |
-| common | 公共错误消息、JSON 错误输出与统一日志 | 不承担代理职责，不包含 proxy.go | [Common](common.md) |
+| logger | 统一日志初始化、级别过滤、模块 Logger 与结构化输出 | 不包含业务错误、HTTP 错误消息或 JSON 错误响应 | [Logger](logger.md) |
 | database | 统一数据库接口、SQLite/PostgreSQL 持久化与内存缓存 | MemoryDatabase 实现 Database 并包装 SQL 存储，不是并列数据库后端 | [Database](database.md) |
 | proxy | 代理对象、内部 URL 校验、HTTP 传输、代理组、调度与统计 | 不依赖 OAuth、AIProvider、Service 或应用；通过自身 Store 接口使用持久化 | [Proxy](proxy.md) |
 | oauth | 授权协议、Session、Credential、刷新与撤销 | 显式依赖 Proxy，不感知应用路由、用户角色、页面或具体数据库 | [OAuth](oauth.md) |

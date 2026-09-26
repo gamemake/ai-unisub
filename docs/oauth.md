@@ -1,19 +1,81 @@
-# OAuth 模块
+# OAuth 包设计
 
-`internal/oauth` 提供独立 OAuth 协议能力，负责授权会话、协议适配、凭据交换、刷新与撤销。它不感知调用方的应用模块、HTTP 路由、页面、登录体系或数据库具体实现；持久化通过调用方注入的 CredentialStore 完成。
+`internal/oauth` 负责 OAuth 协议适配、短期授权会话、Token 交换、刷新与可选撤销。它统一 OpenAI、Anthropic、xAI 和本地 Dummy 服务的差异，并把所有出站请求接入代理组调度与 `proxy_logs` 记录。
 
-## 结构与职责
+OAuth 包不注册 HTTP 路由、不识别登录用户，也不持久化业务账号或 OAuth Credential。Web 层负责身份校验和结果交接，AI Provider 层负责最终账号存储；命令行工具的凭据文件能力位于 `cmd/oauth`，不属于 OAuth 包。
 
-| 位置 | 职责 |
+## 包边界与依赖
+
+Manager 的构造函数为：
+
+```go
+func NewManager(db database.Database, proxy proxy.ProxyManager) OAuthManager
+```
+
+直接依赖如下：
+
+| 依赖 | 用途 |
 | --- | --- |
-| `internal/oauth/types.go` | Credential、Session、Adapter 能力和存储接口 |
-| `internal/oauth/manager.go` | Adapter 注册、授权流程、Session 与凭据刷新 |
-| `internal/oauth/adapters/` | Codex、Claude、Grok 的协议实现 |
-| `internal/oauth/file_store.go` | CLI 的单文件凭据存储 |
-| `internal/oauth/dummy.go` | 本地模拟适配器 |
-| `cmd/oauth/main.go` | 独立 CLI，直接调用 OAuthManager |
+| `database.Database` | 自定义 Revoke HTTP Client 的逐次调用日志；不用于存储 OAuth Credential 或 Session |
+| `proxy.ProxyManager` | 为 Start、Complete、Poll、Refresh 选择代理组并记录调用日志 |
+| `internal/logger` | 通过包级 `ModuleLogger` 输出结构化事件 |
 
-OAuthAdapter 只负责上游授权协议，由 OAuthManager 注册和调用；调用方如何使用取得的 Token 不属于 OAuth 模块职责。
+`ProxyManager` 是 Start 和 Refresh 的必要依赖。`database.Database` 在使用外部传入的 Revoke Client 时必须存在。生产环境由 `internal/service` 创建 Database、ProxyManager 和 OAuthManager，并把同一组实例注入各业务模块。
+
+OAuthManager 本身没有 `Open`、`Close` 等生命周期方法；Adapter 注册表和未完成 Session 都只存在于当前进程。
+
+## 文件结构
+
+| 文件 | 职责 |
+| --- | --- |
+| `types.go` | Credential、Session、Adapter 能力接口和 OAuthManager 接口 |
+| `manager.go` | 默认 Adapter 注册、授权流程、Session 状态与凭据操作 |
+| `transport.go` | ProxyManager Transport 和自定义 Client 的数据库日志包装 |
+| `adapter_common.go` | PKCE、OAuth HTTP 响应和 Token 响应的通用处理 |
+| `adapter_openai.go` | OpenAI/Codex PKCE Adapter |
+| `adapter_anthropic.go` | Anthropic/Claude PKCE Adapter |
+| `adapter_xai.go` | xAI/Grok Device Flow Adapter |
+| `adapter_dummy.go` | 本地 Device Flow 模拟实现 |
+| `errors.go` | OAuth 包内公开状态错误与内部实现错误 |
+| `logger.go` | 声明 `ModuleLogger = logger.ModuleLogger("oauth")` |
+
+各 Adapter 与公共辅助代码都属于同一个 `oauth` 包，没有 `internal/oauth/adapters` 子包。
+
+## 数据模型
+
+### OAuthCredential
+
+标准化凭据包含：
+
+```go
+type OAuthCredential struct {
+    AccessToken  string
+    RefreshToken string
+    TokenType    string
+    ExpiresAt    time.Time
+    AccountID    string
+    AccountName  string
+    Email        string
+}
+```
+
+Adapter 不保留完整上游响应。`expires_in` 会转换为 UTC 绝对时间；上游未返回 `token_type` 时使用 `Bearer`。Manager 要求 Exchange、Poll 和 Refresh 的结果必须包含非空 Access Token。
+
+### OAuthSession
+
+Session 是一次尚未完成的授权流程，保存：
+
+- `ID`、`Service`、调用方提供的 `SubjectID`
+- PKCE 使用的 `RedirectURI`、`State`、`CodeVerifier`
+- Device Flow 使用的 `DeviceCode`
+- 本次流程绑定的 `HTTPClient`
+- `ExpiresAt`
+
+Session 不会序列化到数据库。`SubjectID` 是 OAuth 包不解释的不透明业务主体标识；Web 集成使用当前用户 ID，CLI 使用空字符串。
+
+### StartResult
+
+Start 向调用方返回 `session_id`、`authorization_url` 和 `expires_at`。Device Flow 还会返回 `user_code` 与 `verification_uri`，但不会暴露 Device Code；PKCE Code Verifier 也不会离开 Session。
 
 ## Adapter 能力
 
@@ -40,123 +102,190 @@ type RevocableAdapter interface {
 }
 ```
 
-| service | 当前适配方式 |
-| --- | --- |
-| codex | PKCE；Token 请求使用表单编码，解析账号信息 |
-| claude | PKCE；Token 请求使用 JSON，保留账号和刷新信息 |
-| grok | Device Flow；设备授权、轮询、pending/slow_down 错误映射 |
-| dummy | 本地模拟授权，供测试使用 |
+`NewManager` 默认注册以下 Adapter：
 
-各适配器独立定义授权地址、请求参数、Header、响应转换与 HTTP Client。服务标识使用普通字符串和 OAuthService 常量。撤销是可选能力，不支持时 Manager 返回错误。
+| Service | CLI 名称 | 流程 | 实现要点 |
+| --- | --- | --- | --- |
+| `openai` | `codex` | PKCE | Token 请求使用表单编码；从 ID Token claims 提取邮箱和账号 ID |
+| `anthropic` | `claude` | PKCE | Token 请求使用 JSON；刷新时保留旧账号信息和缺失的 Refresh Token |
+| `xai` | `grok` | Device Flow | 映射 `authorization_pending`、`slow_down` 状态 |
+| `dummy` | 无 | Device Flow | 第一次 Poll 返回 pending，第二次返回本地模拟凭据 |
 
-此处记录仓库实现，不代表三家平台当前账号、scope 或接口兼容性已经通过真实环境验证。
+OpenAI、Anthropic 和 xAI 构造函数都支持覆盖端点、Client ID、Scopes 与默认 HTTP Client。Manager 调用时传入的 Session/Proxy Client 优先于 Adapter 配置中的 Client。
+
+`Register` 可增加新 Service，但不允许空 Adapter、空 Service 或覆盖同名默认 Adapter。当前内置 Adapter 均未实现 `RevocableAdapter`。
 
 ## OAuthManager 接口
 
-```text
-NewManager(store CredentialStore) *OAuthManager
-NewOAuthManager(store CredentialStore) *OAuthManager
-Register(adapter OAuthAdapter) error
-Start(ctx context.Context, service, subjectID, redirectURI string, client *http.Client) (*StartResult, error)
-Complete(ctx context.Context, sessionID, code, state string) (*OAuthCredential, error)
-Poll(ctx context.Context, sessionID string) (*OAuthCredential, error)
-SessionForState(state string) (OAuthSession, error)
-SessionForSubjectState(service, subjectID, state string) (string, error)
-SessionForSubject(sessionID, service, subjectID string) (OAuthSession, error)
-DiscardSession(sessionID string) error
-Refresh(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) (*OAuthCredential, error)
-GetValidAccessToken(ctx context.Context, service, credentialID string, client *http.Client) (string, error)
-Revoke(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) error
-```
-
-以上省略方法接收者和重复的 func 关键字，仅列出当前调用签名。Start、Complete、Poll 返回结果，不自动长期保存 Credential；GetValidAccessToken 才通过 Store 读取并保存刷新结果。
-
-## Session 与身份
-
-SessionID 表示一次授权流程，由 Manager 生成；SubjectID 是调用方提供的不透明主体标识。OAuth 不解释该标识对应的用户、角色或登录方式；不需要主体绑定的调用场景可以使用空 SubjectID。
-
-Session 保存 ID、Service、SubjectID、RedirectURI、State、CodeVerifier、DeviceCode、Proxy 和 ExpiresAt。默认有效期 10 分钟，Device Flow 若返回上游过期时间则使用该时间。Session 仅保存在进程内存中，重启后失效，访问过期 Session 时清理。
-
-StartResult 返回 session_id、authorization_url、expires_at；设备授权额外返回 user_code 和 verification_uri，不返回 verifier 或 device code。
-
-PKCE 的 Complete 校验 Session 与 state，然后消费 Session 再交换 token；交换失败不能重用原 Session。需要主体约束的调用方先通过 SessionForSubject 校验 Session 归属；Complete 不负责识别调用者身份。
-
-Device Flow 的 Poll 成功后消费 Session，pending/slow_down 保留 Session；当前没有按 Session 串行化并发轮询，因此不能承诺并发 poll 只进行一次交换。
-
-## Credential 与存储
-
-标准化 Credential 字段为 access_token、refresh_token、token_type、expires_at、account_id、account_name、email；不保留上游原始响应。
-
 ```go
-type CredentialStore interface {
-    LoadCredential(string) (json.RawMessage, error)
-    SaveCredential(string, json.RawMessage) error
-    DeleteCredential(string) error
+type OAuthManager interface {
+    Register(adapter OAuthAdapter) error
+    Start(ctx context.Context, service, subjectID, redirectURI string, proxyGroup int) (*StartResult, error)
+    Complete(ctx context.Context, sessionID, code, state string) (*OAuthCredential, error)
+    SessionForState(state string) (OAuthSession, error)
+    SessionForSubjectState(service, subjectID, state string) (string, error)
+    SessionForSubject(sessionID, service, subjectID string) (OAuthSession, error)
+    DiscardSession(sessionID string) error
+    Poll(ctx context.Context, sessionID string) (*OAuthCredential, error)
+    Refresh(ctx context.Context, service string, credential *OAuthCredential, proxyGroup int) (*OAuthCredential, error)
+    Revoke(ctx context.Context, service string, credential *OAuthCredential, client *http.Client) error
 }
 ```
 
-存储实现把 Credential 视为不透明 JSON，OAuth 负责序列化。调用方注入满足 CredentialStore 的实现；OAuth 不要求具体数据库、表结构或应用存储包装层。FileCredentialStore 提供显式的单文件存储能力。
+Start、Complete、Poll、Refresh 和 Revoke 只返回操作结果，不自动保存 Credential。包内不存在 CredentialStore、`GetValidAccessToken` 或自动刷新能力。
 
-Credential ID 标识存储中的凭据，Session ID 标识一次授权流程，二者不能混用。当前凭据 JSON 和存储接口不包含主体归属或 service 绑定校验信息；调用方负责访问授权，不能从一个不透明 ID 推定所有权。
+## PKCE 流程
 
-## 有效 Token 与刷新
+1. `Start` 校验 Service 和 Proxy Group，创建 30 秒超时的代理 Client。
+2. Manager 生成 48 字符 Session ID、State，以及由两个随机值拼接成的 Code Verifier。
+3. Adapter 以 S256 challenge 构建 Authorization URL。
+4. Session 保存 State、Verifier、Redirect URI 和 HTTP Client。
+5. 回调方先按业务需要调用 `SessionForSubject` 或 `SessionForSubjectState` 校验归属，再调用 `Complete`。
+6. `Complete` 校验 State，原子消费 Session，然后调用 Adapter Exchange。
+7. Manager 校验返回的 Credential 并交还调用方。
 
-调用方通过 `GetValidAccessToken(ctx, service, credentialID)` 获取有效 Token：
+State 不匹配时返回 `ErrStateMismatch`，Session 保留，可使用正确 State 重试。State 正确后 Session 会在访问上游之前被消费，所以 Exchange 失败时不能复用原 Session，调用方必须重新 Start。并发 Complete 最多只有一个调用能成功消费 Session。
 
-1. 从 Store 读取 Credential，拒绝空 Access Token。
-2. 没有过期时间，或距离过期超过 60 秒，直接返回 Token。
-3. 否则取得该 credentialID 对应的进程内锁。
-4. 锁内重新读取并检查，避免等待期间重复刷新。
-5. 调用对应 Adapter.Refresh，保存新 Credential 后返回 Token。
+PKCE 要求非空 Redirect URI。默认 Session TTL 为 10 分钟；如果 Adapter 返回了更早的有效期，则缩短到该时间，不会用 Adapter 结果延长 Session。
 
-刷新响应缺少 refresh_token、token_type 或账号信息时，Manager 保留原值。同一 Manager 内的并发刷新有锁保护，但不存在数据库级或多进程刷新锁，不将其描述成分布式互斥。
+## Device Flow
 
-普通 Refresh 返回新结果，不负责写 Store；调用方决定是否保存。包含凭据的协议结果应由调用方按其访问控制契约处理，不写入普通日志。
+1. `Start` 通过 Adapter 获取 Device Code、User Code、Verification URI、有效期和建议轮询间隔。
+2. Device Code 仅保存在 Session；调用方只收到用户需要的验证信息。
+3. 调用方使用 Session ID 调用 `Poll`。
+4. `ErrAuthorizationPending` 和 `ErrSlowDown` 表示仍可继续轮询，Session 保留。
+5. 成功且 Credential 有效后，Manager 消费 Session 并返回凭据。
 
-## 调用方边界
+Device Adapter 返回非零有效期时会直接替换默认 10 分钟 TTL。Manager 不负责定时轮询，也不强制 Adapter 给出的 `Interval`；具体轮询节奏由 Web 或 CLI 调用方控制。
 
-- 调用方提供 service、SubjectID、redirect URI、代理选项和请求 Context。
-- Manager 返回授权地址或设备验证信息，由调用方决定如何展示或打开。
-- 调用方将授权回调中的 code/state 交给 Complete，或通过 Poll 执行设备授权轮询；OAuth 不注册回调路由或启动应用服务器。
-- Complete/Poll 返回标准化 Credential，不创建调用方的业务资源，也不维护应用专用的结果交接存储。
-- 页面、Cookie、HTTP 状态码、角色权限及结果展示均由调用方定义，不属于 OAuth 包契约。
+当前 Poll 没有按 Session 设置串行锁。并发轮询可能同时请求上游；成功后只有一个调用能消费 Session，其他调用会得到 Session 不存在，但不能假设上游只发生了一次 Token 请求。
 
-OAuth 的调用契约不随某个应用的模块划分、路由命名或前端交互方式变化。
+## Session 生命周期与查询
+
+- Session map 由 Manager Mutex 保护，进程重启后全部失效。
+- 过期 Session 在按 ID 或匹配 State 访问时惰性删除，没有后台清理任务。
+- `SessionForState` 线性扫描当前 Session；它只清理 State 匹配但已过期的项。
+- `SessionForSubject` 同时校验 Session ID、Service 和 Subject ID；归属不符统一返回 `ErrSessionNotFound`，避免泄露其他主体的 Session。
+- `DiscardSession` 用于显式消费 Session，例如上游回调携带错误时。
+
+Manager 只提供授权会话的进程内并发保护，不提供多进程协调、持久化恢复或凭据级刷新锁。
+
+## Refresh 与 Revoke
+
+`Refresh` 根据 Service 选择 Adapter，并为本次请求按 `proxyGroup` 创建 Client。刷新响应未提供下列字段时，Manager 使用旧凭据补齐：
+
+- Refresh Token
+- Token Type
+- Account ID
+- Account Name
+- Email
+
+Refresh 不判断 Access Token 是否即将过期、不加刷新互斥锁，也不保存结果。是否刷新、何时刷新和如何原子更新业务账号由调用方负责。
+
+Revoke 是 Adapter 的可选能力：
+
+- 传入 Client 为 nil 时，Manager 使用 Proxy Group 0 的直连路径，仍通过 ProxyManager 记录日志。
+- 传入自定义 Client 时，Manager 复制 Client，并在原 Transport 外包装 `recordingTransport`，把 URL、HTTP 状态和传输错误写入 Database。
+- 自定义 Client 路径不会改写调用方的原 Client，但要求构造 Manager 时提供非 nil Database。
+- Adapter 未实现 `RevocableAdapter` 时返回“不支持撤销”错误。当前四个内置 Adapter 都属于这种情况。
+
+## HTTP 响应处理与安全边界
+
+Adapter 公共请求处理遵循以下规则：
+
+- 只接受 2xx；响应体最多读取 1 MiB。
+- 非 2xx 响应优先解析 OAuth `error` 和 `error_description`。
+- 无标准 OAuth Error 时，错误保留压缩空白后的响应体前 200 字节，供诊断 WAF 或代理页面。
+- Token 响应必须包含 Access Token；缺失 Token Type 时使用 `Bearer`。
+- `expires_in` 仅在大于零时转换为 UTC `ExpiresAt`。
+- OpenAI ID Token 只做 JWT Payload 的 Base64 解码来提取展示信息，不验证签名，不能把这些 claims 当作本地身份认证依据。
+
+Credential、Authorization Code、Verifier 和 Device Code 不应写入普通日志。需要特别注意：非 OAuth 错误响应的 `BodySnippet` 当前会进入返回错误及失败日志，代码并未对该片段做完整脱敏；上游错误页不得包含秘密信息。
+
+## 代理与调用日志
+
+Start 和 Refresh 接收 Proxy Group ID，而不是代理 URL：
+
+- 负数 Group ID 直接拒绝。
+- `0` 表示不使用代理组，但请求仍经过 ProxyManager 的直连路径并写入 `proxy_logs`。
+- 大于零时，Transport 在每次请求时调用 `ProxyManager.Do`；Session 只固定 Group ID，不固定某个代理 URL，因此后续 Complete/Poll 会读取代理组的当前配置并由 ProxyManager 调度。
+- 日志的 `app` 标识为 `oauth:<service>`。
+- Transport 把 5xx 归类为应用失败，供代理调度记录；其他 HTTP 状态交给 Adapter 的 OAuth 响应处理。
+- Session 保存创建时的 HTTP Client，确保 Start 与后续 Complete/Poll 使用同一个代理组配置入口。
+
+具体代理组选择、重试、健康状态和日志字段见 [Proxy 包设计](proxy.md)。
+
+## Web 集成边界
+
+`internal/unisub/oauthflow.go` 才是 HTTP 边界，OAuth 包本身不注册路由。当前 Web 流程提供：
+
+| 路由 | 用途 |
+| --- | --- |
+| `POST /api/oauth/{service}/start` | 读取可选的 `proxy_group_id` 并启动授权 |
+| `POST /api/oauth/{service}/complete/{sessionID}` | 提交 PKCE Code 与 State |
+| `POST /api/oauth/{service}/poll/{sessionID}` | 轮询 Device Flow |
+| `GET /api/oauth/{service}/status/{sessionID}` | 查询当前用户的授权状态 |
+| `GET /api/oauth/results/{resultID}` | 一次性读取授权结果 |
+| `GET /auth/callback`、`/callback`、`/oauth/code/callback` | 接收无需登录态的上游回调 |
+
+`/api/oauth/` 下的接口要求登录态和管理员身份，并把 Session 绑定到当前用户 ID。无登录态的回调依靠不可预测 State 找到 Session；上游返回错误时丢弃对应 Session。
+
+Complete 或 Poll 得到的 Credential 先进入短期、一次性读取的 `OAuthResultStore`，再由应用流程取走并保存为业务账号。OAuth 包和 OAuthFlow 都不会直接把 Credential 写入 Database 的账号表。
 
 ## CLI
 
-```sh
-go run ./cmd/oauth login codex
-go run ./cmd/oauth login claude --output ./oauth/claude.json
-go run ./cmd/oauth login grok --output ./oauth/grok.json
-go run ./cmd/oauth status --file ./oauth/grok.json
-go run ./cmd/oauth refresh --file ./oauth/grok.json --provider grok
-go run ./cmd/oauth revoke --file ./oauth/grok.json --provider grok
-go run ./cmd/oauth logout --file ./oauth/grok.json --provider grok
+`cmd/oauth` 是 OAuthManager 的独立调用方：
+
+```text
+oauth login <codex|claude|grok> [--output <file>]
+oauth status --file <file>
+oauth refresh --file <file> [--provider <provider>]
+oauth revoke --file <file> [--provider <provider>]
+oauth logout --file <file> [--provider <provider>]
 ```
 
-| 命令 | 行为 |
+CLI 每次运行都会创建 SQLite 内存 Database 和仅使用 Group 0 的 ProxyManager。Login 总超时为 15 分钟，其他凭据操作为 2 分钟。
+
+- Codex 回调路径为 `/auth/callback`，Claude 为 `/callback`；二者监听 `127.0.0.1` 随机端口。
+- Grok 使用 Device Flow，当前固定每 5 秒 Poll，没有采用 Adapter 返回的 Interval。
+- `status` 只按本地 `ExpiresAt` 输出 `valid`、`expiring` 或 `expired`，不会访问上游。
+- Login 输出或保存的 JSON 带 CLI Provider 名称。
+- Refresh 覆盖文件时只序列化标准 OAuthCredential，当前会丢失 Provider 元数据；后续操作可显式传 `--provider`。
+- 当前内置 Adapter 均不支持 Revoke，因此 `revoke` 会失败并保留文件；`logout` 会忽略“不支持撤销”错误并删除本地文件。
+
+凭据文件实现在 `cmd/oauth/credential_file.go`。写入时校验 JSON，创建同目录临时文件，设置目录 `0700`、文件 `0600`，执行 Sync 后 Rename；当前没有专用 Windows ACL 处理，也没有跨进程文件锁。
+
+## 错误与日志
+
+供调用方进行状态分支的公开错误为：
+
+- `ErrSessionNotFound`
+- `ErrSessionExpired`
+- `ErrStateMismatch`
+- `ErrUnsupportedFlow`
+- `ErrAuthorizationPending`
+- `ErrSlowDown`
+
+其余参数、配置和上游响应错误只在 OAuth 包内声明，并通过包装后的 `error` 返回。每个错误都定义在本包 `errors.go`；OAuth 的包级日志入口定义在 `logger.go`，其他源码不自行创建模块 Logger。
+
+主要结构化日志事件包括 Adapter 注册、授权开始/完成、State 不匹配、轮询等待、刷新/撤销成功，以及各阶段的上游失败。日志事件使用 Service 和错误文本定位问题，不记录完整 Credential。
+
+## 当前限制与验证范围
+
+当前实现有以下明确限制：
+
+- Session 只在单进程内存中，重启后无法恢复，也没有主动清理循环。
+- Credential 的持久化、所有权和加密不属于 OAuthManager。
+- 没有自动 Token 有效性检查、自动刷新、刷新去重或分布式锁。
+- 内置 Adapter 没有 Revoke 实现。
+- JWT claims 仅用于补充账号元数据，未做密码学验证。
+- Dummy 与 Mock Server 测试不能证明真实平台的 Client ID、Scopes 或端点长期兼容。
+
+现有自动化验证集中在：
+
+| 测试文件 | 覆盖范围 |
 | --- | --- |
-| login | 输出授权地址并尝试打开浏览器；无 output 时输出 Credential JSON，有 output 时保存指定文件 |
-| status | 仅按文件中的过期时间显示 valid、expiring（不足 1 小时）、expired，不访问上游验证 |
-| refresh | 刷新并覆盖指定文件 |
-| revoke | Adapter 支持撤销且成功时删除文件；不支持则返回错误 |
-| logout | 尝试撤销；不支持撤销时仍删除本地文件，其他上游错误不忽略 |
+| `internal/oauth/manager_test.go` | PKCE State 与单次消费、OAuth 出站代理日志、Dummy Device Flow、刷新元数据保留 |
+| `internal/oauth/adapters_test.go` | OpenAI PKCE 与 claims、Anthropic JSON Exchange、xAI pending 与 Token 响应 |
 
-Codex/Claude 的 CLI 回调仅监听 127.0.0.1 的随机端口，路径分别为 /auth/callback 和 /callback；Grok 不开回调监听，当前每 5 秒轮询。CLI 授权 Context 总超时 15 分钟，但 Session 仍受自身过期时间约束。
-
-login 保存的文件带 provider 标识。当前 refresh 保存标准 Credential 时不保留 provider 字段，所以后续操作可显式传 --provider；不声称连续刷新会自动保留该元数据。
-
-FileCredentialStore 校验 JSON，通过同目录临时文件、Sync 和 Rename 写入；请求目录权限 0700、文件权限 0600。当前没有专用 Windows ACL 设置逻辑，也没有跨进程文件锁。未指定输出文件不会创建默认凭据文件，不写服务器数据库或系统凭据库。
-
-## 代理边界
-
-OAuth 只依赖 `common`。Start、Refresh、GetValidAccessToken 和 Revoke 接收调用方传入的 `*http.Client`；省略代理时传 nil。代理由调用方使用 `proxy.Client` 构造，OAuth 不感知 `proxy.Endpoint`。Start 将 HTTP Client 保存在进程内 Session 中，以保证 Complete/Poll 使用同一传输配置。
-
-Complete/Poll 使用 Session 的 HTTP Client 和当前 Context 调用适配器。Exchange、PollDeviceToken、Refresh 和 Revoke 显式传递 HTTP Client；代理包仍负责构造专用 Client/Transport，不修改共享客户端。Context 仅承载取消与超时，HTTP Client 不进入凭据序列化。
-
-OAuth 不负责代理组调度或健康判定；输入校验及传输配置见 [Proxy](proxy.md)。Common 与 OAuth 均不保留旧 Context 代理工具或解析函数包装。
-
-## 验证范围
-
-协议层测试位于 `internal/oauth/manager_test.go`、`file_store_test.go`、`adapters/adapters_test.go` 与 `dummy_functional_test.go`。验证覆盖 state、过期、主体匹配、单次回调、刷新互斥、文件读写、HTTP Client 传递、Session Client 绑定和并发隔离，不依赖具体应用的 Handler、页面或业务账号。`proxy_session_test.go` 覆盖并发 Session Client 绑定；模拟结果不等同于真实平台授权成功。
+CLI 当前没有独立测试文件。涉及真实上游兼容性时，还需要使用受控测试账号做集成验证。
