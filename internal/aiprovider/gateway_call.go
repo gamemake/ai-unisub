@@ -36,7 +36,7 @@ func (c *gatewayCall) trace(req *http.Request) *database.PersistedCallTrace {
 		OriginalRequestHeaders: redactedGatewayHeaders(req.Header), ResponseBody: c.responseBody,
 		RequestBytes: int64(len(c.requestBody)), ResponseBytes: int64(len(c.responseBody)),
 		QueueDurationMs: c.queueDuration.Milliseconds(), RequestDurationMs: time.Since(c.startedAt).Milliseconds(), FinishedAt: time.Now().UTC(),
-		RequestID: req.Header.Get("X-Request-Id"), SessionID: gatewaySessionID(req.Header), SourceIP: gatewaySourceIP(req.RemoteAddr),
+		RequestID: gatewayRequestID(req.Header, nil), SessionID: gatewaySessionID(req.Header), SourceIP: gatewaySourceIP(req.RemoteAddr),
 	}
 	if c.outbound != nil {
 		trace.OutboundURL = c.outbound.URL.String()
@@ -45,6 +45,7 @@ func (c *gatewayCall) trace(req *http.Request) *database.PersistedCallTrace {
 	if c.response != nil {
 		trace.HTTPErrorCode = c.response.StatusCode
 		trace.ResponseHeaders = redactedGatewayHeaders(c.response.Header)
+		trace.RequestID = gatewayRequestID(req.Header, c.response.Header)
 		trace.ResponseBody = decodeGatewayResponseBody(trace.ResponseHeaders, trace.ResponseBody)
 	}
 	if c.requestErr != nil {

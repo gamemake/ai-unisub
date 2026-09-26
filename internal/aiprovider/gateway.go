@@ -307,8 +307,18 @@ func redactedGatewayHeaders(header http.Header) http.Header {
 }
 
 func gatewaySessionID(header http.Header) string {
-	for _, name := range []string{"Session-Id", "X-Session-Id", "Conversation-Id", "X-Conversation-Id"} {
+	for _, name := range []string{"X-Claude-Code-Session-Id", "Session-Id", "Session_id", "X-Session-Id", "Conversation-Id", "Conversation_id", "X-Conversation-Id"} {
 		if value := strings.TrimSpace(header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+// gatewayRequestID prefers the client's request ID and falls back to the upstream one.
+func gatewayRequestID(request, response http.Header) string {
+	for _, name := range []string{"Request-Id", "X-Request-Id", "X-Oai-Request-Id"} {
+		if value := strings.TrimSpace(response.Get(name)); value != "" {
 			return value
 		}
 	}

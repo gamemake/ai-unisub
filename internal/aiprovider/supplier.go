@@ -123,8 +123,12 @@ func (s *SupplierData) PreRequest(account *Account, req *http.Request, body *[]b
 			req.Header.Set("Anthropic-Version", "2023-06-01")
 		}
 		if accountConfig.Kind == AccountSubscription && s.id == "anthropic" {
-			req.Header.Set("Anthropic-Beta", "oauth-2025-04-20")
-			req.Header.Set("User-Agent", "claude-code/2.1.7")
+			// OAuth needs its own beta flag, but the client's betas must survive or
+			// body fields such as context_management are rejected upstream.
+			req.Header.Set("Anthropic-Beta", mergeAnthropicBeta(req.Header.Values("Anthropic-Beta"), "oauth-2025-04-20"))
+			if req.Header.Get("User-Agent") == "" {
+				req.Header.Set("User-Agent", "claude-code/2.1.7")
+			}
 		}
 	} else if accountConfig.Kind == AccountSubscription && s.id == "openai" {
 		req.Header.Set("OpenAI-Beta", "codex-1")
@@ -134,6 +138,22 @@ func (s *SupplierData) PreRequest(account *Account, req *http.Request, body *[]b
 		}
 	}
 	return nil
+}
+
+func mergeAnthropicBeta(values []string, required ...string) string {
+	var betas []string
+	seen := make(map[string]struct{})
+	for _, value := range append(values, required...) {
+		for beta := range strings.SplitSeq(value, ",") {
+			beta = strings.TrimSpace(beta)
+			if _, ok := seen[beta]; beta == "" || ok {
+				continue
+			}
+			seen[beta] = struct{}{}
+			betas = append(betas, beta)
+		}
+	}
+	return strings.Join(betas, ",")
 }
 
 func (s *SupplierData) DoRequest(ctx context.Context, account *Account, req *http.Request) (*http.Response, error) {
